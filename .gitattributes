@@ -1,0 +1,7 @@
+# 统一换行符：任何平台克隆后，工作区文件的字节都与仓库中一致。
+#
+# 这不是洁癖。tests/build.test.js 断言磁盘上的 index.html 与一次新鲜构建
+# 逐字节相同，而构建产物是 LF。Windows 上 Git 默认 core.autocrlf=true，
+# 检出时会把文本文件变成 CRLF，那条断言就会失败——所以必须用 eol=lf 钉死，
+# 让 core.autocrlf 无从插手。
+* text=auto eol=lf

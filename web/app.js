@@ -5,6 +5,7 @@
 // 保证"双击即用"这件事在任何浏览器里都成立。
 
 import rules from '../data/rules.json';
+import { resolveCommand } from '../src/calendar.js';
 import { availableCommandIds, createClubLookup } from '../src/clubs.js';
 import { attributeById, attributeIds } from '../src/lookup.js';
 import { defaultInput, fromJson, toJson } from '../src/input.js';
@@ -229,12 +230,28 @@ function setMapEntry(map, key, choice) {
  * 下拉框该显示什么：使用者指定的优先，其次是求解器排的（**改它就等于指定**），
  * 再次是全局默认指令。
  */
+/** 下拉框要显示的选择串。解析口径与日历、求解器完全一致（见 resolveCommand）。 */
 function selectionChoice(day) {
-  const pinned = state.input.dayCommands[day.date];
-  if (pinned !== undefined) return choiceFromCommandId(pinned);
-  const assigned = state.assignments?.dayCommands?.[day.date];
-  if (assigned !== undefined) return choiceFromCommandId(assigned);
-  return state.input.defaultDayCommand ?? UNSET;
+  const { commandId, source } = resolveCommand(state.input, state.assignments, {
+    isRestDay: day.isRestDay,
+    date: day.date,
+    weekStart: day.weekStart,
+  });
+  return source === 'pinned' || source === 'assigned'
+    ? choiceFromCommandId(commandId)
+    : (commandId ?? UNSET);
+}
+
+/** 周指令下拉框的选择串。 */
+function weekSelectionChoice(week) {
+  const { commandId, source } = resolveCommand(state.input, state.assignments, {
+    isRestDay: false,
+    date: week.firstDay,
+    weekStart: week.start,
+  });
+  return source === 'pinned' || source === 'assigned'
+    ? choiceFromCommandId(commandId)
+    : (commandId ?? UNSET);
 }
 
 function fillCommandCell(cell, day, clubAt) {
@@ -377,17 +394,9 @@ function buildWeekRow(week, clubAt) {
   const commandSelect = document.createElement('select');
   commandSelect.dataset.action = 'week-command';
   commandSelect.dataset.week = week.start;
-  const pinnedWeek = state.input.weekCommands[week.start];
-  const assignedWeek = state.assignments?.weekCommands?.[week.start];
-  fillCommandSelect(
-    commandSelect,
-    choiceFromCommandId(
-      pinnedWeek !== undefined ? pinnedWeek : assignedWeek !== undefined ? assignedWeek : undefined,
-    ),
-    {
-      commands: commandsAvailableAt(clubAt, week.firstDay),
-    },
-  );
+  fillCommandSelect(commandSelect, weekSelectionChoice(week), {
+    commands: commandsAvailableAt(clubAt, week.firstDay),
+  });
   commandFlag.append(document.createTextNode(' 周指令 '), commandSelect);
 
   // 社团只能在周日切换，而每周表头正是那个周日。
@@ -506,13 +515,7 @@ function applyCalendar(result) {
     const row = weekRows.get(week.start);
     if (!row) continue;
     const commandSelect = row.querySelector('select[data-action="week-command"]');
-    if (commandSelect) {
-      const pinned = state.input.weekCommands[week.start];
-      const assigned = state.assignments?.weekCommands?.[week.start];
-      commandSelect.value = choiceFromCommandId(
-        pinned !== undefined ? pinned : assigned !== undefined ? assigned : undefined,
-      );
-    }
+    if (commandSelect) commandSelect.value = weekSelectionChoice(week);
     const clubSelect = row.querySelector('select[data-action="club-change"]');
     if (clubSelect) {
       const value = clubChangeValueAt(week.start);

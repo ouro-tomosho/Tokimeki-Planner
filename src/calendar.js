@@ -26,6 +26,30 @@ function resolveSkipSource(date, isRestDay, weekStart, input, skippedDaySet) {
   return null;
 }
 
+/**
+ * 某一天实际执行的指令，以及它是从哪来的。
+ *
+ * 这是**唯一**的解析口径：使用者显式指定（含显式 null = 空过）→ 求解器的填空 →
+ * 全局默认指令 → 都没有就留空（待定）。日历、求解器、界面全部走这里，
+ * 免得各写一份、然后悄悄分叉。
+ */
+export function resolveCommand(input, assignments, slot) {
+  const { isRestDay, date, weekStart } = slot;
+  const pinned = isRestDay ? input.dayCommands[date] : input.weekCommands[weekStart];
+  if (pinned !== undefined) return { commandId: pinned, source: 'pinned' };
+
+  const assigned = isRestDay
+    ? assignments?.dayCommands?.[date]
+    : assignments?.weekCommands?.[weekStart];
+  if (assigned !== undefined) return { commandId: assigned, source: 'assigned' };
+
+  const fallback = isRestDay ? input.defaultDayCommand : input.defaultWeekCommand;
+  if (fallback !== undefined && fallback !== null) {
+    return { commandId: fallback, source: 'default' };
+  }
+  return { commandId: null, source: 'none' };
+}
+
 export function buildCalendar(rules, input, assignments = null) {
   const { start: timelineStart, end, lastSettlement } = rules.timeline;
   const restDays = new Set(input.restDays);
@@ -46,18 +70,11 @@ export function buildCalendar(rules, input, assignments = null) {
 
     // 使用者显式指定（含显式 null = 空过）最优先；其次才是求解器的填空；
     // 再次是全局默认指令；都没有就留空（待定）。
-    const pinned = isRestDay ? input.dayCommands[date] : input.weekCommands[weekStart];
-    const assigned = isRestDay
-      ? assignments?.dayCommands?.[date]
-      : assignments?.weekCommands?.[weekStart];
-    const fallback = isRestDay ? input.defaultDayCommand : input.defaultWeekCommand;
-    // 空过就是「指令留空」（见 GLOSSARY）；界面要显示"本来会执行什么"时，
-    // 自己从输入推导，而不是让数据模型替界面记住。
+    // 空过就是「指令留空」（见 GLOSSARY）；界面要显示"本来会执行什么"时走同一个解析，
+    // 而不是让数据模型替界面记住。
     const commandId = isEmpty
       ? null
-      : pinned !== undefined
-        ? pinned
-        : (assigned ?? fallback ?? null);
+      : resolveCommand(input, assignments, { isRestDay, date, weekStart }).commandId;
 
     days.push({
       date,

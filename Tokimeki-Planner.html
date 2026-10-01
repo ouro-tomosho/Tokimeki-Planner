@@ -466,6 +466,30 @@ function resolveSkipSource(date, isRestDay, weekStart, input, skippedDaySet) {
   return null;
 }
 
+/**
+ * 某一天实际执行的指令，以及它是从哪来的。
+ *
+ * 这是**唯一**的解析口径：使用者显式指定（含显式 null = 空过）→ 求解器的填空 →
+ * 全局默认指令 → 都没有就留空（待定）。日历、求解器、界面全部走这里，
+ * 免得各写一份、然后悄悄分叉。
+ */
+function resolveCommand(input, assignments, slot) {
+  const { isRestDay, date, weekStart } = slot;
+  const pinned = isRestDay ? input.dayCommands[date] : input.weekCommands[weekStart];
+  if (pinned !== undefined) return { commandId: pinned, source: 'pinned' };
+
+  const assigned = isRestDay
+    ? assignments?.dayCommands?.[date]
+    : assignments?.weekCommands?.[weekStart];
+  if (assigned !== undefined) return { commandId: assigned, source: 'assigned' };
+
+  const fallback = isRestDay ? input.defaultDayCommand : input.defaultWeekCommand;
+  if (fallback !== undefined && fallback !== null) {
+    return { commandId: fallback, source: 'default' };
+  }
+  return { commandId: null, source: 'none' };
+}
+
 function buildCalendar(rules, input, assignments = null) {
   const { start: timelineStart, end, lastSettlement } = rules.timeline;
   const restDays = new Set(input.restDays);
@@ -486,18 +510,11 @@ function buildCalendar(rules, input, assignments = null) {
 
     // 使用者显式指定（含显式 null = 空过）最优先；其次才是求解器的填空；
     // 再次是全局默认指令；都没有就留空（待定）。
-    const pinned = isRestDay ? input.dayCommands[date] : input.weekCommands[weekStart];
-    const assigned = isRestDay
-      ? assignments?.dayCommands?.[date]
-      : assignments?.weekCommands?.[weekStart];
-    const fallback = isRestDay ? input.defaultDayCommand : input.defaultWeekCommand;
-    // 空过就是「指令留空」（见 GLOSSARY）；界面要显示"本来会执行什么"时，
-    // 自己从输入推导，而不是让数据模型替界面记住。
+    // 空过就是「指令留空」（见 GLOSSARY）；界面要显示"本来会执行什么"时走同一个解析，
+    // 而不是让数据模型替界面记住。
     const commandId = isEmpty
       ? null
-      : pinned !== undefined
-        ? pinned
-        : (assigned ?? fallback ?? null);
+      : resolveCommand(input, assignments, { isRestDay, date, weekStart }).commandId;
 
     days.push({
       date,
@@ -602,7 +619,7 @@ function buildSequence(days) {
 
   return entries.map((entry, order) => ({ ...entry, order }));
 }
-return { WEEKDAY_NAMES, buildCalendar };
+return { WEEKDAY_NAMES, resolveCommand, buildCalendar };
 })();
 __ns["src/clubs.js"] = (() => {
 // 社团状态：某个日期上，使用者当前加入的是哪个社团。
@@ -1476,6 +1493,11 @@ const { REST_DAY, WEEKDAY, createSettlement } = __ns["src/settlement.js"];
 // 固定值在"所有候选都破"的死局里会把梯度抹平，求解器就再也爬不出来。
 const BREACH_PENALTY = 1e6;
 
+// 打分里的并列决胜项。它们只在前两层打平时才起作用，与 ADR-0002 的层序一致：
+// 先正向属性等权总和（越大越好），再负面指标（越小越好）。
+const POSITIVE_SUM_TIEBREAK = 1e-6;
+const STRESS_TIEBREAK = 1e-9;
+
 // 打分时给硬不变量留一条安全边距。真实的约束判定仍按原阈值（由 constraints.js 负责），
 // 这条边距只影响求解器"愿意贴多近"——只看一周的贪心若贴着悬崖走，迟早会掉下去。
 const INVARIANT_MARGIN = 4;
@@ -1483,7 +1505,7 @@ const INVARIANT_MARGIN = 4;
 function createSolver(rules) {
   const settleDay = createSettlement(rules);
   const scale = rules.fixedPointScale;
-  const negativeId = rules.attributes.find((attribute) => attribute.direction === 'down').id;
+  const negativeIndicatorId = rules.attributes.find((a) => a.direction === 'down').id;
   const positiveIds = rules.attributes
     .filter((attribute) => attribute.direction === 'up')
     .map((attribute) => attribute.id);
@@ -1585,25 +1607,38 @@ function createSolver(rules) {
       return goal.op === '>=' ? limit - value : value - (limit - 1);
     }
 
-    /** 打分：先看离目标推进了多少，其次才轮到正向总和与压力（与 ADR-0002 同序）。 */
-    function scoreOf(before, after, breachCost, targets, club) {
-      let score = -BREACH_PENALTY * breachCost;
+    /** 离各项目标推进了多少：按"还差多少"加权，所以越缺什么越想去补什么。 */
+    function goalProgress(before, after, targets, club) {
+      let progress = 0;
       for (const [attribute, target] of targets) {
         // 社团经验是独立的一张表，不在 state.attributes 里——必须走同一个取值口径，
         // 否则这里会算出 NaN，导致每个槽位都悄悄退回候选列表的第一个。
         const beforeValue = valueOf(before, club, attribute);
         const afterValue = valueOf(after, club, attribute);
-        const delta = afterValue - beforeValue;
-        score += (target.op === '>=' ? delta : -delta) * needOf(beforeValue, target);
+        progress +=
+          (target.op === '>=' ? afterValue - beforeValue : beforeValue - afterValue) *
+          needOf(beforeValue, target);
       }
+      return progress;
+    }
 
-      let positiveDelta = 0;
-      for (const id of positiveIds) {
-        positiveDelta += (after.attributes[id] - before.attributes[id]) / scale;
-      }
-      score += positiveDelta * 1e-6;
-      score -= ((after.attributes[negativeId] - before.attributes[negativeId]) / scale) * 1e-9;
-      return score;
+    function positiveSumDelta(before, after) {
+      let delta = 0;
+      for (const id of positiveIds) delta += (after.attributes[id] - before.attributes[id]) / scale;
+      return delta;
+    }
+
+    const stressDelta = (before, after) =>
+      (after.attributes[negativeIndicatorId] - before.attributes[negativeIndicatorId]) / scale;
+
+    /** 打分：破坏代价 → 离目标推进了多少 → 正向总和 → 压力（与 ADR-0002 同序）。 */
+    function scoreOf(before, after, breachCost, targets, club) {
+      return (
+        -BREACH_PENALTY * breachCost +
+        goalProgress(before, after, targets, club) +
+        POSITIVE_SUM_TIEBREAK * positiveSumDelta(before, after) -
+        STRESS_TIEBREAK * stressDelta(before, after)
+      );
     }
 
     function pick(state, days, candidates, club, date) {
@@ -1698,6 +1733,228 @@ return {  };
     <script>
 const __ns = {};
 __ns["data/rules.json"] = {"timeline":{"start":"1995-04-04","end":"1998-03-01","lastSettlement":"1998-02-28"},"clubUnlockDate":"1995-04-09","fixedPointScale":1000000,"restDayBonus":{"daily":4,"club":6,"restCommandNegative":4},"clubExperienceGain":{"weekday":1,"restDay":6},"clubExperience":{"id":"clubExperience","name":"社团经验","min":0,"max":999},"attributes":[{"id":"stamina","name":"体力","direction":"up","min":0,"max":999},{"id":"literature","name":"文科","direction":"up","min":0,"max":999},{"id":"science","name":"理科","direction":"up","min":0,"max":999},{"id":"art","name":"艺术","direction":"up","min":0,"max":999},{"id":"sports","name":"运动","direction":"up","min":0,"max":999},{"id":"popularity","name":"人缘","direction":"up","min":0,"max":999},{"id":"appearance","name":"容姿","direction":"up","min":0,"max":999},{"id":"grit","name":"毅力","direction":"up","min":0,"max":999},{"id":"stress","name":"压力","direction":"down","min":0,"max":999}],"clubs":[{"id":"literature-club","name":"文艺社"},{"id":"drama-club","name":"演剧社"},{"id":"science-club","name":"科学社"},{"id":"computer-club","name":"电脑社"},{"id":"art-club","name":"美术社"},{"id":"brass-band-club","name":"管乐社"},{"id":"baseball-club","name":"棒球社"},{"id":"soccer-club","name":"足球社"},{"id":"tennis-club","name":"网球社"},{"id":"swimming-club","name":"游泳社"},{"id":"basketball-club","name":"篮球社"}],"commands":[{"id":"cmd-study-literature","name":"研读文科","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.9,"science":0.1,"art":0.1,"sports":-0.4,"popularity":0.3,"appearance":-0.3,"grit":-0.1,"stress":0.8}},{"id":"cmd-study-science","name":"研读理科","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.1,"science":0.9,"art":0.1,"sports":-0.8,"popularity":0.1,"appearance":-0.4,"grit":0.3,"stress":0.3}},{"id":"cmd-practice-art","name":"培养艺术气质","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.1,"science":0.1,"art":0.9,"sports":-0.4,"popularity":0.1,"appearance":-0.1,"grit":-0.1,"stress":-0.3}},{"id":"cmd-exercise","name":"运动","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-2.4,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":3.3,"popularity":0.1,"appearance":-0.4,"grit":1.4,"stress":0.1}},{"id":"cmd-chat","name":"和同学闲聊","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.2,"literature":-0.3,"science":-0.3,"art":-0.3,"sports":0.2,"popularity":1.5,"appearance":0.8,"grit":-0.4,"stress":-0.9}},{"id":"cmd-groom","name":"整理仪容","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.6,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":-0.1,"popularity":0.5,"appearance":2.1,"grit":-0.6,"stress":0.1}},{"id":"cmd-rest","name":"休息","kind":"daily","clubId":null,"isRestCommand":true,"successRate":1,"effects":{"stamina":3.1,"literature":0,"science":0,"art":0,"sports":0,"popularity":-0.6,"appearance":-0.8,"grit":-0.1,"stress":-2.9}},{"id":"cmd-club-literature","name":"文艺社","kind":"club","clubId":"literature-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.8,"science":0.3,"art":0.1,"sports":0,"popularity":0.1,"appearance":-0.3,"grit":-0.1,"stress":1.1}},{"id":"cmd-club-drama","name":"演剧社","kind":"club","clubId":"drama-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.9,"literature":0.9,"science":0,"art":0.4,"sports":0.1,"popularity":0.1,"appearance":-0.1,"grit":0.1,"stress":1.1}},{"id":"cmd-club-science","name":"科学社","kind":"club","clubId":"science-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.1,"science":0.9,"art":0.3,"sports":0,"popularity":0.1,"appearance":-0.3,"grit":0.3,"stress":1.4}},{"id":"cmd-club-computer","name":"电脑社","kind":"club","clubId":"computer-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.1,"science":0.7,"art":0.3,"sports":0,"popularity":0.2,"appearance":-0.4,"grit":0.2,"stress":1.8}},{"id":"cmd-club-art","name":"美术社","kind":"club","clubId":"art-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.9,"literature":0.1,"science":0,"art":0.9,"sports":0.1,"popularity":0.1,"appearance":-0.1,"grit":-0.1,"stress":0.9}},{"id":"cmd-club-brass-band","name":"管乐社","kind":"club","clubId":"brass-band-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.9,"literature":0.1,"science":0.1,"art":0.9,"sports":0.2,"popularity":0.1,"appearance":-0.2,"grit":0.1,"stress":0.9}},{"id":"cmd-club-baseball","name":"棒球社","kind":"club","clubId":"baseball-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.9,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":0.9,"popularity":0.1,"appearance":-0.3,"grit":0.3,"stress":0.2}},{"id":"cmd-club-soccer","name":"足球社","kind":"club","clubId":"soccer-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.9,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":0.9,"popularity":0.1,"appearance":-0.2,"grit":0.7,"stress":0.3}},{"id":"cmd-club-tennis","name":"网球社","kind":"club","clubId":"tennis-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.6,"literature":-0.1,"science":-0.1,"art":0,"sports":0.8,"popularity":0.1,"appearance":-0.1,"grit":0.6,"stress":0.5}},{"id":"cmd-club-swimming","name":"游泳社","kind":"club","clubId":"swimming-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.9,"literature":-0.1,"science":-0.1,"art":0,"sports":0.9,"popularity":0,"appearance":-0.1,"grit":0.7,"stress":0.2}},{"id":"cmd-club-basketball","name":"篮球社","kind":"club","clubId":"basketball-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.8,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":0.9,"popularity":-0.1,"appearance":-0.2,"grit":0.6,"stress":0.4}}],"defaultStart":{"stamina":100,"literature":40,"science":40,"art":40,"sports":40,"popularity":32,"appearance":60,"grit":5,"stress":0},"defaultGlobalConstraints":[{"attribute":"stamina","op":">=","value":20},{"attribute":"popularity","op":">=","value":100},{"attribute":"appearance","op":">=","value":35},{"attribute":"stress","op":"<","value":70}],"defaultEndingGoals":[{"attribute":"stamina","op":">=","value":50},{"attribute":"literature","op":">=","value":130},{"attribute":"science","op":">=","value":130},{"attribute":"art","op":">=","value":130},{"attribute":"sports","op":">=","value":130},{"attribute":"popularity","op":">=","value":120},{"attribute":"appearance","op":">=","value":100},{"attribute":"grit","op":">=","value":100},{"attribute":"stress","op":"<","value":50}],"defaultMiniGoals":[{"deadline":"1998-02-23","attributes":["literature","science","art"],"op":">=","value":561},{"deadline":"1998-01-02","attributes":["clubExperience"],"op":">=","value":380}]};
+__ns["src/dates.js"] = (() => {
+// 日期表示：全项目统一用 `YYYY-MM-DD` 字符串，字典序即时间序。
+//
+// 除了形状，还要校验真实日历——`1995-13-45` 形状合法但不是日期。
+
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+function isDate(value) {
+  if (typeof value !== 'string' || !DATE_PATTERN.test(value)) return false;
+
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+  );
+}
+
+/** 星期序号：0 = 周日，6 = 周六。 */
+function weekdayOf(value) {
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+}
+
+/** 加减天数，返回同样格式的日期字符串。 */
+function addDays(value, count) {
+  const [year, month, day] = value.split('-').map(Number);
+  const shifted = new Date(Date.UTC(year, month - 1, day) + count * 86400000);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}`;
+}
+
+/** 所在自然周的周日（周锚点）。 */
+function weekStartOf(value) {
+  return addDays(value, -weekdayOf(value));
+}
+return { isDate, weekdayOf, addDays, weekStartOf };
+})();
+__ns["src/calendar.js"] = (() => {
+const { addDays, weekStartOf, weekdayOf } = __ns["src/dates.js"];
+// 日历与决策点结构。
+//
+// 决策单位是周，结算单位是天。一个自然周 = 周日（第 1 天）+ 平日（周一至周六）。
+// 纯函数：只吃规则与输入，不碰 DOM，因此同一份代码既能在内联 Worker 里跑，
+// 也能在 Node 测试里通过 plan(input) 直接断言。
+
+
+
+const WEEKDAY_NAMES = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+
+/** 该周的周指令是否被显式置空——该周的平日因此空过。 */
+function isWeekCleared(weekCommands, weekStart) {
+  return weekCommands[weekStart] === null;
+}
+
+/**
+ * 一天的「空过」有三个来源，返回是哪一个（`null` 表示照常结算）：
+ *   'day'          该日在 input.skippedDays 里（指定某一天跳过）
+ *   'day-command'  该休息日的日指令被显式置空
+ *   'week'         该日是平日，且其周锚点的周指令被显式置空
+ */
+function resolveSkipSource(date, isRestDay, weekStart, input, skippedDaySet) {
+  if (skippedDaySet.has(date)) return 'day';
+  if (isRestDay && input.dayCommands[date] === null) return 'day-command';
+  if (!isRestDay && isWeekCleared(input.weekCommands, weekStart)) return 'week';
+  return null;
+}
+
+/**
+ * 某一天实际执行的指令，以及它是从哪来的。
+ *
+ * 这是**唯一**的解析口径：使用者显式指定（含显式 null = 空过）→ 求解器的填空 →
+ * 全局默认指令 → 都没有就留空（待定）。日历、求解器、界面全部走这里，
+ * 免得各写一份、然后悄悄分叉。
+ */
+function resolveCommand(input, assignments, slot) {
+  const { isRestDay, date, weekStart } = slot;
+  const pinned = isRestDay ? input.dayCommands[date] : input.weekCommands[weekStart];
+  if (pinned !== undefined) return { commandId: pinned, source: 'pinned' };
+
+  const assigned = isRestDay
+    ? assignments?.dayCommands?.[date]
+    : assignments?.weekCommands?.[weekStart];
+  if (assigned !== undefined) return { commandId: assigned, source: 'assigned' };
+
+  const fallback = isRestDay ? input.defaultDayCommand : input.defaultWeekCommand;
+  if (fallback !== undefined && fallback !== null) {
+    return { commandId: fallback, source: 'default' };
+  }
+  return { commandId: null, source: 'none' };
+}
+
+function buildCalendar(rules, input, assignments = null) {
+  const { start: timelineStart, end, lastSettlement } = rules.timeline;
+  const restDays = new Set(input.restDays);
+  const skippedDaySet = new Set(input.skippedDays);
+  const startDayIsGameOpening = input.startDate === timelineStart;
+
+  const days = [];
+  for (let date = input.startDate; date <= end; date = addDays(date, 1)) {
+    const weekday = weekdayOf(date);
+    const weekStart = weekStartOf(date);
+    const isRestDay = weekday === 0 || restDays.has(date);
+
+    const skipSource = resolveSkipSource(date, isRestDay, weekStart, input, skippedDaySet);
+    const isEmpty = skipSource !== null;
+    const isGameOpening = startDayIsGameOpening && date === input.startDate;
+    const isTimelineEnd = date === end;
+    const isSettled = !isEmpty && !isGameOpening && !isTimelineEnd;
+
+    // 使用者显式指定（含显式 null = 空过）最优先；其次才是求解器的填空；
+    // 再次是全局默认指令；都没有就留空（待定）。
+    // 空过就是「指令留空」（见 GLOSSARY）；界面要显示"本来会执行什么"时走同一个解析，
+    // 而不是让数据模型替界面记住。
+    const commandId = isEmpty
+      ? null
+      : resolveCommand(input, assignments, { isRestDay, date, weekStart }).commandId;
+
+    days.push({
+      date,
+      weekday,
+      weekdayName: WEEKDAY_NAMES[weekday],
+      weekStart,
+      isRestDay,
+      isEmpty,
+      skipSource,
+      isSettled,
+      commandId,
+    });
+  }
+
+  const clearedWeeks = new Set(
+    Object.keys(input.weekCommands).filter((weekStart) =>
+      isWeekCleared(input.weekCommands, weekStart),
+    ),
+  );
+
+  return {
+    days,
+    weeks: groupWeeks(days, clearedWeeks),
+    sequence: buildSequence(days),
+    summary: {
+      totalDays: days.length,
+      settledDays: days.filter((d) => d.isSettled).length,
+      emptyDays: days.filter((d) => d.isEmpty).length,
+      restDays: days.filter((d) => d.isRestDay).length,
+      weeks: new Set(days.map((d) => d.weekStart)).size,
+    },
+    lastSettlement,
+  };
+}
+
+function groupWeeks(days, clearedWeeks) {
+  const weeks = [];
+  let current = null;
+
+  for (const day of days) {
+    if (!current || current.start !== day.weekStart) {
+      current = {
+        start: day.weekStart,
+        end: addDays(day.weekStart, 6),
+        isCleared: clearedWeeks.has(day.weekStart),
+        firstDay: day.date,
+        lastDay: day.date,
+        days: [],
+      };
+      weeks.push(current);
+    }
+    current.lastDay = day.date;
+    current.days.push(day.date);
+  }
+  return weeks;
+}
+
+/**
+ * 时间轴上的有序事件。`kind` 取三种值：
+ *   'day-command'   选择某一天的日指令
+ *   'settle'        该日结算
+ *   'week-command'  选择该周的周指令
+ *
+ * 完整周的次序是「周日日指令 → 周日结算 → 本周周指令 → 各平日结算」；被标记为
+ * 休息日的平日，其日指令决策插在该日结算之前；首周没有周日落在时间轴内时，
+ * 周指令决策落在首周第一次结算之前。空过或起止例外的日子不产生任何事件。
+ */
+function buildSequence(days) {
+  // 只有存在「会结算的平日」时，这一周才真的需要一个周指令决策。
+  const weekHasSettledWeekday = new Set();
+  for (const day of days) {
+    if (day.weekday !== 0 && day.isSettled) weekHasSettledWeekday.add(day.weekStart);
+  }
+
+  const entries = [];
+  const handledWeek = new Set();
+
+  for (const day of days) {
+    const push = (kind) => entries.push({ date: day.date, kind });
+    const needsWeekCommand = weekHasSettledWeekday.has(day.weekStart);
+
+    if (!handledWeek.has(day.weekStart)) {
+      handledWeek.add(day.weekStart);
+
+      if (day.date === day.weekStart) {
+        if (day.isSettled) push('day-command');
+        if (day.isSettled) push('settle');
+        if (needsWeekCommand) push('week-command');
+      } else {
+        // 首周没有周日落在时间轴内：周指令决策落在首周第一次结算之前
+        if (needsWeekCommand) push('week-command');
+        if (day.isRestDay && day.isSettled) push('day-command');
+        if (day.isSettled) push('settle');
+      }
+      continue;
+    }
+
+    // 本周内被标记为休息日的日子，在该日结算之前插入它的日指令决策
+    if (day.isRestDay && day.isSettled) push('day-command');
+    if (day.isSettled) push('settle');
+  }
+
+  return entries.map((entry, order) => ({ ...entry, order }));
+}
+return { WEEKDAY_NAMES, resolveCommand, buildCalendar };
+})();
 __ns["src/clubs.js"] = (() => {
 // 社团状态：某个日期上，使用者当前加入的是哪个社团。
 //
@@ -1763,43 +2020,6 @@ function attributeIds(rules) {
   return rules.attributes.map((a) => a.id);
 }
 return { attributeById, commandById, attributeIds };
-})();
-__ns["src/dates.js"] = (() => {
-// 日期表示：全项目统一用 `YYYY-MM-DD` 字符串，字典序即时间序。
-//
-// 除了形状，还要校验真实日历——`1995-13-45` 形状合法但不是日期。
-
-const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-
-function isDate(value) {
-  if (typeof value !== 'string' || !DATE_PATTERN.test(value)) return false;
-
-  const [year, month, day] = value.split('-').map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  return (
-    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
-  );
-}
-
-/** 星期序号：0 = 周日，6 = 周六。 */
-function weekdayOf(value) {
-  const [year, month, day] = value.split('-').map(Number);
-  return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
-}
-
-/** 加减天数，返回同样格式的日期字符串。 */
-function addDays(value, count) {
-  const [year, month, day] = value.split('-').map(Number);
-  const shifted = new Date(Date.UTC(year, month - 1, day) + count * 86400000);
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}`;
-}
-
-/** 所在自然周的周日（周锚点）。 */
-function weekStartOf(value) {
-  return addDays(value, -weekdayOf(value));
-}
-return { isDate, weekdayOf, addDays, weekStartOf };
 })();
 __ns["src/goals.js"] = (() => {
 const { isDate } = __ns["src/dates.js"];
@@ -2054,174 +2274,6 @@ function checkDayList(label, list, inTimeline, problems) {
   }
 }
 return { CURRENT_VERSION, defaultInput, toJson, fromJson, validateInput };
-})();
-__ns["src/calendar.js"] = (() => {
-const { addDays, weekStartOf, weekdayOf } = __ns["src/dates.js"];
-// 日历与决策点结构。
-//
-// 决策单位是周，结算单位是天。一个自然周 = 周日（第 1 天）+ 平日（周一至周六）。
-// 纯函数：只吃规则与输入，不碰 DOM，因此同一份代码既能在内联 Worker 里跑，
-// 也能在 Node 测试里通过 plan(input) 直接断言。
-
-
-
-const WEEKDAY_NAMES = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
-
-/** 该周的周指令是否被显式置空——该周的平日因此空过。 */
-function isWeekCleared(weekCommands, weekStart) {
-  return weekCommands[weekStart] === null;
-}
-
-/**
- * 一天的「空过」有三个来源，返回是哪一个（`null` 表示照常结算）：
- *   'day'          该日在 input.skippedDays 里（指定某一天跳过）
- *   'day-command'  该休息日的日指令被显式置空
- *   'week'         该日是平日，且其周锚点的周指令被显式置空
- */
-function resolveSkipSource(date, isRestDay, weekStart, input, skippedDaySet) {
-  if (skippedDaySet.has(date)) return 'day';
-  if (isRestDay && input.dayCommands[date] === null) return 'day-command';
-  if (!isRestDay && isWeekCleared(input.weekCommands, weekStart)) return 'week';
-  return null;
-}
-
-function buildCalendar(rules, input, assignments = null) {
-  const { start: timelineStart, end, lastSettlement } = rules.timeline;
-  const restDays = new Set(input.restDays);
-  const skippedDaySet = new Set(input.skippedDays);
-  const startDayIsGameOpening = input.startDate === timelineStart;
-
-  const days = [];
-  for (let date = input.startDate; date <= end; date = addDays(date, 1)) {
-    const weekday = weekdayOf(date);
-    const weekStart = weekStartOf(date);
-    const isRestDay = weekday === 0 || restDays.has(date);
-
-    const skipSource = resolveSkipSource(date, isRestDay, weekStart, input, skippedDaySet);
-    const isEmpty = skipSource !== null;
-    const isGameOpening = startDayIsGameOpening && date === input.startDate;
-    const isTimelineEnd = date === end;
-    const isSettled = !isEmpty && !isGameOpening && !isTimelineEnd;
-
-    // 使用者显式指定（含显式 null = 空过）最优先；其次才是求解器的填空；
-    // 再次是全局默认指令；都没有就留空（待定）。
-    const pinned = isRestDay ? input.dayCommands[date] : input.weekCommands[weekStart];
-    const assigned = isRestDay
-      ? assignments?.dayCommands?.[date]
-      : assignments?.weekCommands?.[weekStart];
-    const fallback = isRestDay ? input.defaultDayCommand : input.defaultWeekCommand;
-    // 空过就是「指令留空」（见 GLOSSARY）；界面要显示"本来会执行什么"时，
-    // 自己从输入推导，而不是让数据模型替界面记住。
-    const commandId = isEmpty
-      ? null
-      : pinned !== undefined
-        ? pinned
-        : (assigned ?? fallback ?? null);
-
-    days.push({
-      date,
-      weekday,
-      weekdayName: WEEKDAY_NAMES[weekday],
-      weekStart,
-      isRestDay,
-      isEmpty,
-      skipSource,
-      isSettled,
-      commandId,
-    });
-  }
-
-  const clearedWeeks = new Set(
-    Object.keys(input.weekCommands).filter((weekStart) =>
-      isWeekCleared(input.weekCommands, weekStart),
-    ),
-  );
-
-  return {
-    days,
-    weeks: groupWeeks(days, clearedWeeks),
-    sequence: buildSequence(days),
-    summary: {
-      totalDays: days.length,
-      settledDays: days.filter((d) => d.isSettled).length,
-      emptyDays: days.filter((d) => d.isEmpty).length,
-      restDays: days.filter((d) => d.isRestDay).length,
-      weeks: new Set(days.map((d) => d.weekStart)).size,
-    },
-    lastSettlement,
-  };
-}
-
-function groupWeeks(days, clearedWeeks) {
-  const weeks = [];
-  let current = null;
-
-  for (const day of days) {
-    if (!current || current.start !== day.weekStart) {
-      current = {
-        start: day.weekStart,
-        end: addDays(day.weekStart, 6),
-        isCleared: clearedWeeks.has(day.weekStart),
-        firstDay: day.date,
-        lastDay: day.date,
-        days: [],
-      };
-      weeks.push(current);
-    }
-    current.lastDay = day.date;
-    current.days.push(day.date);
-  }
-  return weeks;
-}
-
-/**
- * 时间轴上的有序事件。`kind` 取三种值：
- *   'day-command'   选择某一天的日指令
- *   'settle'        该日结算
- *   'week-command'  选择该周的周指令
- *
- * 完整周的次序是「周日日指令 → 周日结算 → 本周周指令 → 各平日结算」；被标记为
- * 休息日的平日，其日指令决策插在该日结算之前；首周没有周日落在时间轴内时，
- * 周指令决策落在首周第一次结算之前。空过或起止例外的日子不产生任何事件。
- */
-function buildSequence(days) {
-  // 只有存在「会结算的平日」时，这一周才真的需要一个周指令决策。
-  const weekHasSettledWeekday = new Set();
-  for (const day of days) {
-    if (day.weekday !== 0 && day.isSettled) weekHasSettledWeekday.add(day.weekStart);
-  }
-
-  const entries = [];
-  const handledWeek = new Set();
-
-  for (const day of days) {
-    const push = (kind) => entries.push({ date: day.date, kind });
-    const needsWeekCommand = weekHasSettledWeekday.has(day.weekStart);
-
-    if (!handledWeek.has(day.weekStart)) {
-      handledWeek.add(day.weekStart);
-
-      if (day.date === day.weekStart) {
-        if (day.isSettled) push('day-command');
-        if (day.isSettled) push('settle');
-        if (needsWeekCommand) push('week-command');
-      } else {
-        // 首周没有周日落在时间轴内：周指令决策落在首周第一次结算之前
-        if (needsWeekCommand) push('week-command');
-        if (day.isRestDay && day.isSettled) push('day-command');
-        if (day.isSettled) push('settle');
-      }
-      continue;
-    }
-
-    // 本周内被标记为休息日的日子，在该日结算之前插入它的日指令决策
-    if (day.isRestDay && day.isSettled) push('day-command');
-    if (day.isSettled) push('settle');
-  }
-
-  return entries.map((entry, order) => ({ ...entry, order }));
-}
-return { WEEKDAY_NAMES, buildCalendar };
 })();
 __ns["src/constraints.js"] = (() => {
 // 约束判定与目标函数。
@@ -2775,6 +2827,11 @@ const { REST_DAY, WEEKDAY, createSettlement } = __ns["src/settlement.js"];
 // 固定值在"所有候选都破"的死局里会把梯度抹平，求解器就再也爬不出来。
 const BREACH_PENALTY = 1e6;
 
+// 打分里的并列决胜项。它们只在前两层打平时才起作用，与 ADR-0002 的层序一致：
+// 先正向属性等权总和（越大越好），再负面指标（越小越好）。
+const POSITIVE_SUM_TIEBREAK = 1e-6;
+const STRESS_TIEBREAK = 1e-9;
+
 // 打分时给硬不变量留一条安全边距。真实的约束判定仍按原阈值（由 constraints.js 负责），
 // 这条边距只影响求解器"愿意贴多近"——只看一周的贪心若贴着悬崖走，迟早会掉下去。
 const INVARIANT_MARGIN = 4;
@@ -2782,7 +2839,7 @@ const INVARIANT_MARGIN = 4;
 function createSolver(rules) {
   const settleDay = createSettlement(rules);
   const scale = rules.fixedPointScale;
-  const negativeId = rules.attributes.find((attribute) => attribute.direction === 'down').id;
+  const negativeIndicatorId = rules.attributes.find((a) => a.direction === 'down').id;
   const positiveIds = rules.attributes
     .filter((attribute) => attribute.direction === 'up')
     .map((attribute) => attribute.id);
@@ -2884,25 +2941,38 @@ function createSolver(rules) {
       return goal.op === '>=' ? limit - value : value - (limit - 1);
     }
 
-    /** 打分：先看离目标推进了多少，其次才轮到正向总和与压力（与 ADR-0002 同序）。 */
-    function scoreOf(before, after, breachCost, targets, club) {
-      let score = -BREACH_PENALTY * breachCost;
+    /** 离各项目标推进了多少：按"还差多少"加权，所以越缺什么越想去补什么。 */
+    function goalProgress(before, after, targets, club) {
+      let progress = 0;
       for (const [attribute, target] of targets) {
         // 社团经验是独立的一张表，不在 state.attributes 里——必须走同一个取值口径，
         // 否则这里会算出 NaN，导致每个槽位都悄悄退回候选列表的第一个。
         const beforeValue = valueOf(before, club, attribute);
         const afterValue = valueOf(after, club, attribute);
-        const delta = afterValue - beforeValue;
-        score += (target.op === '>=' ? delta : -delta) * needOf(beforeValue, target);
+        progress +=
+          (target.op === '>=' ? afterValue - beforeValue : beforeValue - afterValue) *
+          needOf(beforeValue, target);
       }
+      return progress;
+    }
 
-      let positiveDelta = 0;
-      for (const id of positiveIds) {
-        positiveDelta += (after.attributes[id] - before.attributes[id]) / scale;
-      }
-      score += positiveDelta * 1e-6;
-      score -= ((after.attributes[negativeId] - before.attributes[negativeId]) / scale) * 1e-9;
-      return score;
+    function positiveSumDelta(before, after) {
+      let delta = 0;
+      for (const id of positiveIds) delta += (after.attributes[id] - before.attributes[id]) / scale;
+      return delta;
+    }
+
+    const stressDelta = (before, after) =>
+      (after.attributes[negativeIndicatorId] - before.attributes[negativeIndicatorId]) / scale;
+
+    /** 打分：破坏代价 → 离目标推进了多少 → 正向总和 → 压力（与 ADR-0002 同序）。 */
+    function scoreOf(before, after, breachCost, targets, club) {
+      return (
+        -BREACH_PENALTY * breachCost +
+        goalProgress(before, after, targets, club) +
+        POSITIVE_SUM_TIEBREAK * positiveSumDelta(before, after) -
+        STRESS_TIEBREAK * stressDelta(before, after)
+      );
     }
 
     function pick(state, days, candidates, club, date) {
@@ -2959,6 +3029,7 @@ return { createSolver };
 })();
 __ns["web/app.js"] = (() => {
 const rules = __ns["data/rules.json"];
+const { resolveCommand } = __ns["src/calendar.js"];
 const { availableCommandIds, createClubLookup } = __ns["src/clubs.js"];
 const { attributeById, attributeIds } = __ns["src/lookup.js"];
 const { defaultInput, fromJson, toJson } = __ns["src/input.js"];
@@ -2969,6 +3040,7 @@ const { createSolver } = __ns["src/solver.js"];
 // 页面是从 file:// 双击打开的，而有些浏览器在 file:// 下拒绝构造 blob Worker。
 // 因此这里对 Worker 做降级：能建就用 Worker，建不了或中途报错就回退到主线程，
 // 保证"双击即用"这件事在任何浏览器里都成立。
+
 
 
 
@@ -3195,12 +3267,28 @@ function setMapEntry(map, key, choice) {
  * 下拉框该显示什么：使用者指定的优先，其次是求解器排的（**改它就等于指定**），
  * 再次是全局默认指令。
  */
+/** 下拉框要显示的选择串。解析口径与日历、求解器完全一致（见 resolveCommand）。 */
 function selectionChoice(day) {
-  const pinned = state.input.dayCommands[day.date];
-  if (pinned !== undefined) return choiceFromCommandId(pinned);
-  const assigned = state.assignments?.dayCommands?.[day.date];
-  if (assigned !== undefined) return choiceFromCommandId(assigned);
-  return state.input.defaultDayCommand ?? UNSET;
+  const { commandId, source } = resolveCommand(state.input, state.assignments, {
+    isRestDay: day.isRestDay,
+    date: day.date,
+    weekStart: day.weekStart,
+  });
+  return source === 'pinned' || source === 'assigned'
+    ? choiceFromCommandId(commandId)
+    : (commandId ?? UNSET);
+}
+
+/** 周指令下拉框的选择串。 */
+function weekSelectionChoice(week) {
+  const { commandId, source } = resolveCommand(state.input, state.assignments, {
+    isRestDay: false,
+    date: week.firstDay,
+    weekStart: week.start,
+  });
+  return source === 'pinned' || source === 'assigned'
+    ? choiceFromCommandId(commandId)
+    : (commandId ?? UNSET);
 }
 
 function fillCommandCell(cell, day, clubAt) {
@@ -3343,17 +3431,9 @@ function buildWeekRow(week, clubAt) {
   const commandSelect = document.createElement('select');
   commandSelect.dataset.action = 'week-command';
   commandSelect.dataset.week = week.start;
-  const pinnedWeek = state.input.weekCommands[week.start];
-  const assignedWeek = state.assignments?.weekCommands?.[week.start];
-  fillCommandSelect(
-    commandSelect,
-    choiceFromCommandId(
-      pinnedWeek !== undefined ? pinnedWeek : assignedWeek !== undefined ? assignedWeek : undefined,
-    ),
-    {
-      commands: commandsAvailableAt(clubAt, week.firstDay),
-    },
-  );
+  fillCommandSelect(commandSelect, weekSelectionChoice(week), {
+    commands: commandsAvailableAt(clubAt, week.firstDay),
+  });
   commandFlag.append(document.createTextNode(' 周指令 '), commandSelect);
 
   // 社团只能在周日切换，而每周表头正是那个周日。
@@ -3472,13 +3552,7 @@ function applyCalendar(result) {
     const row = weekRows.get(week.start);
     if (!row) continue;
     const commandSelect = row.querySelector('select[data-action="week-command"]');
-    if (commandSelect) {
-      const pinned = state.input.weekCommands[week.start];
-      const assigned = state.assignments?.weekCommands?.[week.start];
-      commandSelect.value = choiceFromCommandId(
-        pinned !== undefined ? pinned : assigned !== undefined ? assigned : undefined,
-      );
-    }
+    if (commandSelect) commandSelect.value = weekSelectionChoice(week);
     const clubSelect = row.querySelector('select[data-action="club-change"]');
     if (clubSelect) {
       const value = clubChangeValueAt(week.start);

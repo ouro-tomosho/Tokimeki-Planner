@@ -22,6 +22,11 @@ import { REST_DAY, WEEKDAY, createSettlement } from './settlement.js';
 // 固定值在"所有候选都破"的死局里会把梯度抹平，求解器就再也爬不出来。
 const BREACH_PENALTY = 1e6;
 
+// 打分里的并列决胜项。它们只在前两层打平时才起作用，与 ADR-0002 的层序一致：
+// 先正向属性等权总和（越大越好），再负面指标（越小越好）。
+const POSITIVE_SUM_TIEBREAK = 1e-6;
+const STRESS_TIEBREAK = 1e-9;
+
 // 打分时给硬不变量留一条安全边距。真实的约束判定仍按原阈值（由 constraints.js 负责），
 // 这条边距只影响求解器"愿意贴多近"——只看一周的贪心若贴着悬崖走，迟早会掉下去。
 const INVARIANT_MARGIN = 4;
@@ -29,7 +34,7 @@ const INVARIANT_MARGIN = 4;
 export function createSolver(rules) {
   const settleDay = createSettlement(rules);
   const scale = rules.fixedPointScale;
-  const negativeId = rules.attributes.find((attribute) => attribute.direction === 'down').id;
+  const negativeIndicatorId = rules.attributes.find((a) => a.direction === 'down').id;
   const positiveIds = rules.attributes
     .filter((attribute) => attribute.direction === 'up')
     .map((attribute) => attribute.id);
@@ -131,25 +136,38 @@ export function createSolver(rules) {
       return goal.op === '>=' ? limit - value : value - (limit - 1);
     }
 
-    /** 打分：先看离目标推进了多少，其次才轮到正向总和与压力（与 ADR-0002 同序）。 */
-    function scoreOf(before, after, breachCost, targets, club) {
-      let score = -BREACH_PENALTY * breachCost;
+    /** 离各项目标推进了多少：按"还差多少"加权，所以越缺什么越想去补什么。 */
+    function goalProgress(before, after, targets, club) {
+      let progress = 0;
       for (const [attribute, target] of targets) {
         // 社团经验是独立的一张表，不在 state.attributes 里——必须走同一个取值口径，
         // 否则这里会算出 NaN，导致每个槽位都悄悄退回候选列表的第一个。
         const beforeValue = valueOf(before, club, attribute);
         const afterValue = valueOf(after, club, attribute);
-        const delta = afterValue - beforeValue;
-        score += (target.op === '>=' ? delta : -delta) * needOf(beforeValue, target);
+        progress +=
+          (target.op === '>=' ? afterValue - beforeValue : beforeValue - afterValue) *
+          needOf(beforeValue, target);
       }
+      return progress;
+    }
 
-      let positiveDelta = 0;
-      for (const id of positiveIds) {
-        positiveDelta += (after.attributes[id] - before.attributes[id]) / scale;
-      }
-      score += positiveDelta * 1e-6;
-      score -= ((after.attributes[negativeId] - before.attributes[negativeId]) / scale) * 1e-9;
-      return score;
+    function positiveSumDelta(before, after) {
+      let delta = 0;
+      for (const id of positiveIds) delta += (after.attributes[id] - before.attributes[id]) / scale;
+      return delta;
+    }
+
+    const stressDelta = (before, after) =>
+      (after.attributes[negativeIndicatorId] - before.attributes[negativeIndicatorId]) / scale;
+
+    /** 打分：破坏代价 → 离目标推进了多少 → 正向总和 → 压力（与 ADR-0002 同序）。 */
+    function scoreOf(before, after, breachCost, targets, club) {
+      return (
+        -BREACH_PENALTY * breachCost +
+        goalProgress(before, after, targets, club) +
+        POSITIVE_SUM_TIEBREAK * positiveSumDelta(before, after) -
+        STRESS_TIEBREAK * stressDelta(before, after)
+      );
     }
 
     function pick(state, days, candidates, club, date) {

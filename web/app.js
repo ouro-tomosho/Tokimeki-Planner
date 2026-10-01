@@ -746,24 +746,28 @@ function describeGlobalConstraint(goal) {
 }
 
 function describeMiniGoal(goal) {
-  const names = goal.attributes.map(nameOf).join(' + ');
-  const relation = `${goal.deadline} ${names} ${goal.op === '>=' ? '≥' : '<'} ${goal.value}`;
+  const relation = `${goal.deadline} ${goalRelation(goal)}`;
   return goal.state === 'met'
     ? `${relation} —— 实际 ${goal.actual.toFixed(1)}`
     : `${relation} —— 实际 ${goal.actual.toFixed(1)}，还差 ${goal.shortfall.toFixed(1)}`;
 }
 
 function describeEndingGoal(goal) {
-  const relation = `${nameOf(goal.attribute)} ${goal.op === '>=' ? '≥' : '<'} ${goal.value}`;
+  const relation = goalRelation(goal);
   return goal.state === 'met'
     ? `${relation} —— 实际 ${goal.actual.toFixed(1)}`
     : `${relation} —— 实际 ${goal.actual.toFixed(1)}，还差 ${goal.shortfall.toFixed(1)}`;
 }
 
-/** 诊断里的目标是输入原件，没有 actual/shortfall，得单独拼一句人话。 */
-function describeGoalBriefly(goal) {
+/** 「文科 + 理科 ≥ 561」这种关系串，三种描述共用。 */
+function goalRelation(goal) {
   const names = goal.attributes ? goal.attributes.map(nameOf).join(' + ') : nameOf(goal.attribute);
-  return `${goal.deadline ? `${goal.deadline} ` : ''}${names} ${goal.op === '>=' ? '≥' : '<'} ${goal.value}`;
+  return `${names} ${goal.op === '>=' ? '≥' : '<'} ${goal.value}`;
+}
+
+/** 诊断里的目标是输入原件，没有实际值，只拼关系串（外加截止日期）。 */
+function describeGoalBriefly(goal) {
+  return `${goal.deadline ? `${goal.deadline} ` : ''}${goalRelation(goal)}`;
 }
 
 /**
@@ -783,10 +787,10 @@ function buildDiagnosis(diagnosis) {
   list.append(
     goalLine(
       '小目标',
-      diagnosis.miniGoalsBlamed
+      diagnosis.miniGoalsBlocking
         ? `是它在挡路——取消「${describeGoalBriefly(diagnosis.reachableAfterCancelling)}」之后即可达标`
         : '不是小目标在挡路',
-      !diagnosis.miniGoalsBlamed,
+      !diagnosis.miniGoalsBlocking,
     ),
   );
   list.append(
@@ -801,10 +805,10 @@ function buildDiagnosis(diagnosis) {
   list.append(
     goalLine(
       '结局目标本身',
-      diagnosis.endingGoalsUnreachable
+      diagnosis.endingGoalsAloneUnreachable
         ? '不可达——连全局约束一起拿掉也达不到'
         : '可达',
-      !diagnosis.endingGoalsUnreachable,
+      !diagnosis.endingGoalsAloneUnreachable,
     ),
   );
 

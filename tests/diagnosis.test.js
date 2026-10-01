@@ -60,7 +60,12 @@ test('不可达时，三项结论同时给出', () => {
   assert.ok(diagnosis, '不可达必须有诊断');
   assert.deepEqual(
     Object.keys(diagnosis).sort(),
-    ['endingAndGlobalConflict', 'endingGoalsUnreachable', 'miniGoalsBlamed', 'reachableAfterCancelling'],
+    [
+      'endingAndGlobalConflict',
+      'endingGoalsAloneUnreachable',
+      'miniGoalsBlocking',
+      'reachableAfterCancelling',
+    ],
     '四项结论一并给出，而不是只报第一个命中的原因',
   );
 });
@@ -69,9 +74,9 @@ test('未加入社团时：小目标被指认，结局目标与全局约束不�
   const { assignments } = solveAndPlan(noClubInput());
   const { diagnosis } = assignments;
 
-  assert.equal(diagnosis.miniGoalsBlamed, true);
+  assert.equal(diagnosis.miniGoalsBlocking, true);
   assert.equal(diagnosis.endingAndGlobalConflict, false);
-  assert.equal(diagnosis.endingGoalsUnreachable, false);
+  assert.equal(diagnosis.endingGoalsAloneUnreachable, false);
 });
 
 test('诊断指认的那条小目标，取消它真的就可达；只取消另一条则不行', () => {
@@ -124,8 +129,8 @@ test('结局目标与全局约束冲突时，明确报告冲突', () => {
 
   const { diagnosis } = assignments;
   assert.equal(diagnosis.endingAndGlobalConflict, true, '全局约束与结局目标彼此冲突');
-  assert.equal(diagnosis.endingGoalsUnreachable, false, '结局目标单看是可达的，不该赖它');
-  assert.equal(diagnosis.miniGoalsBlamed, false, '与小目标无关');
+  assert.equal(diagnosis.endingGoalsAloneUnreachable, false, '结局目标单看是可达的，不该赖它');
+  assert.equal(diagnosis.miniGoalsBlocking, false, '与小目标无关');
   assert.equal(diagnosis.reachableAfterCancelling, null);
 });
 
@@ -137,9 +142,9 @@ test('结局目标本身不可达时，明确报告是它，而不是让小目�
   assert.equal(result.goals.ok, false);
 
   const { diagnosis } = assignments;
-  assert.equal(diagnosis.endingGoalsUnreachable, true);
+  assert.equal(diagnosis.endingGoalsAloneUnreachable, true);
   assert.equal(diagnosis.endingAndGlobalConflict, false, '不是冲突——把全局约束全删了它也达不到');
-  assert.equal(diagnosis.miniGoalsBlamed, false);
+  assert.equal(diagnosis.miniGoalsBlocking, false);
   assert.equal(diagnosis.reachableAfterCancelling, null, '取消小目标救不了它');
 });
 

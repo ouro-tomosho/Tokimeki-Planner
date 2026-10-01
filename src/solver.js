@@ -48,6 +48,9 @@ export function createSolver(rules) {
   // 必须在这里建：下面的 return 之后就再也执行不到了（函数声明会提升，const 不会）。
   const planner = createPlanner(rules);
 
+  /** 由近至远：小目标的截止日期越早，越先被怀疑是它卡住了。 */
+  const byDeadline = (a, b) => (a.deadline < b.deadline ? -1 : a.deadline > b.deadline ? 1 : 0);
+
   function initialState(input) {
     return {
       attributes: Object.fromEntries(
@@ -268,31 +271,29 @@ export function createSolver(rules) {
     //     全部取消仍不可达时（withGlobalOnly 为假）不必跑：没有哪个前缀能救。
     let reachableAfterCancelling = null;
     if (withGlobalOnly) {
-      const byDeadline = [...input.miniGoals].sort((a, b) =>
-        a.deadline < b.deadline ? -1 : a.deadline > b.deadline ? 1 : 0,
-      );
+      const ordered = [...input.miniGoals].sort(byDeadline);
       // 按**序号**取消。不能拿目标对象做 includes——reachableWith 里是 structuredClone，
       // 副本里的对象引用与原件对不上，一个都取消不掉。
       for (let count = 1; count <= byDeadline.length; count += 1) {
         const ok = reachableWith((copy) => {
-          copy.miniGoals = [...copy.miniGoals]
-            .sort((a, b) => (a.deadline < b.deadline ? -1 : a.deadline > b.deadline ? 1 : 0))
-            .slice(count);
+          copy.miniGoals = [...copy.miniGoals].sort(byDeadline).slice(count);
         });
         if (ok) {
-          reachableAfterCancelling = byDeadline[count - 1];
+          reachableAfterCancelling = ordered[count - 1];
           break;
         }
       }
     }
 
+    // 三个字段都只描述**测到了什么**，结论留给界面去说——名字里带结论容易在别处被误读。
     return {
-      // 拿掉全部小目标就可达 → 是小目标在挡路
-      miniGoalsBlamed: withGlobalOnly,
-      // 连全局约束也拿掉才可达 → 是两者彼此冲突
+      // 拿掉全部小目标就可达
+      miniGoalsBlocking: withGlobalOnly,
+      // 得连全局约束也拿掉才可达
       endingAndGlobalConflict: endingAlone && !withGlobalOnly,
-      // 怎么删约束都不可达 → 结局目标本身就不可能
-      endingGoalsUnreachable: !endingAlone,
+      // 连全局约束一起拿掉也达不到
+      endingGoalsAloneUnreachable: !endingAlone,
+      // 由近至远取消到哪一条小目标才可达；没有这样的前缀就是 null
       reachableAfterCancelling,
     };
   }

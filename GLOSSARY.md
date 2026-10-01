@@ -78,6 +78,13 @@ _Avoid_: 命令, 行动
 **空过**：
 指令留空的状态，由跳过操作产生。周指令为空则该周平日不执行任何指令、也不结算；日指令为空则该休息日不执行任何指令、也不结算。英文标识用 `empty`（`isEmpty`、`emptyDays`）。
 
+**不可达诊断**：
+排不出达标日程时给出的三项**并列**结论。英文标识用 `diagnosis`，三项测量分别是
+`miniGoalsBlocking`（拿掉全部小目标就可达）、`endingAndGlobalConflict`（得连全局约束也拿掉才可达）、
+`endingGoalsAloneUnreachable`（连全局约束一起拿掉也达不到），
+外加 `reachableAfterCancelling`（由近至远取消到哪一条小目标才可达）。
+三项必须同时给出——只报第一个命中的原因，使用者会误以为那是唯一原因。
+
 **跳过**：
 所有者把某一天的日指令或某一周的周指令置空的操作。英文标识用 `skip`（`skippedDays`）。
 

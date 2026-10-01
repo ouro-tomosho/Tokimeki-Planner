@@ -1499,6 +1499,9 @@ function createSolver(rules) {
   // 必须在这里建：下面的 return 之后就再也执行不到了（函数声明会提升，const 不会）。
   const planner = createPlanner(rules);
 
+  /** 由近至远：小目标的截止日期越早，越先被怀疑是它卡住了。 */
+  const byDeadline = (a, b) => (a.deadline < b.deadline ? -1 : a.deadline > b.deadline ? 1 : 0);
+
   function initialState(input) {
     return {
       attributes: Object.fromEntries(
@@ -1719,31 +1722,29 @@ function createSolver(rules) {
     //     全部取消仍不可达时（withGlobalOnly 为假）不必跑：没有哪个前缀能救。
     let reachableAfterCancelling = null;
     if (withGlobalOnly) {
-      const byDeadline = [...input.miniGoals].sort((a, b) =>
-        a.deadline < b.deadline ? -1 : a.deadline > b.deadline ? 1 : 0,
-      );
+      const ordered = [...input.miniGoals].sort(byDeadline);
       // 按**序号**取消。不能拿目标对象做 includes——reachableWith 里是 structuredClone，
       // 副本里的对象引用与原件对不上，一个都取消不掉。
       for (let count = 1; count <= byDeadline.length; count += 1) {
         const ok = reachableWith((copy) => {
-          copy.miniGoals = [...copy.miniGoals]
-            .sort((a, b) => (a.deadline < b.deadline ? -1 : a.deadline > b.deadline ? 1 : 0))
-            .slice(count);
+          copy.miniGoals = [...copy.miniGoals].sort(byDeadline).slice(count);
         });
         if (ok) {
-          reachableAfterCancelling = byDeadline[count - 1];
+          reachableAfterCancelling = ordered[count - 1];
           break;
         }
       }
     }
 
+    // 三个字段都只描述**测到了什么**，结论留给界面去说——名字里带结论容易在别处被误读。
     return {
-      // 拿掉全部小目标就可达 → 是小目标在挡路
-      miniGoalsBlamed: withGlobalOnly,
-      // 连全局约束也拿掉才可达 → 是两者彼此冲突
+      // 拿掉全部小目标就可达
+      miniGoalsBlocking: withGlobalOnly,
+      // 得连全局约束也拿掉才可达
       endingAndGlobalConflict: endingAlone && !withGlobalOnly,
-      // 怎么删约束都不可达 → 结局目标本身就不可能
-      endingGoalsUnreachable: !endingAlone,
+      // 连全局约束一起拿掉也达不到
+      endingGoalsAloneUnreachable: !endingAlone,
+      // 由近至远取消到哪一条小目标才可达；没有这样的前缀就是 null
       reachableAfterCancelling,
     };
   }
@@ -2972,6 +2973,9 @@ function createSolver(rules) {
   // 必须在这里建：下面的 return 之后就再也执行不到了（函数声明会提升，const 不会）。
   const planner = createPlanner(rules);
 
+  /** 由近至远：小目标的截止日期越早，越先被怀疑是它卡住了。 */
+  const byDeadline = (a, b) => (a.deadline < b.deadline ? -1 : a.deadline > b.deadline ? 1 : 0);
+
   function initialState(input) {
     return {
       attributes: Object.fromEntries(
@@ -3192,31 +3196,29 @@ function createSolver(rules) {
     //     全部取消仍不可达时（withGlobalOnly 为假）不必跑：没有哪个前缀能救。
     let reachableAfterCancelling = null;
     if (withGlobalOnly) {
-      const byDeadline = [...input.miniGoals].sort((a, b) =>
-        a.deadline < b.deadline ? -1 : a.deadline > b.deadline ? 1 : 0,
-      );
+      const ordered = [...input.miniGoals].sort(byDeadline);
       // 按**序号**取消。不能拿目标对象做 includes——reachableWith 里是 structuredClone，
       // 副本里的对象引用与原件对不上，一个都取消不掉。
       for (let count = 1; count <= byDeadline.length; count += 1) {
         const ok = reachableWith((copy) => {
-          copy.miniGoals = [...copy.miniGoals]
-            .sort((a, b) => (a.deadline < b.deadline ? -1 : a.deadline > b.deadline ? 1 : 0))
-            .slice(count);
+          copy.miniGoals = [...copy.miniGoals].sort(byDeadline).slice(count);
         });
         if (ok) {
-          reachableAfterCancelling = byDeadline[count - 1];
+          reachableAfterCancelling = ordered[count - 1];
           break;
         }
       }
     }
 
+    // 三个字段都只描述**测到了什么**，结论留给界面去说——名字里带结论容易在别处被误读。
     return {
-      // 拿掉全部小目标就可达 → 是小目标在挡路
-      miniGoalsBlamed: withGlobalOnly,
-      // 连全局约束也拿掉才可达 → 是两者彼此冲突
+      // 拿掉全部小目标就可达
+      miniGoalsBlocking: withGlobalOnly,
+      // 得连全局约束也拿掉才可达
       endingAndGlobalConflict: endingAlone && !withGlobalOnly,
-      // 怎么删约束都不可达 → 结局目标本身就不可能
-      endingGoalsUnreachable: !endingAlone,
+      // 连全局约束一起拿掉也达不到
+      endingGoalsAloneUnreachable: !endingAlone,
+      // 由近至远取消到哪一条小目标才可达；没有这样的前缀就是 null
       reachableAfterCancelling,
     };
   }
@@ -4058,24 +4060,28 @@ function describeGlobalConstraint(goal) {
 }
 
 function describeMiniGoal(goal) {
-  const names = goal.attributes.map(nameOf).join(' + ');
-  const relation = `${goal.deadline} ${names} ${goal.op === '>=' ? '≥' : '<'} ${goal.value}`;
+  const relation = `${goal.deadline} ${goalRelation(goal)}`;
   return goal.state === 'met'
     ? `${relation} —— 实际 ${goal.actual.toFixed(1)}`
     : `${relation} —— 实际 ${goal.actual.toFixed(1)}，还差 ${goal.shortfall.toFixed(1)}`;
 }
 
 function describeEndingGoal(goal) {
-  const relation = `${nameOf(goal.attribute)} ${goal.op === '>=' ? '≥' : '<'} ${goal.value}`;
+  const relation = goalRelation(goal);
   return goal.state === 'met'
     ? `${relation} —— 实际 ${goal.actual.toFixed(1)}`
     : `${relation} —— 实际 ${goal.actual.toFixed(1)}，还差 ${goal.shortfall.toFixed(1)}`;
 }
 
-/** 诊断里的目标是输入原件，没有 actual/shortfall，得单独拼一句人话。 */
-function describeGoalBriefly(goal) {
+/** 「文科 + 理科 ≥ 561」这种关系串，三种描述共用。 */
+function goalRelation(goal) {
   const names = goal.attributes ? goal.attributes.map(nameOf).join(' + ') : nameOf(goal.attribute);
-  return `${goal.deadline ? `${goal.deadline} ` : ''}${names} ${goal.op === '>=' ? '≥' : '<'} ${goal.value}`;
+  return `${names} ${goal.op === '>=' ? '≥' : '<'} ${goal.value}`;
+}
+
+/** 诊断里的目标是输入原件，没有实际值，只拼关系串（外加截止日期）。 */
+function describeGoalBriefly(goal) {
+  return `${goal.deadline ? `${goal.deadline} ` : ''}${goalRelation(goal)}`;
 }
 
 /**
@@ -4095,10 +4101,10 @@ function buildDiagnosis(diagnosis) {
   list.append(
     goalLine(
       '小目标',
-      diagnosis.miniGoalsBlamed
+      diagnosis.miniGoalsBlocking
         ? `是它在挡路——取消「${describeGoalBriefly(diagnosis.reachableAfterCancelling)}」之后即可达标`
         : '不是小目标在挡路',
-      !diagnosis.miniGoalsBlamed,
+      !diagnosis.miniGoalsBlocking,
     ),
   );
   list.append(
@@ -4113,10 +4119,10 @@ function buildDiagnosis(diagnosis) {
   list.append(
     goalLine(
       '结局目标本身',
-      diagnosis.endingGoalsUnreachable
+      diagnosis.endingGoalsAloneUnreachable
         ? '不可达——连全局约束一起拿掉也达不到'
         : '可达',
-      !diagnosis.endingGoalsUnreachable,
+      !diagnosis.endingGoalsAloneUnreachable,
     ),
   );
 

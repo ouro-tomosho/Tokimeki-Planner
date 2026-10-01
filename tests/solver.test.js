@@ -143,6 +143,19 @@ test('求解器绝不自行选择或切换社团', () => {
   }
 });
 
+test('贪心没排好时，终局修补能把收尾的硬约束补上', () => {
+  // Spec 轴审查给的反例：把结局「容姿 ≥ 100」放松到 55（纯放松），
+  // 滚动时域贪心会差一点点，修补阶段从终点往回扫应当收平。
+  const input = defaultInput(rules);
+  input.initialClub = 'science-club';
+  input.endingGoals = input.endingGoals.map((goal) =>
+    goal.attribute === 'appearance' ? { ...goal, value: 55 } : goal,
+  );
+
+  const { result } = solveAndPlan(input);
+  assert.equal(result.goals.ok, true);
+});
+
 test('未加入社团而小目标要求社团经验时，如实报为未达成', () => {
   const input = defaultInput(rules); // 未加入社团
   const { result } = solveAndPlan(input);

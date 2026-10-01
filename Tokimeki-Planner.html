@@ -1466,6 +1466,7 @@ return { createPlanner };
 })();
 __ns["src/solver.js"] = (() => {
 const { buildCalendar } = __ns["src/calendar.js"];
+const { createPlanner } = __ns["src/plan.js"];
 const { clubBlockReason, createClubLookup, availableCommandIds } = __ns["src/clubs.js"];
 const { meets } = __ns["src/constraints.js"];
 const { REST_DAY, WEEKDAY, createSettlement } = __ns["src/settlement.js"];
@@ -1482,7 +1483,8 @@ const { REST_DAY, WEEKDAY, createSettlement } = __ns["src/settlement.js"];
 //
 // 为什么不用"每个候选都重算整份规划"的局部搜索：一次完整规划要 5.8 ms，
 // 305 个槽位 × 17 个候选 × 全量重算 ≈ 30 秒/轮，够不上"秒到十几秒"。
-// 滚动时域只看当前槽位的那几天（约 0.04 ms/次），整趟约 0.2 秒，代价是短视。
+// 滚动时域只看当前槽位的那几天（约 0.04 ms/次），整趟几十毫秒，代价是短视。
+
 
 
 
@@ -1502,6 +1504,11 @@ const STRESS_TIEBREAK = 1e-9;
 // 这条边距只影响求解器"愿意贴多近"——只看一周的贪心若贴着悬崖走，迟早会掉下去。
 const INVARIANT_MARGIN = 4;
 
+// 终局修补的预算。贪心是滚动时域的、短视的；结局目标只看终点状态，
+// 所以排完之后再单独收一次尾，只在前面的结果没达标时才跑（这一步会慢到秒级）。
+const REPAIR_PASSES = 3;
+const REPAIR_WEEKS = 24;
+
 function createSolver(rules) {
   const settleDay = createSettlement(rules);
   const scale = rules.fixedPointScale;
@@ -1510,6 +1517,8 @@ function createSolver(rules) {
     .filter((attribute) => attribute.direction === 'up')
     .map((attribute) => attribute.id);
   const clubExperienceId = rules.clubExperience.id;
+  // 必须在这里建：下面的 return 之后就再也执行不到了（函数声明会提升，const 不会）。
+  const planner = createPlanner(rules);
 
   function initialState(input) {
     return {
@@ -1688,8 +1697,86 @@ function createSolver(rules) {
       }
     }
 
-    return { weekCommands, dayCommands };
+    const assignments = { weekCommands, dayCommands };
+
+    // 滚动时域贪心对"终点长什么样"没有直接视野，只靠加权引导。
+    // 没达标就再收一次尾：从后往前逐个槽位试遍候选，只接受让整份规划更好的改动。
+    if (planner(input, { assignments }).goals.ok) return assignments;
+    return repair(input, assignments);
   };
+
+  /** 一份日程的好坏：先看达标，再看还差多少，最后才是正向总和与压力。 */
+  function objectiveOf(result) {
+    let score = result.goals.score.positiveSum - result.goals.score.negative * 1e-3;
+    for (const goal of result.goals.endingGoals) {
+      if (goal.state !== 'met') score -= goal.shortfall * 1e3;
+    }
+    for (const goal of result.goals.miniGoals) {
+      if (goal.state !== 'met') score -= goal.shortfall * 1e3;
+    }
+    for (const goal of result.goals.globalConstraints) {
+      if (goal.state !== 'met') score -= 1e6;
+    }
+    return score;
+  }
+
+  function repair(input, assignments) {
+    const clubAt = createClubLookup(input);
+    const calendar = buildCalendar(rules, input, assignments);
+    const dayByDate = new Map(calendar.days.map((day) => [day.date, day]));
+    const candidatesAt = (date) => availableCommandIds(rules, clubAt(date), date);
+
+    const evaluate = () => planner(input, { assignments });
+    let best = objectiveOf(evaluate());
+
+    for (let pass = 0; pass < REPAIR_PASSES; pass += 1) {
+      if (evaluate().goals.ok) break;
+      let improved = false;
+
+      // 从终点往回扫：结局目标只取决于终点，越靠近终点越有效。
+      const recent = calendar.weeks.slice(-REPAIR_WEEKS).reverse();
+      for (const week of recent) {
+        const days = week.days.map((date) => dayByDate.get(date));
+        const workdays = days.filter((day) => !day.isRestDay);
+
+        if (workdays.length > 0 && input.weekCommands[week.start] === undefined) {
+          const date = workdays[0].date;
+          const original = assignments.weekCommands[week.start];
+          for (const id of candidatesAt(date)) {
+            if (id === original) continue;
+            assignments.weekCommands[week.start] = id;
+            const score = objectiveOf(evaluate());
+            if (score > best) {
+              best = score;
+              improved = true;
+            } else {
+              assignments.weekCommands[week.start] = original;
+            }
+          }
+        }
+
+        for (const day of days) {
+          if (!day.isRestDay || !day.isSettled) continue;
+          if (input.dayCommands[day.date] !== undefined) continue;
+          const original = assignments.dayCommands[day.date];
+          for (const id of candidatesAt(day.date)) {
+            if (id === original) continue;
+            assignments.dayCommands[day.date] = id;
+            const score = objectiveOf(evaluate());
+            if (score > best) {
+              best = score;
+              improved = true;
+            } else {
+              assignments.dayCommands[day.date] = original;
+            }
+          }
+        }
+      }
+
+      if (!improved) break;
+    }
+    return assignments;
+  }
 }
 return { createSolver };
 })();
@@ -2800,6 +2887,7 @@ return { createPlanner };
 })();
 __ns["src/solver.js"] = (() => {
 const { buildCalendar } = __ns["src/calendar.js"];
+const { createPlanner } = __ns["src/plan.js"];
 const { clubBlockReason, createClubLookup, availableCommandIds } = __ns["src/clubs.js"];
 const { meets } = __ns["src/constraints.js"];
 const { REST_DAY, WEEKDAY, createSettlement } = __ns["src/settlement.js"];
@@ -2816,7 +2904,8 @@ const { REST_DAY, WEEKDAY, createSettlement } = __ns["src/settlement.js"];
 //
 // 为什么不用"每个候选都重算整份规划"的局部搜索：一次完整规划要 5.8 ms，
 // 305 个槽位 × 17 个候选 × 全量重算 ≈ 30 秒/轮，够不上"秒到十几秒"。
-// 滚动时域只看当前槽位的那几天（约 0.04 ms/次），整趟约 0.2 秒，代价是短视。
+// 滚动时域只看当前槽位的那几天（约 0.04 ms/次），整趟几十毫秒，代价是短视。
+
 
 
 
@@ -2836,6 +2925,11 @@ const STRESS_TIEBREAK = 1e-9;
 // 这条边距只影响求解器"愿意贴多近"——只看一周的贪心若贴着悬崖走，迟早会掉下去。
 const INVARIANT_MARGIN = 4;
 
+// 终局修补的预算。贪心是滚动时域的、短视的；结局目标只看终点状态，
+// 所以排完之后再单独收一次尾，只在前面的结果没达标时才跑（这一步会慢到秒级）。
+const REPAIR_PASSES = 3;
+const REPAIR_WEEKS = 24;
+
 function createSolver(rules) {
   const settleDay = createSettlement(rules);
   const scale = rules.fixedPointScale;
@@ -2844,6 +2938,8 @@ function createSolver(rules) {
     .filter((attribute) => attribute.direction === 'up')
     .map((attribute) => attribute.id);
   const clubExperienceId = rules.clubExperience.id;
+  // 必须在这里建：下面的 return 之后就再也执行不到了（函数声明会提升，const 不会）。
+  const planner = createPlanner(rules);
 
   function initialState(input) {
     return {
@@ -3022,8 +3118,86 @@ function createSolver(rules) {
       }
     }
 
-    return { weekCommands, dayCommands };
+    const assignments = { weekCommands, dayCommands };
+
+    // 滚动时域贪心对"终点长什么样"没有直接视野，只靠加权引导。
+    // 没达标就再收一次尾：从后往前逐个槽位试遍候选，只接受让整份规划更好的改动。
+    if (planner(input, { assignments }).goals.ok) return assignments;
+    return repair(input, assignments);
   };
+
+  /** 一份日程的好坏：先看达标，再看还差多少，最后才是正向总和与压力。 */
+  function objectiveOf(result) {
+    let score = result.goals.score.positiveSum - result.goals.score.negative * 1e-3;
+    for (const goal of result.goals.endingGoals) {
+      if (goal.state !== 'met') score -= goal.shortfall * 1e3;
+    }
+    for (const goal of result.goals.miniGoals) {
+      if (goal.state !== 'met') score -= goal.shortfall * 1e3;
+    }
+    for (const goal of result.goals.globalConstraints) {
+      if (goal.state !== 'met') score -= 1e6;
+    }
+    return score;
+  }
+
+  function repair(input, assignments) {
+    const clubAt = createClubLookup(input);
+    const calendar = buildCalendar(rules, input, assignments);
+    const dayByDate = new Map(calendar.days.map((day) => [day.date, day]));
+    const candidatesAt = (date) => availableCommandIds(rules, clubAt(date), date);
+
+    const evaluate = () => planner(input, { assignments });
+    let best = objectiveOf(evaluate());
+
+    for (let pass = 0; pass < REPAIR_PASSES; pass += 1) {
+      if (evaluate().goals.ok) break;
+      let improved = false;
+
+      // 从终点往回扫：结局目标只取决于终点，越靠近终点越有效。
+      const recent = calendar.weeks.slice(-REPAIR_WEEKS).reverse();
+      for (const week of recent) {
+        const days = week.days.map((date) => dayByDate.get(date));
+        const workdays = days.filter((day) => !day.isRestDay);
+
+        if (workdays.length > 0 && input.weekCommands[week.start] === undefined) {
+          const date = workdays[0].date;
+          const original = assignments.weekCommands[week.start];
+          for (const id of candidatesAt(date)) {
+            if (id === original) continue;
+            assignments.weekCommands[week.start] = id;
+            const score = objectiveOf(evaluate());
+            if (score > best) {
+              best = score;
+              improved = true;
+            } else {
+              assignments.weekCommands[week.start] = original;
+            }
+          }
+        }
+
+        for (const day of days) {
+          if (!day.isRestDay || !day.isSettled) continue;
+          if (input.dayCommands[day.date] !== undefined) continue;
+          const original = assignments.dayCommands[day.date];
+          for (const id of candidatesAt(day.date)) {
+            if (id === original) continue;
+            assignments.dayCommands[day.date] = id;
+            const score = objectiveOf(evaluate());
+            if (score > best) {
+              best = score;
+              improved = true;
+            } else {
+              assignments.dayCommands[day.date] = original;
+            }
+          }
+        }
+      }
+
+      if (!improved) break;
+    }
+    return assignments;
+  }
 }
 return { createSolver };
 })();

@@ -30,8 +30,7 @@ function resolveSkipSource(date, isRestDay, weekStart, input, skippedDaySet) {
  * 某一天实际执行的指令，以及它是从哪来的。
  *
  * 这是**唯一**的解析口径：使用者显式指定（含显式 null = 空过）→ 求解器的填空 →
- * 全局默认指令 → 都没有就留空（待定）。日历、求解器、界面全部走这里，
- * 免得各写一份、然后悄悄分叉。
+ * 都没有就留空（待定）。日历、求解器、界面全部走这里，免得各写一份、然后悄悄分叉。
  */
 export function resolveCommand(input, assignments, slot) {
   const { isRestDay, date, weekStart } = slot;
@@ -43,10 +42,6 @@ export function resolveCommand(input, assignments, slot) {
     : assignments?.weekCommands?.[weekStart];
   if (assigned !== undefined) return { commandId: assigned, source: 'assigned' };
 
-  const fallback = isRestDay ? input.defaultDayCommand : input.defaultWeekCommand;
-  if (fallback !== undefined && fallback !== null) {
-    return { commandId: fallback, source: 'default' };
-  }
   return { commandId: null, source: 'none' };
 }
 
@@ -68,8 +63,7 @@ export function buildCalendar(rules, input, assignments = null) {
     const isTimelineEnd = date === end;
     const isSettled = !isEmpty && !isGameOpening && !isTimelineEnd;
 
-    // 使用者显式指定（含显式 null = 空过）最优先；其次才是求解器的填空；
-    // 再次是全局默认指令；都没有就留空（待定）。
+    // 使用者显式指定（含显式 null = 空过）最优先；其次才是求解器的填空；都没有就留空（待定）。
     // 空过就是「指令留空」（见 GLOSSARY）；界面要显示"本来会执行什么"时走同一个解析，
     // 而不是让数据模型替界面记住。
     const commandId = isEmpty

@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { comparePlans, meets, shortfallOf } from '../src/constraints.js';
 import { createPlanner } from '../src/plan.js';
 import { defaultInput } from '../src/input.js';
+import { fillRestDays, fillWeeks } from './support/fill.js';
 import { loadRules } from './support/rules.js';
 
 const rules = loadRules();
@@ -66,7 +67,7 @@ test('硬不变量被破坏时，逐日报出违例的日期', () => {
   const result = planOf((input) => {
     input.startDate = '1998-02-22';
     input.globalConstraints = [{ attribute: 'stamina', op: '>=', value: 99 }];
-    input.defaultWeekCommand = 'cmd-exercise'; // 每天扣体力
+    fillWeeks(input, rules, 'cmd-exercise'); // 每天扣体力
   });
 
   const stamina = result.goals.globalConstraints[0];
@@ -87,7 +88,7 @@ test('空过的天不参与全局约束的判定', () => {
   const result = planOf((input) => {
     input.startDate = '1998-02-22';
     input.globalConstraints = [{ attribute: 'stamina', op: '>=', value: 99 }];
-    input.defaultWeekCommand = 'cmd-exercise';
+    fillWeeks(input, rules, 'cmd-exercise');
     input.skippedDays = ['1998-02-24'];
   });
 
@@ -107,7 +108,7 @@ test('尽快满足：真正被抬上去时，报出首次达成的日期', () =>
   const result = planOf((input) => {
     input.startDate = '1998-02-22';
     input.globalConstraints = [{ attribute: 'stamina', op: '>=', value: 105 }];
-    input.defaultWeekCommand = 'cmd-rest';
+    fillWeeks(input, rules, 'cmd-rest');
   });
 
   const stamina = result.goals.globalConstraints[0];
@@ -133,7 +134,7 @@ test('小目标：阈值作用于属性集合的求和', () => {
 test('小目标达标时报出达成与评估日', () => {
   const result = planOf((input) => {
     input.startDate = '1998-02-20';
-    input.defaultWeekCommand = 'cmd-study-literature';
+    fillWeeks(input, rules, 'cmd-study-literature');
     input.miniGoals = [{ deadline: '1998-02-28', attributes: ['literature'], op: '>=', value: 42 }];
   });
 
@@ -147,7 +148,7 @@ test('小目标的属性集合可以包含社团经验，指向当前社团的�
   const result = planOf((input) => {
     input.startDate = '1998-02-20';
     input.initialClub = 'science-club';
-    input.defaultWeekCommand = 'cmd-club-science';
+    fillWeeks(input, rules, 'cmd-club-science');
     input.miniGoals = [
       { deadline: '1998-02-28', attributes: [rules.clubExperience.id], op: '>=', value: 5 },
     ];
@@ -188,12 +189,12 @@ test('目标函数第一层：硬约束优先于属性总和', () => {
 
   const hardMet = planOf((input) => {
     clearAll(input);
-    input.defaultWeekCommand = 'cmd-rest';
+    fillWeeks(input, rules, 'cmd-rest');
   });
   const hardUnmet = planOf((input) => {
     clearAll(input);
     input.endingGoals = [{ attribute: 'literature', op: '>=', value: 999 }];
-    input.defaultWeekCommand = 'cmd-study-literature';
+    fillWeeks(input, rules, 'cmd-study-literature');
   });
 
   assert.equal(hardMet.goals.ok, true);
@@ -211,11 +212,11 @@ test('目标函数第二层：都达标时，正向等权总和大的更优', ()
 
   const exercise = planOf((input) => {
     prepare(input);
-    input.defaultWeekCommand = 'cmd-exercise';
+    fillWeeks(input, rules, 'cmd-exercise');
   });
   const study = planOf((input) => {
     prepare(input);
-    input.defaultWeekCommand = 'cmd-study-literature';
+    fillWeeks(input, rules, 'cmd-study-literature');
   });
 
   assert.ok(exercise.goals.score.positiveSum > study.goals.score.positiveSum);

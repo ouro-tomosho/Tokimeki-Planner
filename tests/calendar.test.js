@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { createPlanner } from '../src/plan.js';
 import { createSettlement } from '../src/settlement.js';
 import { defaultInput } from '../src/input.js';
+import { fillRestDays, fillWeeks } from './support/fill.js';
 import { loadRules } from './support/rules.js';
 
 const rules = loadRules();
@@ -286,8 +287,8 @@ test('全局默认指令能铺满整条时间轴，逐日属性按期望值演�
   const result = planOf((input) => {
     input.startDate = '1998-02-22';
     input.attributes.stress = 50;
-    input.defaultWeekCommand = 'cmd-rest';
-    input.defaultDayCommand = 'cmd-rest';
+    fillWeeks(input, rules, 'cmd-rest');
+    fillRestDays(input, rules, 'cmd-rest');
   });
 
   // 02-22 是周日（休息日）：休息指令的体力 +3.1×4、压力 -2.9×4
@@ -308,7 +309,7 @@ test('全局默认指令能铺满整条时间轴，逐日属性按期望值演�
 test('空过日不结算，属性原样带入下一天', () => {
   const result = planOf((input) => {
     input.startDate = '1998-02-22';
-    input.defaultWeekCommand = 'cmd-rest';
+    fillWeeks(input, rules, 'cmd-rest');
     input.skippedDays = ['1998-02-24'];
   });
 
@@ -322,7 +323,7 @@ test('空过日不结算，属性原样带入下一天', () => {
 test('显式指定的周指令优先于全局默认', () => {
   const result = planOf((input) => {
     input.startDate = '1998-02-22';
-    input.defaultWeekCommand = 'cmd-rest';
+    fillWeeks(input, rules, 'cmd-rest');
     input.weekCommands['1998-02-22'] = 'cmd-exercise';
   });
 
@@ -336,7 +337,7 @@ test('同一输入两次规划，逐日属性完全一致', () => {
   const build = () => {
     const input = defaultInput(rules);
     input.startDate = '1998-02-22';
-    input.defaultWeekCommand = 'cmd-study-literature';
+    fillWeeks(input, rules, 'cmd-study-literature');
     return plan(input);
   };
   assert.deepEqual(build().days, build().days);
@@ -349,11 +350,11 @@ test('结果表的逐日属性与逐次调用 settleDay 完全一致（两个接
   const input = defaultInput(rules);
   input.startDate = '1998-02-20';
   input.attributes.stress = 50;
-  input.defaultWeekCommand = 'cmd-study-literature';
-  input.defaultDayCommand = 'cmd-rest';
+  fillWeeks(input, rules, 'cmd-study-literature');
+  fillRestDays(input, rules, 'cmd-rest');
   input.restDays = ['1998-02-25'];
   input.skippedDays = ['1998-02-24'];
-  input.weekCommands = { '1998-02-22': null }; // 把这一周平日整体空过
+  input.weekCommands['1998-02-22'] = null; // 把这一周平日整体空过
 
   const result = plan(input);
   assert.equal(result.ok, true);

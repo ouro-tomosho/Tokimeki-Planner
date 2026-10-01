@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 
 import { createPlanner } from '../src/plan.js';
 import { defaultInput } from '../src/input.js';
+import { fillRestDays, fillWeeks } from './support/fill.js';
 import { loadRules } from './support/rules.js';
 
 const rules = loadRules();
@@ -30,7 +31,7 @@ test('社团切换自该日起生效：切换之前不可用，当天起可用',
     input.startDate = '1995-04-09';
     input.initialClub = 'literature-club';
     input.clubChanges = [{ date: '1995-04-16', clubId: 'science-club' }];
-    input.defaultWeekCommand = 'cmd-club-science';
+    fillWeeks(input, rules, 'cmd-club-science');
   });
 
   // 04-09 那一周的社团还是文艺社
@@ -45,7 +46,7 @@ test('起点之前没有社团、之后加入：切换记录的顺序不影响�
       input.startDate = '1995-04-09';
       input.initialClub = null;
       input.clubChanges = changes;
-      input.defaultWeekCommand = 'cmd-club-art';
+      fillWeeks(input, rules, 'cmd-club-art');
       input.initialClub = null;
     });
 
@@ -70,7 +71,7 @@ test('起点之前没有社团、之后加入：切换记录的顺序不影响�
 test('没有加入社团时，社团指令不会被结算', () => {
   const result = planOf((input) => {
     input.initialClub = null;
-    input.defaultWeekCommand = 'cmd-club-science';
+    fillWeeks(input, rules, 'cmd-club-science');
   });
 
   // 1995-04-10 已经在解锁日之后，但没选社团
@@ -82,7 +83,7 @@ test('没有加入社团时，社团指令不会被结算', () => {
 test('解锁日之前，社团指令不会被结算', () => {
   const result = planOf((input) => {
     input.initialClub = 'science-club';
-    input.defaultWeekCommand = 'cmd-club-science';
+    fillWeeks(input, rules, 'cmd-club-science');
   });
 
   // 解锁日是 1995-04-09
@@ -95,7 +96,7 @@ test('解锁日之前，社团指令不会被结算', () => {
 test('加入的是别的社团时，这条社团指令不会被结算', () => {
   const result = planOf((input) => {
     input.initialClub = 'science-club';
-    input.defaultWeekCommand = 'cmd-club-baseball';
+    fillWeeks(input, rules, 'cmd-club-baseball');
   });
 
   assert.equal(dayAt(result, '1995-04-10').commandBlocked, 'club-mismatch');
@@ -104,7 +105,7 @@ test('加入的是别的社团时，这条社团指令不会被结算', () => {
 test('选定社团后，该社的社团指令照常结算', () => {
   const result = planOf((input) => {
     input.initialClub = 'science-club';
-    input.defaultWeekCommand = 'cmd-club-science';
+    fillWeeks(input, rules, 'cmd-club-science');
   });
 
   const day = dayAt(result, '1995-04-10');
@@ -116,7 +117,7 @@ test('选定社团后，该社的社团指令照常结算', () => {
 test('日常指令不受社团限制', () => {
   const result = planOf((input) => {
     input.initialClub = null;
-    input.defaultWeekCommand = 'cmd-study-literature';
+    fillWeeks(input, rules, 'cmd-study-literature');
   });
 
   const day = dayAt(result, '1995-04-05');
@@ -148,9 +149,9 @@ test('社团经验各自独立；切换后旧社团保留、新社团从自己�
   const result = planOf((input) => {
     input.startDate = '1995-04-09';
     input.initialClub = 'science-club';
-    input.defaultWeekCommand = 'cmd-club-science';
+    fillWeeks(input, rules, 'cmd-club-science');
     input.clubChanges = [{ date: '1995-04-23', clubId: 'baseball-club' }];
-    input.weekCommands = { '1995-04-23': 'cmd-club-baseball' };
+    input.weekCommands['1995-04-23'] = 'cmd-club-baseball';
   });
 
   assert.ok(result.clubExperience['science-club'] > 0, '旧社团的经验保留');
@@ -162,7 +163,7 @@ test('社团指令不可用时，该日不结算，属性原样带入下一天',
   const result = planOf((input) => {
     input.startDate = '1995-04-09';
     input.initialClub = null;
-    input.defaultWeekCommand = 'cmd-club-science';
+    fillWeeks(input, rules, 'cmd-club-science');
   });
 
   assert.deepEqual(dayAt(result, '1995-04-10').attributes, dayAt(result, '1995-04-09').attributes);

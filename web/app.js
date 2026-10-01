@@ -163,11 +163,6 @@ function choiceFromCommandId(commandId) {
   return commandId;
 }
 
-/** 全局默认指令只有两态：未指定 / 某条指令——「空过」是逐周逐日的选择，不做全局默认。 */
-function commandIdFromDefaultChoice(choice) {
-  return choice === UNSET ? null : choice;
-}
-
 /** 三个下拉框共用的建 option 循环。 */
 function fillSelect(select, entries, value) {
   select.textContent = '';
@@ -182,12 +177,10 @@ function fillSelect(select, entries, value) {
 
 /**
  * 指令下拉框。`choice` 是已经归一化过的选择串。
- * `allowEmpty` 为假时不给「空过」选项——那就是全局默认指令。
  * `commands` 用来把不可用的社团指令挡在候选之外。
  */
-function fillCommandSelect(select, choice, { allowEmpty = true, commands = rules.commands } = {}) {
-  const entries = [[UNSET, '未指定']];
-  if (allowEmpty) entries.push([EMPTY, '空过']);
+function fillCommandSelect(select, choice, { commands = rules.commands } = {}) {
+  const entries = [[UNSET, '未指定'], [EMPTY, '空过']];
   for (const command of commands) entries.push([command.id, command.name]);
 
   // 已经写进输入、但当前**不可用**的指令也要留在选项里——否则下拉框会显示成"未指定"，
@@ -274,26 +267,6 @@ function fillCommandCell(cell, day, clubAt) {
   cell.textContent = day.commandId ? (commandNames.get(day.commandId) ?? day.commandId) : '—';
 }
 
-/**
- * 全局默认指令能选的指令：只要这套规划里**某个时点**用得上就列出来。
- * 没加入过任何社团时，一条社团指令都不该出现在这里（票 04 审查指出的漏洞）。
- */
-function commandsUsableSomewhere() {
-  const joined = new Set();
-  if (state.input.initialClub) joined.add(state.input.initialClub);
-  for (const change of state.input.clubChanges) {
-    if (change.clubId) joined.add(change.clubId);
-  }
-  return rules.commands.filter((command) => command.kind !== 'club' || joined.has(command.clubId));
-}
-
-/** 社团一变，全局默认指令里能选的社团指令也跟着变。 */
-function refreshGlobalCommandSelects() {
-  const globals = { allowEmpty: false, commands: commandsUsableSomewhere() };
-  fillCommandSelect($('default-week-command'), state.input.defaultWeekCommand ?? UNSET, globals);
-  fillCommandSelect($('default-day-command'), state.input.defaultDayCommand ?? UNSET, globals);
-}
-
 // ---------------------------------------------------------------- 输入区
 
 function renderForm() {
@@ -327,7 +300,6 @@ function renderForm() {
   }
 
   fillClubSelect($('initial-club'), state.input.initialClub);
-  refreshGlobalCommandSelects();
   renderGoalEditors();
 }
 
@@ -962,7 +934,6 @@ $('calendar').addEventListener('change', (event) => {
     setMapEntry(state.input.dayCommands, control.dataset.date, control.value);
   } else if (action === 'club-change') {
     setClubChange(control.dataset.week, control.value);
-    refreshGlobalCommandSelects();
   } else {
     return;
   }
@@ -1004,17 +975,6 @@ $('start-date').addEventListener('change', (event) => {
 
 $('initial-club').addEventListener('change', (event) => {
   state.input.initialClub = event.target.value === UNSET ? null : event.target.value;
-  refreshGlobalCommandSelects();
-  generate();
-});
-
-$('default-week-command').addEventListener('change', (event) => {
-  state.input.defaultWeekCommand = commandIdFromDefaultChoice(event.target.value);
-  generate();
-});
-
-$('default-day-command').addEventListener('change', (event) => {
-  state.input.defaultDayCommand = commandIdFromDefaultChoice(event.target.value);
   generate();
 });
 

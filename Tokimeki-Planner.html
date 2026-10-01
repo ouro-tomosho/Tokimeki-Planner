@@ -345,17 +345,6 @@
         </div>
         <small>社团只能在周日切换，用每周表头的社团下拉框；未加入社团时社团指令不可选。</small>
 
-        <h2 class="spaced">全局默认指令</h2>
-        <div class="field">
-          <span>平日周指令</span>
-          <select id="default-week-command"></select>
-        </div>
-        <div class="field">
-          <span>休息日日指令</span>
-          <select id="default-day-command"></select>
-        </div>
-        <small>没有单独指定的周与日都走这里；某一周的「空过」仍然只管该周平日。</small>
-
         <h2 class="spaced">全局约束</h2>
         <div id="global-constraints" class="goal-list"></div>
         <button id="btn-add-global" class="goal-add" type="button">+ 加一条</button>
@@ -470,8 +459,7 @@ function resolveSkipSource(date, isRestDay, weekStart, input, skippedDaySet) {
  * 某一天实际执行的指令，以及它是从哪来的。
  *
  * 这是**唯一**的解析口径：使用者显式指定（含显式 null = 空过）→ 求解器的填空 →
- * 全局默认指令 → 都没有就留空（待定）。日历、求解器、界面全部走这里，
- * 免得各写一份、然后悄悄分叉。
+ * 都没有就留空（待定）。日历、求解器、界面全部走这里，免得各写一份、然后悄悄分叉。
  */
 function resolveCommand(input, assignments, slot) {
   const { isRestDay, date, weekStart } = slot;
@@ -483,10 +471,6 @@ function resolveCommand(input, assignments, slot) {
     : assignments?.weekCommands?.[weekStart];
   if (assigned !== undefined) return { commandId: assigned, source: 'assigned' };
 
-  const fallback = isRestDay ? input.defaultDayCommand : input.defaultWeekCommand;
-  if (fallback !== undefined && fallback !== null) {
-    return { commandId: fallback, source: 'default' };
-  }
   return { commandId: null, source: 'none' };
 }
 
@@ -508,8 +492,7 @@ function buildCalendar(rules, input, assignments = null) {
     const isTimelineEnd = date === end;
     const isSettled = !isEmpty && !isGameOpening && !isTimelineEnd;
 
-    // 使用者显式指定（含显式 null = 空过）最优先；其次才是求解器的填空；
-    // 再次是全局默认指令；都没有就留空（待定）。
+    // 使用者显式指定（含显式 null = 空过）最优先；其次才是求解器的填空；都没有就留空（待定）。
     // 空过就是「指令留空」（见 GLOSSARY）；界面要显示"本来会执行什么"时走同一个解析，
     // 而不是让数据模型替界面记住。
     const commandId = isEmpty
@@ -883,10 +866,6 @@ function defaultInput(rules) {
     globalConstraints: structuredClone(rules.defaultGlobalConstraints),
     endingGoals: structuredClone(rules.defaultEndingGoals),
     miniGoals: structuredClone(rules.defaultMiniGoals),
-    // 全局默认指令：某一周 / 某一天**没有显式指定**时用它。显式的 null 仍然表示空过，
-    // 因为那时键是存在的——「键不存在」与「键为 null」是两件不同的事。
-    defaultWeekCommand: null,
-    defaultDayCommand: null,
     initialClub: null,
     clubChanges: [],
     weekCommands: {},
@@ -956,8 +935,6 @@ function validateInput(input, rules) {
   );
 
   checkClub(input, clubIds, inWeekAnchors, problems);
-  checkCommandId('defaultWeekCommand', input.defaultWeekCommand, commandIds, problems);
-  checkCommandId('defaultDayCommand', input.defaultDayCommand, commandIds, problems);
   checkWeekCommands(input.weekCommands, commandIds, inWeekAnchors, problems);
   checkDayCommands(input.dayCommands, commandIds, inTimeline, problems);
   checkDayList('restDays', input.restDays, inTimeline, problems);
@@ -1007,12 +984,6 @@ function checkClub(input, clubIds, inTimeline, problems) {
       problems.push(`clubChanges 引用了未知社团 ${change?.clubId}`);
     }
   }
-}
-
-function checkCommandId(label, commandId, commandIds, problems) {
-  // 缺字段（老存档）与显式 null 同义：都没有全局默认指令。
-  if (commandId === null || commandId === undefined) return;
-  if (!commandIds.has(commandId)) problems.push(`${label} 引用了未知指令 ${commandId}`);
 }
 
 function checkWeekCommands(map, commandIds, inTimeline, problems) {
@@ -1891,8 +1862,7 @@ function resolveSkipSource(date, isRestDay, weekStart, input, skippedDaySet) {
  * 某一天实际执行的指令，以及它是从哪来的。
  *
  * 这是**唯一**的解析口径：使用者显式指定（含显式 null = 空过）→ 求解器的填空 →
- * 全局默认指令 → 都没有就留空（待定）。日历、求解器、界面全部走这里，
- * 免得各写一份、然后悄悄分叉。
+ * 都没有就留空（待定）。日历、求解器、界面全部走这里，免得各写一份、然后悄悄分叉。
  */
 function resolveCommand(input, assignments, slot) {
   const { isRestDay, date, weekStart } = slot;
@@ -1904,10 +1874,6 @@ function resolveCommand(input, assignments, slot) {
     : assignments?.weekCommands?.[weekStart];
   if (assigned !== undefined) return { commandId: assigned, source: 'assigned' };
 
-  const fallback = isRestDay ? input.defaultDayCommand : input.defaultWeekCommand;
-  if (fallback !== undefined && fallback !== null) {
-    return { commandId: fallback, source: 'default' };
-  }
   return { commandId: null, source: 'none' };
 }
 
@@ -1929,8 +1895,7 @@ function buildCalendar(rules, input, assignments = null) {
     const isTimelineEnd = date === end;
     const isSettled = !isEmpty && !isGameOpening && !isTimelineEnd;
 
-    // 使用者显式指定（含显式 null = 空过）最优先；其次才是求解器的填空；
-    // 再次是全局默认指令；都没有就留空（待定）。
+    // 使用者显式指定（含显式 null = 空过）最优先；其次才是求解器的填空；都没有就留空（待定）。
     // 空过就是「指令留空」（见 GLOSSARY）；界面要显示"本来会执行什么"时走同一个解析，
     // 而不是让数据模型替界面记住。
     const commandId = isEmpty
@@ -2187,10 +2152,6 @@ function defaultInput(rules) {
     globalConstraints: structuredClone(rules.defaultGlobalConstraints),
     endingGoals: structuredClone(rules.defaultEndingGoals),
     miniGoals: structuredClone(rules.defaultMiniGoals),
-    // 全局默认指令：某一周 / 某一天**没有显式指定**时用它。显式的 null 仍然表示空过，
-    // 因为那时键是存在的——「键不存在」与「键为 null」是两件不同的事。
-    defaultWeekCommand: null,
-    defaultDayCommand: null,
     initialClub: null,
     clubChanges: [],
     weekCommands: {},
@@ -2260,8 +2221,6 @@ function validateInput(input, rules) {
   );
 
   checkClub(input, clubIds, inWeekAnchors, problems);
-  checkCommandId('defaultWeekCommand', input.defaultWeekCommand, commandIds, problems);
-  checkCommandId('defaultDayCommand', input.defaultDayCommand, commandIds, problems);
   checkWeekCommands(input.weekCommands, commandIds, inWeekAnchors, problems);
   checkDayCommands(input.dayCommands, commandIds, inTimeline, problems);
   checkDayList('restDays', input.restDays, inTimeline, problems);
@@ -2311,12 +2270,6 @@ function checkClub(input, clubIds, inTimeline, problems) {
       problems.push(`clubChanges 引用了未知社团 ${change?.clubId}`);
     }
   }
-}
-
-function checkCommandId(label, commandId, commandIds, problems) {
-  // 缺字段（老存档）与显式 null 同义：都没有全局默认指令。
-  if (commandId === null || commandId === undefined) return;
-  if (!commandIds.has(commandId)) problems.push(`${label} 引用了未知指令 ${commandId}`);
 }
 
 function checkWeekCommands(map, commandIds, inTimeline, problems) {
@@ -3374,11 +3327,6 @@ function choiceFromCommandId(commandId) {
   return commandId;
 }
 
-/** 全局默认指令只有两态：未指定 / 某条指令——「空过」是逐周逐日的选择，不做全局默认。 */
-function commandIdFromDefaultChoice(choice) {
-  return choice === UNSET ? null : choice;
-}
-
 /** 三个下拉框共用的建 option 循环。 */
 function fillSelect(select, entries, value) {
   select.textContent = '';
@@ -3393,12 +3341,10 @@ function fillSelect(select, entries, value) {
 
 /**
  * 指令下拉框。`choice` 是已经归一化过的选择串。
- * `allowEmpty` 为假时不给「空过」选项——那就是全局默认指令。
  * `commands` 用来把不可用的社团指令挡在候选之外。
  */
-function fillCommandSelect(select, choice, { allowEmpty = true, commands = rules.commands } = {}) {
-  const entries = [[UNSET, '未指定']];
-  if (allowEmpty) entries.push([EMPTY, '空过']);
+function fillCommandSelect(select, choice, { commands = rules.commands } = {}) {
+  const entries = [[UNSET, '未指定'], [EMPTY, '空过']];
   for (const command of commands) entries.push([command.id, command.name]);
 
   // 已经写进输入、但当前**不可用**的指令也要留在选项里——否则下拉框会显示成"未指定"，
@@ -3485,26 +3431,6 @@ function fillCommandCell(cell, day, clubAt) {
   cell.textContent = day.commandId ? (commandNames.get(day.commandId) ?? day.commandId) : '—';
 }
 
-/**
- * 全局默认指令能选的指令：只要这套规划里**某个时点**用得上就列出来。
- * 没加入过任何社团时，一条社团指令都不该出现在这里（票 04 审查指出的漏洞）。
- */
-function commandsUsableSomewhere() {
-  const joined = new Set();
-  if (state.input.initialClub) joined.add(state.input.initialClub);
-  for (const change of state.input.clubChanges) {
-    if (change.clubId) joined.add(change.clubId);
-  }
-  return rules.commands.filter((command) => command.kind !== 'club' || joined.has(command.clubId));
-}
-
-/** 社团一变，全局默认指令里能选的社团指令也跟着变。 */
-function refreshGlobalCommandSelects() {
-  const globals = { allowEmpty: false, commands: commandsUsableSomewhere() };
-  fillCommandSelect($('default-week-command'), state.input.defaultWeekCommand ?? UNSET, globals);
-  fillCommandSelect($('default-day-command'), state.input.defaultDayCommand ?? UNSET, globals);
-}
-
 // ---------------------------------------------------------------- 输入区
 
 function renderForm() {
@@ -3538,7 +3464,6 @@ function renderForm() {
   }
 
   fillClubSelect($('initial-club'), state.input.initialClub);
-  refreshGlobalCommandSelects();
   renderGoalEditors();
 }
 
@@ -4173,7 +4098,6 @@ $('calendar').addEventListener('change', (event) => {
     setMapEntry(state.input.dayCommands, control.dataset.date, control.value);
   } else if (action === 'club-change') {
     setClubChange(control.dataset.week, control.value);
-    refreshGlobalCommandSelects();
   } else {
     return;
   }
@@ -4215,17 +4139,6 @@ $('start-date').addEventListener('change', (event) => {
 
 $('initial-club').addEventListener('change', (event) => {
   state.input.initialClub = event.target.value === UNSET ? null : event.target.value;
-  refreshGlobalCommandSelects();
-  generate();
-});
-
-$('default-week-command').addEventListener('change', (event) => {
-  state.input.defaultWeekCommand = commandIdFromDefaultChoice(event.target.value);
-  generate();
-});
-
-$('default-day-command').addEventListener('change', (event) => {
-  state.input.defaultDayCommand = commandIdFromDefaultChoice(event.target.value);
   generate();
 });
 

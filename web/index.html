@@ -130,6 +130,89 @@
         color: var(--muted);
         margin-bottom: 8px;
       }
+      #goals-status {
+        font-size: 12px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        margin-bottom: 10px;
+        overflow: hidden;
+      }
+      #goals-status .headline {
+        padding: 6px 12px;
+        font-weight: 600;
+      }
+      #goals-status .headline.ok {
+        background: #e7f6ec;
+        color: #14663a;
+      }
+      #goals-status .headline.bad {
+        background: #fdeceb;
+        color: #8c1d18;
+      }
+      #goals-status ul {
+        list-style: none;
+        margin: 0;
+        padding: 6px 12px;
+      }
+      #goals-status li {
+        padding: 1px 0;
+        font-variant-numeric: tabular-nums;
+      }
+      #goals-status li .tag {
+        display: inline-block;
+        min-width: 62px;
+        color: var(--muted);
+      }
+      #goals-status li.met {
+        color: #14663a;
+      }
+      #goals-status li.unmet {
+        color: #8c1d18;
+      }
+      .goal-list {
+        margin-bottom: 6px;
+      }
+      .goal-row {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        margin-bottom: 4px;
+        font-size: 12px;
+      }
+      .goal-row select,
+      .goal-row input {
+        font: inherit;
+        font-size: 12px;
+        padding: 2px 4px;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: #fff;
+        min-width: 0;
+      }
+      .goal-row .attr {
+        flex: 1 1 auto;
+      }
+      .goal-row .num {
+        width: 62px;
+      }
+      .goal-row .date {
+        width: 124px;
+      }
+      .goal-row .attrs {
+        flex: 1 1 auto;
+        height: 52px;
+      }
+      .goal-row .remove {
+        padding: 2px 7px;
+        line-height: 1.2;
+      }
+      .goal-add {
+        font-size: 12px;
+        padding: 3px 9px;
+      }
+      #summary {
+        font-size: 13px;
+      }
       #curve {
         margin-bottom: 10px;
       }
@@ -273,6 +356,21 @@
         </div>
         <small>没有单独指定的周与日都走这里；某一周的「空过」仍然只管该周平日。</small>
 
+        <h2 class="spaced">全局约束</h2>
+        <div id="global-constraints" class="goal-list"></div>
+        <button id="btn-add-global" class="goal-add" type="button">+ 加一条</button>
+        <small>起点已满足的，往后每天都要成立；起点未满足的，尽快满足。</small>
+
+        <h2 class="spaced">小目标</h2>
+        <div id="mini-goals" class="goal-list"></div>
+        <button id="btn-add-mini" class="goal-add" type="button">+ 加一条</button>
+        <small>阈值作用于所选属性的求和。</small>
+
+        <h2 class="spaced">结局目标</h2>
+        <div id="ending-goals" class="goal-list"></div>
+        <button id="btn-add-ending" class="goal-add" type="button">+ 加一条</button>
+        <small>在 1998-03-01 逐项评估。</small>
+
         <div class="actions">
           <button id="btn-plan" class="primary" type="button">生成</button>
           <button id="btn-export" type="button">导出 JSON</button>
@@ -287,6 +385,7 @@
         <h2>结果</h2>
         <div id="status">尚未计算。</div>
         <div id="summary"></div>
+        <div id="goals-status"></div>
         <div id="curve"></div>
         <div class="calendar-tools">
           <label>跳到日期 <input id="jump-date" type="date" /></label>

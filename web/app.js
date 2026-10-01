@@ -264,6 +264,7 @@ function renderForm() {
 
   fillClubSelect($('initial-club'), state.input.initialClub);
   refreshGlobalCommandSelects();
+  renderGoalEditors();
 }
 
 // ---------------------------------------------------------------- 日历表
@@ -545,6 +546,219 @@ function scrollToDate(date) {
   setTimeout(() => row.classList.remove('is-highlight'), 1200);
 }
 
+// ---------------------------------------------------------------- 约束与目标编辑
+
+const OPS = [
+  ['>=', '≥'],
+  ['<', '<'],
+];
+
+function nameOf(attributeId) {
+  if (attributeId === rules.clubExperience.id) return rules.clubExperience.name;
+  return attributeLabels.find((attribute) => attribute.id === attributeId)?.name ?? attributeId;
+}
+
+function goalAttributes(allowClubExperience) {
+  if (!allowClubExperience) return attributeLabels;
+  return [...attributeLabels, { id: rules.clubExperience.id, name: rules.clubExperience.name }];
+}
+
+function option(value, label, selected) {
+  const element = document.createElement('option');
+  element.value = value;
+  element.textContent = label;
+  element.selected = Boolean(selected);
+  return element;
+}
+
+function buildGoalRow(goal, { withDeadline = false, allowClubExperience = false } = {}) {
+  const row = document.createElement('div');
+  row.className = 'goal-row';
+
+  if (withDeadline) {
+    const deadline = document.createElement('input');
+    deadline.type = 'date';
+    deadline.className = 'date';
+    deadline.dataset.role = 'deadline';
+    deadline.min = rules.timeline.start;
+    deadline.max = rules.timeline.lastSettlement;
+    deadline.value = goal.deadline;
+    row.append(deadline);
+
+    // 小目标的属性集合可以含社团经验（指当前社团那一份）
+    const attributes = document.createElement('select');
+    attributes.multiple = true;
+    attributes.className = 'attrs';
+    attributes.dataset.role = 'attributes';
+    for (const attribute of goalAttributes(true)) {
+      attributes.append(option(attribute.id, attribute.name, goal.attributes.includes(attribute.id)));
+    }
+    row.append(attributes);
+  } else {
+    const attribute = document.createElement('select');
+    attribute.className = 'attr';
+    attribute.dataset.role = 'attribute';
+    for (const entry of goalAttributes(allowClubExperience)) {
+      attribute.append(option(entry.id, entry.name, false));
+    }
+    attribute.value = goal.attribute;
+    row.append(attribute);
+  }
+
+  const op = document.createElement('select');
+  op.dataset.role = 'op';
+  for (const [value, label] of OPS) op.append(option(value, label, false));
+  op.value = goal.op;
+  row.append(op);
+
+  const threshold = document.createElement('input');
+  threshold.type = 'number';
+  threshold.className = 'num';
+  threshold.dataset.role = 'value';
+  threshold.value = String(goal.value);
+  row.append(threshold);
+
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'remove';
+  remove.dataset.role = 'remove';
+  remove.textContent = '×';
+  row.append(remove);
+
+  return row;
+}
+
+const GOAL_LISTS = [
+  { hostId: 'global-constraints', listKey: 'globalConstraints', options: {} },
+  { hostId: 'ending-goals', listKey: 'endingGoals', options: {} },
+  {
+    hostId: 'mini-goals',
+    listKey: 'miniGoals',
+    options: { withDeadline: true, allowClubExperience: true },
+  },
+];
+
+function renderGoalEditors() {
+  for (const { hostId, listKey, options } of GOAL_LISTS) {
+    const host = $(hostId);
+    host.textContent = '';
+    state.input[listKey].forEach((goal, index) => {
+      const row = buildGoalRow(goal, options);
+      row.dataset.index = String(index);
+      host.append(row);
+    });
+  }
+}
+
+function goalFromRow(row, options) {
+  const value = Number(row.querySelector('[data-role="value"]').value);
+  const op = row.querySelector('[data-role="op"]').value;
+
+  if (options.withDeadline) {
+    const selected = row.querySelector('[data-role="attributes"]').selectedOptions;
+    return {
+      deadline: row.querySelector('[data-role="deadline"]').value,
+      attributes: [...selected].map((element) => element.value),
+      op,
+      value,
+    };
+  }
+  return { attribute: row.querySelector('[data-role="attribute"]').value, op, value };
+}
+
+function wireGoalList({ hostId, listKey, options }) {
+  const host = $(hostId);
+  host.addEventListener('change', (event) => {
+    const row = event.target.closest('.goal-row');
+    if (!row) return;
+    state.input[listKey][Number(row.dataset.index)] = goalFromRow(row, options);
+    runPlan();
+  });
+  host.addEventListener('click', (event) => {
+    if (event.target.dataset.role !== 'remove') return;
+    const row = event.target.closest('.goal-row');
+    state.input[listKey].splice(Number(row.dataset.index), 1);
+    renderGoalEditors();
+    runPlan();
+  });
+}
+
+// ---------------------------------------------------------------- 达标状态
+
+function goalLine(tag, text, met) {
+  const item = document.createElement('li');
+  item.className = met ? 'met' : 'unmet';
+  const label = document.createElement('span');
+  label.className = 'tag';
+  label.textContent = tag;
+  item.append(label, document.createTextNode(text));
+  return item;
+}
+
+function describeGlobalConstraint(goal) {
+  const name = nameOf(goal.attribute);
+  const relation = `${name} ${goal.op === '>=' ? '≥' : '<'} ${goal.value}`;
+  if (goal.state === 'met') {
+    return goal.mode === 'invariant'
+      ? `${relation} —— 硬不变量，全程成立`
+      : `${relation} —— 尽快满足，${goal.metOn} 达成`;
+  }
+  if (goal.mode === 'invariant') {
+    return `${relation} —— 破了 ${goal.violatedOn.length} 天，首次 ${goal.violatedOn[0]}`;
+  }
+  return `${relation} —— 一直到终点都没有满足`;
+}
+
+function describeMiniGoal(goal) {
+  const names = goal.attributes.map(nameOf).join(' + ');
+  const relation = `${goal.deadline} ${names} ${goal.op === '>=' ? '≥' : '<'} ${goal.value}`;
+  return goal.state === 'met'
+    ? `${relation} —— 实际 ${goal.actual.toFixed(1)}`
+    : `${relation} —— 实际 ${goal.actual.toFixed(1)}，还差 ${goal.shortfall.toFixed(1)}`;
+}
+
+function describeEndingGoal(goal) {
+  const relation = `${nameOf(goal.attribute)} ${goal.op === '>=' ? '≥' : '<'} ${goal.value}`;
+  return goal.state === 'met'
+    ? `${relation} —— 实际 ${goal.actual.toFixed(1)}`
+    : `${relation} —— 实际 ${goal.actual.toFixed(1)}，还差 ${goal.shortfall.toFixed(1)}`;
+}
+
+function renderGoalsStatus(result) {
+  const host = $('goals-status');
+  host.textContent = '';
+
+  const { goals } = result;
+  const unmet =
+    goals.globalConstraints.filter((g) => g.state !== 'met').length +
+    goals.miniGoals.filter((g) => g.state !== 'met').length +
+    goals.endingGoals.filter((g) => g.state !== 'met').length;
+
+  const headline = document.createElement('div');
+  headline.className = `headline ${goals.ok ? 'ok' : 'bad'}`;
+  headline.textContent = goals.ok ? '硬约束全部达标' : `硬约束未全部达标（${unmet} 项）`;
+  host.append(headline);
+
+  const list = document.createElement('ul');
+  for (const goal of goals.globalConstraints) {
+    list.append(goalLine('全局', describeGlobalConstraint(goal), goal.state === 'met'));
+  }
+  for (const goal of goals.miniGoals) {
+    list.append(goalLine('小目标', describeMiniGoal(goal), goal.state === 'met'));
+  }
+  for (const goal of goals.endingGoals) {
+    list.append(goalLine('结局', describeEndingGoal(goal), goal.state === 'met'));
+  }
+  list.append(
+    goalLine(
+      '目标函数',
+      `正向等权总和 ${goals.score.positiveSum.toFixed(1)} · 压力 ${goals.score.negative.toFixed(1)}`,
+      true,
+    ),
+  );
+  host.append(list);
+}
+
 // ---------------------------------------------------------------- 结果
 
 function renderResult(result) {
@@ -559,6 +773,7 @@ function renderResult(result) {
   // 渲染出错时留下半张表比抛出去更难看：抓起来，把原因摆到状态栏。
   try {
     renderSummary(result);
+    renderGoalsStatus(result);
     applyCalendar(result);
     renderCurve(result);
   } catch (error) {
@@ -656,6 +871,31 @@ $('calendar').addEventListener('change', (event) => {
 
 startWorker();
 renderForm();
+
+for (const list of GOAL_LISTS) wireGoalList(list);
+
+$('btn-add-global').addEventListener('click', () => {
+  state.input.globalConstraints.push({ attribute: attributeLabels[0].id, op: '>=', value: 50 });
+  renderGoalEditors();
+  runPlan();
+});
+
+$('btn-add-ending').addEventListener('click', () => {
+  state.input.endingGoals.push({ attribute: attributeLabels[0].id, op: '>=', value: 50 });
+  renderGoalEditors();
+  runPlan();
+});
+
+$('btn-add-mini').addEventListener('click', () => {
+  state.input.miniGoals.push({
+    deadline: rules.timeline.lastSettlement,
+    attributes: [attributeLabels[0].id],
+    op: '>=',
+    value: 50,
+  });
+  renderGoalEditors();
+  runPlan();
+});
 
 $('start-date').addEventListener('change', (event) => {
   state.input.startDate = event.target.value;

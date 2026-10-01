@@ -4,399 +4,1044 @@
     <meta charset="utf-8" />
     <title>Tokimeki-Planner</title>
     <style>
+      /* 视觉基调＝A 版（1995 纸面台账）。令牌与取值见 .scratch/ui-redesign/spec.md。 */
       :root {
-        color-scheme: light dark;
-        --line: #d0d5dd;
-        --bg-soft: #f6f7f9;
-        --accent: #2f6fed;
-        --muted: #5b6472;
+        --paper: #efe4cd;
+        --panel: #fbf5e6;
+        --panel-2: #f3e9d2;
+        --panel-3: #e7d9bb;
+        --ink: #2e2622;
+        --ink-2: #6b5b4c;
+        --ink-3: #77675a;
+        --line: #c9b691;
+        --line-2: #a89070;
+        --line-3: #7d6746;
+        --rose: #c2506b;
+        --rose-deep: #a83350;
+        --rose-soft: #f6dde3;
+        --rose-line: #d9a3b1;
+        --green: #2f6b4a;
+        --green-soft: #e6f0e9;
+        --amber: #7d5f18;
+        --amber-soft: #f2e7c9;
+        --cell: #fffdf5;
+        --cell-sun: #f0e2c6;
+        --cell-off: #e9dec4;
+        --cell-hist: #e2d8c2;
+        --raise: inset 1px 1px 0 #fffdf6, inset -1px -1px 0 #cdb896;
+        --sink: inset -1px -1px 0 #fffdf6, inset 1px 1px 0 #cdb896;
+        --font-ui: system-ui, -apple-system, "Segoe UI", "Noto Sans CJK SC", sans-serif;
+        --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       }
       * {
         box-sizing: border-box;
       }
+      /* 类选择器上的 display 会盖过 hidden 属性，所以这里统一把 hidden 摆到最高优先级。 */
+      [hidden] {
+        display: none !important;
+      }
+      html,
+      body {
+        height: 100%;
+      }
       body {
         margin: 0;
-        font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans CJK SC", sans-serif;
-        line-height: 1.6;
-        color: #1a1c1f;
-        background: #fff;
-      }
-      header {
-        padding: 16px 22px 10px;
-        border-bottom: 1px solid var(--line);
-      }
-      header h1 {
-        margin: 0;
-        font-size: 19px;
-      }
-      header p {
-        margin: 4px 0 0;
+        font-family: var(--font-ui);
         font-size: 13px;
-        color: var(--muted);
+        line-height: 1.5;
+        color: var(--ink);
+        background-color: var(--paper);
+        background-image: radial-gradient(rgba(125, 103, 70, 0.16) 1px, transparent 1.2px);
+        background-size: 6px 6px;
       }
-      main {
-        display: grid;
-        grid-template-columns: minmax(340px, 400px) 1fr;
+      /* 全页唯一允许的圆角例外是状态点；其余一律 0。 */
+      button,
+      input,
+      select {
+        font: inherit;
+        color: inherit;
       }
-      #input-pane {
-        padding: 16px 22px;
-        border-right: 1px solid var(--line);
-        background: var(--bg-soft);
+      h1,
+      h2,
+      h3 {
+        margin: 0;
+        font-weight: 700;
       }
-      #result-pane {
-        padding: 16px 22px;
+      .num {
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* ---------------------------------------------------------------- 顶栏 */
+      .topbar {
+        height: 56px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 0 14px;
+        background: linear-gradient(180deg, #f4e9d1, #e5d6b4);
+        border-bottom: 3px double var(--line-3);
+        box-shadow: inset 0 1px 0 #fffdf6;
+      }
+      .brand {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
         min-width: 0;
       }
-      h2 {
-        font-size: 14px;
-        margin: 0 0 10px;
-        letter-spacing: 0.04em;
-        color: #3b4250;
+      .brand h1 {
+        font-size: 20px;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
       }
-      h2.spaced {
-        margin-top: 16px;
+      .brand .subtitle {
+        font-size: 12px;
+        color: var(--ink-2);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .brand svg {
+        vertical-align: -2px;
+        margin-right: 2px;
+      }
+      .topbar-right {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .chip {
+        font-size: 12px;
+        padding: 3px 10px;
+        border: 1px solid var(--line-2);
+        border-radius: 0;
+        background: var(--panel-2);
+        box-shadow: var(--raise);
+        white-space: nowrap;
+      }
+      .chip.met {
+        color: var(--green);
+        border-color: var(--green);
+        background: var(--green-soft);
+      }
+      .chip.unmet {
+        color: var(--rose-deep);
+        border-color: var(--rose-line);
+        background: #fbeff2;
+      }
+
+      /* ---------------------------------------------------------------- 控件 */
+      .btn {
+        font-size: 12px;
+        padding: 5px 11px;
+        border: 1px solid var(--line-2);
+        border-radius: 0;
+        background: linear-gradient(180deg, #fdf8ec, #f0e6d1);
+        box-shadow: var(--raise);
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .btn:hover {
+        background: linear-gradient(180deg, #fffdf5, #f5ecd8);
+      }
+      .btn:active {
+        box-shadow: var(--sink);
+      }
+      .btn[disabled] {
+        color: var(--ink-3);
+        cursor: default;
+        opacity: 0.7;
+      }
+      .btn-primary {
+        color: #fffafb;
+        font-weight: 700;
+        border-color: var(--rose-deep);
+        background: linear-gradient(180deg, #c85a72, #ab3c55);
+        box-shadow: inset 1px 1px 0 #e79aab, inset -1px -1px 0 #8d2a43;
+      }
+      .btn-primary:hover {
+        background: linear-gradient(180deg, #d0687e, #b8465f);
+      }
+      .btn-icon {
+        padding: 4px 9px;
+        font-size: 13px;
+        line-height: 1.1;
+      }
+      .btn-quiet {
+        background: var(--panel);
+      }
+      .file-btn input {
+        display: none;
+      }
+      input[type="date"],
+      input[type="number"],
+      input[type="text"],
+      select {
+        font-size: 12px;
+        padding: 3px 5px;
+        border: 1px solid var(--line-2);
+        border-radius: 0;
+        background: #fffdf7;
+        box-shadow: var(--sink);
+        max-width: 100%;
       }
       .field {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 10px;
-        margin-bottom: 6px;
-        font-size: 13px;
-      }
-      .field input,
-      .field select {
-        width: 148px;
-        padding: 4px 6px;
-        font: inherit;
-        font-size: 13px;
-        border: 1px solid var(--line);
-        border-radius: 5px;
-        background: #fff;
-      }
-      #attributes {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 0 14px;
-        margin-bottom: 16px;
-      }
-      #attributes .field input {
-        width: 72px;
-      }
-      .actions {
-        display: flex;
-        flex-wrap: wrap;
         gap: 8px;
-        margin: 12px 0 10px;
+        margin-bottom: 6px;
+        font-size: 12px;
       }
-      button,
-      .file-button {
-        font: inherit;
-        font-size: 13px;
-        padding: 6px 12px;
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        background: #fff;
-        cursor: pointer;
+      .field > span {
+        color: var(--ink-2);
+        white-space: nowrap;
       }
-      button.primary {
-        background: var(--accent);
-        border-color: var(--accent);
-        color: #fff;
-        font-weight: 600;
+      .hint {
+        margin: 6px 0 0;
+        font-size: 12px;
+        color: var(--ink-3);
       }
-      .file-button input {
+
+      /* ---------------------------------------------------------------- 骨架 */
+      .shell {
+        display: grid;
+        grid-template-columns: 280px 1fr;
+        height: calc(100vh - 56px);
+      }
+      .shell.collapsed {
+        grid-template-columns: 46px 1fr;
+      }
+      .rail {
+        overflow: auto;
+        padding: 10px;
+        border-right: 1px solid var(--line-2);
+        background: rgba(251, 245, 230, 0.55);
+      }
+      .shell.collapsed .rail .panel,
+      .shell.collapsed .rail .btn-collapse span {
         display: none;
       }
-      small {
-        display: block;
-        color: var(--muted);
-        font-size: 12px;
-      }
-      #status {
-        font-size: 13px;
-        padding: 8px 12px;
-        border-radius: 6px;
-        background: #eef1f5;
-        margin-bottom: 10px;
-        white-space: pre-wrap;
-      }
-      #status.error {
-        background: #fdeceb;
-        color: #8c1d18;
-      }
-      #summary {
-        font-size: 13px;
-        color: var(--muted);
+      .btn-collapse {
+        width: 100%;
         margin-bottom: 8px;
       }
-      #goals-status {
-        font-size: 12px;
-        border: 1px solid var(--line);
-        border-radius: 6px;
+      .shell.collapsed .btn-collapse {
+        padding: 5px 4px;
+      }
+      .panel {
         margin-bottom: 10px;
+        padding: 8px 9px;
+        border: 1px solid var(--line-2);
+        background: var(--panel);
+        box-shadow: 0 1px 0 rgba(125, 103, 70, 0.18);
+      }
+      .panel h2 {
+        font-size: 13px;
+        margin-bottom: 7px;
+        padding-bottom: 4px;
+        border-bottom: 1px dashed var(--line-2);
+        color: var(--ink);
+      }
+      .attr-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 5px 6px;
+      }
+      .attr-cell {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        font-size: 12px;
+      }
+      .attr-cell > span {
+        color: var(--ink-2);
+        white-space: nowrap;
         overflow: hidden;
+        text-overflow: ellipsis;
       }
-      #goals-status .headline {
-        padding: 6px 12px;
-        font-weight: 600;
-      }
-      #goals-status .headline.ok {
-        background: #e7f6ec;
-        color: #14663a;
-      }
-      #goals-status .headline.bad {
-        background: #fdeceb;
-        color: #8c1d18;
-      }
-      #goals-status ul {
-        list-style: none;
-        margin: 0;
-        padding: 6px 12px;
-      }
-      #goals-status li {
-        padding: 1px 0;
+      .attr-cell input {
+        width: 100%;
         font-variant-numeric: tabular-nums;
       }
-      #goals-status li .tag {
+      .attr-cell.down > span::after {
+        content: " ▼";
+        font-size: 12px;
+        color: var(--rose-deep);
+      }
+
+      .work {
+        overflow: auto;
+        padding: 10px 12px 30px;
+        min-width: 0;
+      }
+      .pinned {
+        position: sticky;
+        top: -10px;
+        z-index: 5;
+        background: var(--paper);
+        background-image: radial-gradient(rgba(125, 103, 70, 0.16) 1px, transparent 1.2px);
+        background-size: 6px 6px;
+        padding-top: 10px;
+        margin-top: -10px;
+      }
+      /* 视口不够高时，日历 + 详情条撑不下：退化为整栏滚动，别把达标清单挤出屏幕。 */
+      @media (max-height: 760px) {
+        .pinned {
+          position: static;
+          margin-top: 0;
+          padding-top: 0;
+        }
+      }
+
+      /* ---------------------------------------------------------------- 日历工具行 */
+      .toolbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        padding: 7px 9px;
+        border: 1px solid var(--line-2);
+        background: linear-gradient(180deg, #efe2c6, #e4d4b1);
+        box-shadow: var(--raise);
+      }
+      .month-label {
+        font-size: 13px;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        min-width: 168px;
+        text-align: center;
+      }
+      .toolbar-gap {
+        flex: 1 1 auto;
+      }
+      .jump {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 12px;
+        color: var(--ink-2);
+      }
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 12px;
+        padding: 6px 2px 7px;
+        font-size: 12px;
+        color: var(--ink-2);
+      }
+      .legend i {
         display: inline-block;
-        min-width: 62px;
-        color: var(--muted);
+        width: 11px;
+        height: 11px;
+        margin-right: 4px;
+        vertical-align: -1px;
+        border: 1px solid var(--line-2);
       }
-      #goals-status li.met {
-        color: #14663a;
+      .legend .k-weekday i {
+        background: var(--cell);
       }
-      #goals-status li.unmet {
-        color: #8c1d18;
+      .legend .k-sun i {
+        background: var(--cell-sun);
       }
-      #goals-status .diagnosis {
-        border-top: 1px solid var(--line);
-        background: #fffaf5;
+      .legend .k-rest i {
+        background: var(--rose-soft);
+        border-color: var(--rose-line);
       }
-      #goals-status .diagnosis .headline {
-        background: #fdf0e2;
-        color: #8a4b12;
+      .legend .k-empty i {
+        background: repeating-linear-gradient(135deg, #e2d6ba 0 3px, #c6b795 3px 4px);
       }
-      .goal-list {
-        margin-bottom: 6px;
+      .legend .k-hist i {
+        background: var(--cell-hist);
+      }
+      .legend .k-flag i {
+        background: var(--rose);
+        border-color: var(--rose-deep);
+      }
+      .legend .k-played i {
+        border-left: 3px solid var(--line-3);
+        background: var(--cell);
+      }
+
+      /* ---------------------------------------------------------------- 日历 */
+      .cal-months {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+      .month {
+        border: 1px solid var(--line-2);
+        background: var(--panel);
+        padding: 6px;
+        box-shadow: 0 1px 0 rgba(125, 103, 70, 0.18);
+        min-width: 0;
+      }
+      .month-title {
+        font-size: 13px;
+        font-weight: 700;
+        text-align: center;
+        padding: 3px 0 5px;
+        margin-bottom: 5px;
+        background: linear-gradient(180deg, #f4e9d1, #e5d6b4);
+        border: 1px solid var(--line-2);
+        box-shadow: var(--raise);
+        font-variant-numeric: tabular-nums;
+      }
+      .dow,
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+      }
+      .dow {
+        gap: 2px;
+        margin-bottom: 2px;
+      }
+      .dow span {
+        font-size: 12px;
+        text-align: center;
+        color: var(--ink-2);
+        padding: 2px 0;
+        border: 1px solid var(--line);
+        background: var(--panel-2);
+      }
+      .dow span:first-child {
+        color: var(--rose-deep);
+      }
+      .grid {
+        gap: 2px;
+      }
+      .cell {
+        position: relative;
+        min-height: 46px;
+        padding: 2px 3px;
+        border: 1px solid #ded0b2;
+        background: var(--cell);
+        cursor: pointer;
+        overflow: hidden;
+      }
+      .cell .dn {
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+        display: block;
+        line-height: 1.25;
+      }
+      .cell .dcmd {
+        display: block;
+        font-size: 12px;
+        line-height: 1.25;
+        color: var(--ink);
+        word-break: break-all;
+      }
+      .cell .flags {
+        position: absolute;
+        top: 2px;
+        right: 3px;
+        display: flex;
+        gap: 2px;
+        align-items: center;
+      }
+      /* 一个旗＝一条小目标：红旗达标、白旗未达标。 */
+      .flag {
+        width: 9px;
+        height: 9px;
+        border: 1px solid var(--ink);
+        background: #fff;
+        display: inline-block;
+      }
+      .flag.met {
+        background: var(--rose);
+        border-color: var(--rose-deep);
+      }
+      .flag-count {
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+        color: var(--ink);
+        background: var(--panel-2);
+        border: 1px solid var(--ink-2);
+        padding: 0 2px;
+        line-height: 1.2;
+      }
+      .cell.is-sun {
+        background: var(--cell-sun);
+      }
+      .cell.is-rest {
+        background: var(--rose-soft);
+        border-color: var(--rose-line);
+      }
+      .cell.is-empty {
+        background: repeating-linear-gradient(135deg, #e2d6ba 0 4px, #c6b795 4px 5px);
+      }
+      .cell.is-history {
+        background: var(--cell-hist);
+        color: var(--ink-2);
+      }
+      .cell.is-ovf {
+        background: var(--cell-off);
+        border-style: dashed;
+        color: var(--ink-3);
+        cursor: not-allowed;
+      }
+      .cell.is-ovf .dcmd {
+        color: var(--ink-3);
+      }
+      .cell.is-played {
+        border-left: 3px solid var(--line-3);
+      }
+      .cell.is-end {
+        border-bottom: 2px solid var(--rose);
+      }
+      .cell .tag-end {
+        position: absolute;
+        right: 2px;
+        bottom: 0;
+        font-size: 12px;
+        color: var(--rose-deep);
+      }
+      .cell.is-range {
+        background: #fbe9ee;
+      }
+      .cell.is-selected {
+        background: var(--rose-soft);
+        outline: 2px solid var(--rose-deep);
+        outline-offset: -2px;
+        border-color: var(--rose-deep);
+        z-index: 2;
+      }
+      .cell.is-flash {
+        animation: cellflash 0.42s ease-out 3;
+      }
+      @keyframes cellflash {
+        0%,
+        100% {
+          box-shadow: none;
+        }
+        50% {
+          box-shadow: inset 0 0 0 3px rgba(194, 80, 107, 0.6);
+        }
+      }
+
+      /* ---------------------------------------------------------------- 当日详情条 */
+      .detail-wrap {
+        display: flex;
+        gap: 8px;
+        align-items: stretch;
+        margin-top: 8px;
+      }
+      .detail {
+        flex: 1 1 auto;
+        min-width: 0;
+        padding: 7px 9px;
+        border: 1px solid var(--line-2);
+        background: var(--panel);
+        box-shadow: 0 4px 10px rgba(125, 103, 70, 0.18);
+        display: grid;
+        grid-template-columns: 190px 1fr;
+        gap: 6px 10px;
+      }
+      .detail .when {
+        font-size: 12px;
+      }
+      .detail .when strong {
+        font-variant-numeric: tabular-nums;
+      }
+      .detail .when p {
+        margin: 2px 0 0;
+        color: var(--ink-2);
+      }
+      .detail .attrs {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 2px 10px;
+        min-width: 0;
+      }
+      .detail .attr {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 5px;
+        font-size: 12px;
+        padding: 1px 0;
+        border-bottom: 1px dotted var(--line);
+      }
+      .detail .attr b {
+        font-variant-numeric: tabular-nums;
+        font-weight: 700;
+      }
+      .detail .attr em {
+        font-style: normal;
+        font-variant-numeric: tabular-nums;
+        color: var(--ink-3);
+      }
+      .detail .attr em.up {
+        color: var(--green);
+      }
+      .detail .attr em.down {
+        color: var(--rose-deep);
+      }
+      .detail .range-note {
+        grid-column: 1 / -1;
+        font-size: 12px;
+        color: var(--amber);
+        background: var(--amber-soft);
+        border: 1px dashed var(--line-2);
+        padding: 3px 6px;
+      }
+      .btn-more {
+        align-self: flex-start;
+      }
+
+      /* ---------------------------------------------------------------- 计算状态 */
+      .compute-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 10px 0;
+        padding: 7px 9px;
+        border: 1px dashed var(--line-2);
+        background: rgba(251, 245, 230, 0.6);
+        font-size: 12px;
+      }
+      .compute-row.is-dirty {
+        border-color: var(--amber);
+        background: var(--amber-soft);
+        color: var(--amber);
+      }
+      .progress {
+        display: inline-block;
+        width: 190px;
+        height: 11px;
+        border: 1px solid var(--line-2);
+        background: #fffdf7;
+        box-shadow: var(--sink);
+        overflow: hidden;
+        vertical-align: -2px;
+      }
+      .progress-bar {
+        display: block;
+        height: 100%;
+        width: 40%;
+        background: repeating-linear-gradient(
+          115deg,
+          var(--rose) 0 7px,
+          #e7a5b4 7px 14px
+        );
+        animation: indeterminate 1.1s linear infinite;
+      }
+      @keyframes indeterminate {
+        from {
+          transform: translateX(-110%);
+        }
+        to {
+          transform: translateX(260%);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .progress-bar {
+          animation-duration: 3s;
+        }
+        .cell.is-flash {
+          animation: none;
+          box-shadow: inset 0 0 0 3px rgba(194, 80, 107, 0.6);
+        }
+      }
+      .elapsed {
+        font-variant-numeric: tabular-nums;
+        color: var(--ink-2);
+      }
+      .stale-note {
+        margin-left: auto;
+        font-size: 12px;
+        color: var(--ink-3);
+      }
+
+      /* 陈旧态：数值、旗帜、达标清单都基于上一次计算。 */
+      .stale {
+        filter: saturate(0.5);
+        outline: 1px dashed var(--line-2);
+        outline-offset: 2px;
+      }
+
+      /* ---------------------------------------------------------------- 达标清单 */
+      .results {
+        margin-top: 4px;
+      }
+      .goals-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 13px;
+        font-weight: 700;
+        padding: 6px 9px;
+        border: 1px solid var(--line-2);
+        background: linear-gradient(180deg, #efe2c6, #e4d4b1);
+        box-shadow: var(--raise);
+      }
+      .goals-head .count {
+        font-weight: 400;
+        color: var(--ink-2);
+        font-size: 12px;
+      }
+      .goal-group {
+        margin-top: 8px;
+        border: 1px solid var(--line-2);
+        background: var(--panel);
+      }
+      .goal-group > header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 5px 9px;
+        border-bottom: 1px solid var(--line-2);
+        background: var(--panel-2);
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .goal-group > header .count {
+        font-weight: 400;
+        color: var(--ink-2);
+        margin-left: auto;
+      }
+      .goal-cols,
+      .goal-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 92px 110px 92px 78px 74px;
+        gap: 6px;
+        align-items: center;
+        padding: 3px 9px;
+        font-size: 12px;
+      }
+      .goal-cols {
+        color: var(--ink-3);
+        border-bottom: 1px dotted var(--line);
+        padding-top: 4px;
+        padding-bottom: 4px;
       }
       .goal-row {
+        border-bottom: 1px dotted var(--line);
+      }
+      .goal-row:last-child {
+        border-bottom: 0;
+      }
+      .goal-row.unmet {
+        background: #fbeff2;
+      }
+      .goal-row .name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .goal-row .v {
+        font-variant-numeric: tabular-nums;
+        text-align: right;
+      }
+      .goal-row .gap {
+        font-variant-numeric: tabular-nums;
+        text-align: right;
+        color: var(--ink-3);
+      }
+      .goal-row .state {
         display: flex;
         align-items: center;
         gap: 4px;
-        margin-bottom: 4px;
-        font-size: 12px;
+        color: var(--ink-2);
       }
-      .goal-row select,
-      .goal-row input {
-        font: inherit;
-        font-size: 12px;
-        padding: 2px 4px;
-        border: 1px solid var(--line);
-        border-radius: 4px;
-        background: #fff;
-        min-width: 0;
-      }
-      .goal-row .attr {
-        flex: 1 1 auto;
-      }
-      .goal-row .num {
-        width: 62px;
-      }
-      .goal-row .date {
-        width: 124px;
-      }
-      .goal-row .attrs {
-        flex: 1 1 auto;
-        height: 52px;
-      }
-      .goal-row .remove {
-        padding: 2px 7px;
-        line-height: 1.2;
-      }
-      .goal-add {
-        font-size: 12px;
-        padding: 3px 9px;
-      }
-      #summary {
-        font-size: 13px;
-      }
-      #curve {
-        margin-bottom: 10px;
-      }
-      #curve svg {
-        width: 100%;
-        height: 170px;
-        display: block;
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        background: #fff;
-      }
-      #curve .legend {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 4px 14px;
-        font-size: 12px;
-        color: var(--muted);
-        margin-top: 4px;
-      }
-      #curve .legend i {
+      .dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
         display: inline-block;
-        width: 11px;
-        height: 3px;
-        margin-right: 5px;
-        vertical-align: middle;
+        flex: 0 0 auto;
       }
-      .calendar-tools {
+      .dot.met {
+        background: var(--green);
+      }
+      .dot.unmet {
+        border: 2px solid var(--rose-deep);
+        background: transparent;
+      }
+      .row-actions {
+        display: flex;
+        gap: 4px;
+        justify-content: flex-end;
+      }
+      .row-actions .btn {
+        padding: 2px 6px;
+      }
+      .diagnosis {
+        margin-top: 8px;
+      }
+      .diag-card {
+        border: 1px solid var(--line-2);
+        border-left: 3px solid var(--amber);
+        background: #fffaf5;
+        padding: 6px 9px;
+        font-size: 12px;
+        margin-bottom: 6px;
+      }
+      .diag-card b {
+        color: var(--amber);
+      }
+      .diag-card p {
+        margin: 2px 0 0;
+        color: var(--ink-2);
+      }
+      .foot {
+        display: flex;
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      /* ---------------------------------------------------------------- 右键菜单 */
+      .menu {
+        position: fixed;
+        z-index: 40;
+        min-width: 190px;
+        padding: 3px;
+        border: 1px solid var(--line-3);
+        background: var(--panel);
+        box-shadow: 3px 3px 0 rgba(125, 103, 70, 0.3);
+      }
+      .menu-item {
+        display: block;
+        width: 100%;
+        text-align: left;
+        border: 0;
+        background: transparent;
+        padding: 4px 8px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .menu-item:hover {
+        background: var(--panel-3);
+      }
+      .menu-item[disabled] {
+        color: var(--ink-3);
+        cursor: default;
+      }
+      .menu-item[disabled]:hover {
+        background: transparent;
+      }
+      .menu-sep {
+        height: 0;
+        margin: 3px 6px;
+        border-top: 1px dashed var(--line-2);
+      }
+
+      /* ---------------------------------------------------------------- 弹窗 */
+      .modal {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        background: rgba(46, 38, 34, 0.28);
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        padding-top: 8vh;
+      }
+      .modal-card {
+        width: min(560px, 92vw);
+        border: 1px solid var(--line-3);
+        background: var(--panel);
+        box-shadow: 4px 4px 0 rgba(125, 103, 70, 0.3);
+      }
+      .modal-head {
         display: flex;
         align-items: center;
-        gap: 8px;
-        margin-bottom: 8px;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 6px 9px;
+        background: linear-gradient(180deg, #efe2c6, #e4d4b1);
+        border-bottom: 1px solid var(--line-2);
+      }
+      .modal-head h3 {
         font-size: 13px;
       }
-      .calendar-tools input {
-        font: inherit;
-        font-size: 13px;
-        padding: 3px 6px;
-        border: 1px solid var(--line);
-        border-radius: 5px;
-      }
-      #calendar {
-        max-height: 56vh;
+      .modal-body {
+        padding: 10px;
+        max-height: 60vh;
         overflow: auto;
-        border: 1px solid var(--line);
-        border-radius: 6px;
       }
-      table.calendar {
-        border-collapse: collapse;
+      .modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        padding: 8px 10px;
+        border-top: 1px solid var(--line-2);
+        background: var(--panel-2);
+      }
+      .form-row {
+        display: grid;
+        grid-template-columns: 96px 1fr;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 8px;
         font-size: 12px;
       }
-      table.calendar th,
-      table.calendar td {
-        padding: 2px 8px;
-        border-bottom: 1px solid #eceff3;
-        text-align: left;
-        white-space: nowrap;
+      .form-row > span {
+        color: var(--ink-2);
       }
-      table.calendar td.num {
-        text-align: right;
+      .modal-list {
+        margin-top: 10px;
+        border-top: 1px dashed var(--line-2);
+        padding-top: 8px;
+      }
+      .modal-list h4 {
+        margin: 0 0 6px;
+        font-size: 12px;
+      }
+      .mini-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 74px 68px;
+        gap: 6px;
+        align-items: center;
+        font-size: 12px;
+        padding: 3px 0;
+        border-bottom: 1px dotted var(--line);
+      }
+      .mini-row .v {
         font-variant-numeric: tabular-nums;
-        color: #2b3038;
+        text-align: right;
       }
-      tr.week-row th {
-        background: #eef1f5;
-        font-weight: 600;
-        color: #3b4250;
-        position: sticky;
-        top: 0;
+      .attr-picker {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 10px;
+        padding: 4px;
+        border: 1px solid var(--line-2);
+        background: #fffdf7;
+        box-shadow: var(--sink);
       }
-      tr.week-row .week-flag {
-        font-weight: 400;
-        color: var(--muted);
-        margin-left: 10px;
-      }
-      tr.week-row select,
-      tr.day-row td select {
-        font: inherit;
+      .attr-picker label {
+        display: flex;
+        align-items: center;
+        gap: 4px;
         font-size: 12px;
-        padding: 1px 4px;
-        border: 1px solid var(--line);
-        border-radius: 4px;
-        background: #fff;
       }
-      tr.day-row td select {
-        max-width: 150px;
-      }
-      tr.day-row td.state {
-        color: var(--muted);
-      }
-      tr.day-row.is-rest td {
-        background: #fff5f5;
-      }
-      tr.day-row.is-empty td {
-        background: #f1f2f4;
-        color: #8b93a1;
-      }
-      tr.day-row.is-unsettled td {
-        color: #8b93a1;
-      }
-      tr.day-row td input[type="checkbox"] {
-        margin: 0;
-      }
-      tr.day-row.is-highlight td {
-        outline: 2px solid var(--accent);
-        outline-offset: -2px;
+      .empty-state {
+        padding: 10px;
+        border: 1px dashed var(--line-2);
+        background: rgba(251, 245, 230, 0.7);
+        font-size: 12px;
+        color: var(--ink-2);
       }
     </style>
   </head>
   <body>
-    <header>
-      <h1>Tokimeki-Planner</h1>
-      <p>《心跳回忆·永远属于你》（95 版）日程规划工具 · 单文件、离线、零依赖</p>
+    <header class="topbar">
+      <div class="brand">
+        <h1>
+          <svg width="14" height="13" viewBox="0 0 14 13" aria-hidden="true"
+            ><path
+              d="M7 12S0 8.2 0 4.2C0 1.9 1.7 0 4 0c1.4 0 2.4.8 3 1.7C7.6.8 8.6 0 10 0c2.3 0 4 1.9 4 4.2C14 8.2 7 12 7 12z"
+              fill="#c2506b"
+          /></svg>
+          Tokimeki-Planner
+        </h1>
+        <p class="subtitle">《心跳回忆·永远属于你》（95 版）日程规划工具</p>
+      </div>
+      <div class="topbar-right">
+        <span id="status-chip" class="chip">尚未计算</span>
+        <button id="btn-compute" class="btn btn-primary" type="button">计算</button>
+        <button id="btn-export" class="btn" type="button">导出</button>
+        <label class="btn file-btn"
+          >导入<input id="file-import" type="file" accept="application/json,.json"
+        /></label>
+      </div>
     </header>
 
-    <main>
-      <section id="input-pane">
-        <h2>起点</h2>
-        <div class="field">
-          <span>当前日期</span>
-          <input id="start-date" type="date" />
+    <div id="shell" class="shell">
+      <aside class="rail">
+        <button id="btn-collapse" class="btn btn-collapse" type="button">
+          ◀<span> 收起左栏</span>
+        </button>
+
+        <div class="panel">
+          <h2>起点</h2>
+          <label class="field"
+            ><span>当前日期</span><input id="rail-start-date" type="date"
+          /></label>
+          <label class="field"
+            ><span>已玩到</span><input id="rail-played-up-to" type="date"
+          /></label>
+          <p class="hint">这一日之前的日程算历史；也可在日历上右键设置。</p>
         </div>
-        <div class="field">
-          <span>已玩到</span>
-          <input id="played-up-to" type="date" />
+
+        <div class="panel">
+          <h2>当前属性</h2>
+          <div id="attributes" class="attr-grid"></div>
+          <p class="hint">带 ▼ 的是越低越好的负面指标。</p>
         </div>
-        <small>这一日之前的日程算历史——改任何东西都不会动它。</small>
 
-        <h2 class="spaced">当前属性</h2>
-        <div id="attributes"></div>
-
-        <h2 class="spaced">社团</h2>
-        <div class="field">
-          <span>起始社团</span>
-          <select id="initial-club"></select>
+        <div class="panel">
+          <h2>社团</h2>
+          <label class="field"
+            ><span>起始社团</span><select id="rail-initial-club"></select
+          ></label>
+          <p class="hint">社团只能在周日切换（在日历上右键该周日）；未加入时社团指令不可选。</p>
         </div>
-        <small>社团只能在周日切换，用每周表头的社团下拉框；未加入社团时社团指令不可选。</small>
+      </aside>
 
-        <h2 class="spaced">全局约束</h2>
-        <div id="global-constraints" class="goal-list"></div>
-        <button id="btn-add-global" class="goal-add" type="button">+ 加一条</button>
-        <small>起点已满足的，往后每天都要成立；起点未满足的，尽快满足。</small>
+      <section class="work">
+        <div class="pinned">
+          <div class="toolbar">
+            <button id="btn-prev-month" class="btn btn-icon" type="button" title="上一个月">‹</button>
+            <span id="month-label" class="month-label">—</span>
+            <button id="btn-next-month" class="btn btn-icon" type="button" title="下一个月">›</button>
+            <span class="toolbar-gap"></span>
+            <label class="jump"><span>跳到</span><input id="jump-date" type="date" /></label>
+            <button id="btn-jump" class="btn" type="button">跳转</button>
+            <button id="btn-jump-start" class="btn btn-quiet" type="button">起点</button>
+            <button id="btn-jump-end" class="btn btn-quiet" type="button">终点</button>
+          </div>
+          <div class="legend">
+            <span>右键日期格打开操作菜单；从一格拖到另一格可框选一段日期。</span>
+            <span class="k-weekday"><i></i>平日</span>
+            <span class="k-sun"><i></i>周日</span>
+            <span class="k-rest"><i></i>休息日</span>
+            <span class="k-empty"><i></i>空过</span>
+            <span class="k-flag"><i></i>小目标截止</span>
+            <span class="k-hist"><i></i>历史</span>
+            <span class="k-played"><i></i>已玩到</span>
+          </div>
+          <div id="calendar" class="calendar"></div>
+          <div class="detail-wrap">
+            <div id="detail" class="detail"></div>
+            <button id="btn-more" class="btn btn-more" type="button" title="更多操作">⋯</button>
+          </div>
+        </div>
 
-        <h2 class="spaced">小目标</h2>
-        <div id="mini-goals" class="goal-list"></div>
-        <button id="btn-add-mini" class="goal-add" type="button">+ 加一条</button>
-        <small>阈值作用于所选属性的求和。</small>
-
-        <h2 class="spaced">结局目标</h2>
-        <div id="ending-goals" class="goal-list"></div>
-        <button id="btn-add-ending" class="goal-add" type="button">+ 加一条</button>
-        <small>在 1998-03-01 逐项评估。</small>
-
-        <div class="actions">
-          <button id="btn-plan" class="primary" type="button">生成</button>
-          <button id="btn-cancel" type="button" hidden>取消</button>
-          <button id="btn-export" type="button">导出 JSON</button>
-          <label class="file-button">
-            导入 JSON
-            <input id="file-import" type="file" accept="application/json,.json" />
-          </label>
+        <div class="results">
+          <div id="compute-row" class="compute-row">
+            <span id="pending-note">尚未计算</span>
+            <span id="progress" class="progress" hidden><span id="progress-bar" class="progress-bar"></span></span>
+            <span id="progress-elapsed" class="elapsed"></span>
+            <button id="btn-cancel" class="btn" type="button" hidden>取消</button>
+            <span id="stale-note" class="stale-note"></span>
+          </div>
+          <div id="goals" class="goals"></div>
+          <div id="diagnosis" class="diagnosis"></div>
+          <div class="foot">
+            <button id="btn-export-foot" class="btn" type="button">导出 JSON</button>
+            <label class="btn file-btn"
+              >导入 JSON<input id="file-import-foot" type="file" accept="application/json,.json"
+            /></label>
+          </div>
         </div>
       </section>
+    </div>
 
-      <section id="result-pane">
-        <h2>结果</h2>
-        <div id="status">尚未计算。</div>
-        <div id="summary"></div>
-        <div id="goals-status"></div>
-        <div id="curve"></div>
-        <div class="calendar-tools">
-          <label>跳到日期 <input id="jump-date" type="date" /></label>
-          <button id="btn-jump" type="button">跳转</button>
+    <div id="menu" class="menu" hidden></div>
+
+    <div id="modal" class="modal" hidden>
+      <div class="modal-card">
+        <div class="modal-head">
+          <h3 id="modal-title">标题</h3>
+          <button id="btn-modal-close" class="btn btn-icon" type="button">×</button>
         </div>
-        <div id="calendar"></div>
-      </section>
-    </main>
+        <div id="modal-body" class="modal-body"></div>
+        <div id="modal-actions" class="modal-actions"></div>
+      </div>
+    </div>
 
     <script id="worker-source" type="text/plain">
 const __ns = {};
@@ -2184,27 +2829,122 @@ function availableCommandIds(rules, club, date) {
 }
 return { createClubLookup, clubBlockReason, availableCommandIds };
 })();
-__ns["src/lookup.js"] = (() => {
-// 领域对象的查询视图。校验在 rules.js，这里只负责按 id 取用。
+__ns["src/constraints.js"] = (() => {
+// 约束判定与目标函数。
+//
+// 三层（见 ADR-0002）：全部硬约束达标 → 正向属性等权总和最大 → 负面指标最小。
+//
+// 三类硬约束：
+//   全局约束  每次每日结算后都要成立。起点已满足 → 硬不变量；起点未满足 → 尽快满足。
+//   小目标    截止日期 + 一个属性集合 + 一个求和阈值。
+//   结局目标  在时间轴终点逐项评估。
+//
+// 空过的天不发生结算，因此**不参与**全局约束的判定。
 
-function findOrThrow(list, id, label) {
-  const hit = list?.find((x) => x.id === id);
-  if (!hit) throw new Error(`未知${label}：${id}`);
-  return hit;
+const EPSILON = 1e-9;
+
+/** 阈值比较：小数部分直接舍去（见数据需求清单）。 */
+function meets(value, op, threshold) {
+  const floored = Math.floor(value);
+  return op === '>=' ? floored >= threshold : floored < threshold;
 }
 
-function attributeById(rules, id) {
-  return findOrThrow(rules.attributes, id, '属性');
+/** 还差多少才能满足这个阈值。 */
+function shortfallOf(actual, op, threshold) {
+  if (meets(actual, op, threshold)) return 0;
+  return op === '>=' ? threshold - actual : actual - (threshold - 1);
 }
 
-function commandById(rules, id) {
-  return findOrThrow(rules.commands, id, '指令');
+function evaluateGoals(rules, input, days) {
+  const positiveIds = rules.attributes.filter((a) => a.direction === 'up').map((a) => a.id);
+  const negativeId = rules.attributes.find((a) => a.direction === 'down').id;
+  const endState = days.length > 0 ? days[days.length - 1].attributes : input.attributes;
+  const settledDays = days.filter((day) => day.isSettled);
+
+  const globalConstraints = input.globalConstraints.map((goal) =>
+    evaluateGlobalConstraint(goal, input.attributes, settledDays),
+  );
+  const miniGoals = input.miniGoals.map((goal) => evaluateMiniGoal(rules, goal, days));
+  const endingGoals = input.endingGoals.map((goal) => evaluateEndingGoal(goal, endState));
+
+  return {
+    ok: [...globalConstraints, ...miniGoals, ...endingGoals].every(
+      (entry) => entry.state === 'met',
+    ),
+    globalConstraints,
+    miniGoals,
+    endingGoals,
+    score: {
+      positiveSum: positiveIds.reduce((sum, id) => sum + endState[id], 0),
+      negative: endState[negativeId],
+    },
+  };
 }
 
-function attributeIds(rules) {
-  return rules.attributes.map((a) => a.id);
+function evaluateGlobalConstraint(goal, startAttributes, settledDays) {
+  // 起点已满足 → 往后每天都不得破；起点未满足 → 尽快满足，不直接判定无解。
+  const mode = meets(startAttributes[goal.attribute], goal.op, goal.value) ? 'invariant' : 'asap';
+
+  const violatedOn = [];
+  let metOn = null;
+  for (const day of settledDays) {
+    if (meets(day.attributes[goal.attribute], goal.op, goal.value)) {
+      if (metOn === null) metOn = day.date;
+    } else {
+      violatedOn.push(day.date);
+    }
+  }
+
+  const state =
+    mode === 'invariant' ? (violatedOn.length === 0 ? 'met' : 'unmet') : metOn === null ? 'unmet' : 'met';
+
+  return { ...goal, mode, state, metOn, violatedOn };
 }
-return { attributeById, commandById, attributeIds };
+
+function valueOf(rules, day, id) {
+  return id === rules.clubExperience.id ? day.clubExperience : day.attributes[id];
+}
+
+function evaluateMiniGoal(rules, goal, days) {
+  // 在截止日当天（含）结算之后评估；若截止日落在时间轴之外，取最靠后的那一天。
+  const at = [...days].reverse().find((day) => day.date <= goal.deadline) ?? days[0];
+  const actual = goal.attributes.reduce((sum, id) => sum + valueOf(rules, at, id), 0);
+
+  return {
+    ...goal,
+    evaluatedOn: at.date,
+    actual,
+    state: meets(actual, goal.op, goal.value) ? 'met' : 'unmet',
+    shortfall: shortfallOf(actual, goal.op, goal.value),
+  };
+}
+
+function evaluateEndingGoal(goal, endState) {
+  const actual = endState[goal.attribute];
+  return {
+    ...goal,
+    actual,
+    state: meets(actual, goal.op, goal.value) ? 'met' : 'unmet',
+    shortfall: shortfallOf(actual, goal.op, goal.value),
+  };
+}
+
+/**
+ * ADR-0002 的三层比较：硬约束 → 正向等权总和最大 → 负面指标最小。
+ * 返回负数表示 a 更优，正数表示 b 更优，0 表示打平。
+ */
+function comparePlans(a, b) {
+  if (a.goals.ok !== b.goals.ok) return a.goals.ok ? -1 : 1;
+
+  const sumDelta = a.goals.score.positiveSum - b.goals.score.positiveSum;
+  if (Math.abs(sumDelta) > EPSILON) return sumDelta > 0 ? -1 : 1;
+
+  const negativeDelta = a.goals.score.negative - b.goals.score.negative;
+  if (Math.abs(negativeDelta) > EPSILON) return negativeDelta < 0 ? -1 : 1;
+
+  return 0;
+}
+return { meets, shortfallOf, evaluateGoals, comparePlans };
 })();
 __ns["src/goals.js"] = (() => {
 const { isDate } = __ns["src/dates.js"];
@@ -2257,6 +2997,28 @@ function miniGoalProblems(list, label, context) {
   return problems;
 }
 return { goalProblems, miniGoalProblems };
+})();
+__ns["src/lookup.js"] = (() => {
+// 领域对象的查询视图。校验在 rules.js，这里只负责按 id 取用。
+
+function findOrThrow(list, id, label) {
+  const hit = list?.find((x) => x.id === id);
+  if (!hit) throw new Error(`未知${label}：${id}`);
+  return hit;
+}
+
+function attributeById(rules, id) {
+  return findOrThrow(rules.attributes, id, '属性');
+}
+
+function commandById(rules, id) {
+  return findOrThrow(rules.commands, id, '指令');
+}
+
+function attributeIds(rules) {
+  return rules.attributes.map((a) => a.id);
+}
+return { attributeById, commandById, attributeIds };
 })();
 __ns["src/input.js"] = (() => {
 const { isDate, weekdayOf, weekStartOf } = __ns["src/dates.js"];
@@ -2459,123 +3221,6 @@ function checkDayList(label, list, inTimeline, problems) {
   }
 }
 return { CURRENT_VERSION, defaultInput, toJson, fromJson, validateInput };
-})();
-__ns["src/constraints.js"] = (() => {
-// 约束判定与目标函数。
-//
-// 三层（见 ADR-0002）：全部硬约束达标 → 正向属性等权总和最大 → 负面指标最小。
-//
-// 三类硬约束：
-//   全局约束  每次每日结算后都要成立。起点已满足 → 硬不变量；起点未满足 → 尽快满足。
-//   小目标    截止日期 + 一个属性集合 + 一个求和阈值。
-//   结局目标  在时间轴终点逐项评估。
-//
-// 空过的天不发生结算，因此**不参与**全局约束的判定。
-
-const EPSILON = 1e-9;
-
-/** 阈值比较：小数部分直接舍去（见数据需求清单）。 */
-function meets(value, op, threshold) {
-  const floored = Math.floor(value);
-  return op === '>=' ? floored >= threshold : floored < threshold;
-}
-
-/** 还差多少才能满足这个阈值。 */
-function shortfallOf(actual, op, threshold) {
-  if (meets(actual, op, threshold)) return 0;
-  return op === '>=' ? threshold - actual : actual - (threshold - 1);
-}
-
-function evaluateGoals(rules, input, days) {
-  const positiveIds = rules.attributes.filter((a) => a.direction === 'up').map((a) => a.id);
-  const negativeId = rules.attributes.find((a) => a.direction === 'down').id;
-  const endState = days.length > 0 ? days[days.length - 1].attributes : input.attributes;
-  const settledDays = days.filter((day) => day.isSettled);
-
-  const globalConstraints = input.globalConstraints.map((goal) =>
-    evaluateGlobalConstraint(goal, input.attributes, settledDays),
-  );
-  const miniGoals = input.miniGoals.map((goal) => evaluateMiniGoal(rules, goal, days));
-  const endingGoals = input.endingGoals.map((goal) => evaluateEndingGoal(goal, endState));
-
-  return {
-    ok: [...globalConstraints, ...miniGoals, ...endingGoals].every(
-      (entry) => entry.state === 'met',
-    ),
-    globalConstraints,
-    miniGoals,
-    endingGoals,
-    score: {
-      positiveSum: positiveIds.reduce((sum, id) => sum + endState[id], 0),
-      negative: endState[negativeId],
-    },
-  };
-}
-
-function evaluateGlobalConstraint(goal, startAttributes, settledDays) {
-  // 起点已满足 → 往后每天都不得破；起点未满足 → 尽快满足，不直接判定无解。
-  const mode = meets(startAttributes[goal.attribute], goal.op, goal.value) ? 'invariant' : 'asap';
-
-  const violatedOn = [];
-  let metOn = null;
-  for (const day of settledDays) {
-    if (meets(day.attributes[goal.attribute], goal.op, goal.value)) {
-      if (metOn === null) metOn = day.date;
-    } else {
-      violatedOn.push(day.date);
-    }
-  }
-
-  const state =
-    mode === 'invariant' ? (violatedOn.length === 0 ? 'met' : 'unmet') : metOn === null ? 'unmet' : 'met';
-
-  return { ...goal, mode, state, metOn, violatedOn };
-}
-
-function valueOf(rules, day, id) {
-  return id === rules.clubExperience.id ? day.clubExperience : day.attributes[id];
-}
-
-function evaluateMiniGoal(rules, goal, days) {
-  // 在截止日当天（含）结算之后评估；若截止日落在时间轴之外，取最靠后的那一天。
-  const at = [...days].reverse().find((day) => day.date <= goal.deadline) ?? days[0];
-  const actual = goal.attributes.reduce((sum, id) => sum + valueOf(rules, at, id), 0);
-
-  return {
-    ...goal,
-    evaluatedOn: at.date,
-    actual,
-    state: meets(actual, goal.op, goal.value) ? 'met' : 'unmet',
-    shortfall: shortfallOf(actual, goal.op, goal.value),
-  };
-}
-
-function evaluateEndingGoal(goal, endState) {
-  const actual = endState[goal.attribute];
-  return {
-    ...goal,
-    actual,
-    state: meets(actual, goal.op, goal.value) ? 'met' : 'unmet',
-    shortfall: shortfallOf(actual, goal.op, goal.value),
-  };
-}
-
-/**
- * ADR-0002 的三层比较：硬约束 → 正向等权总和最大 → 负面指标最小。
- * 返回负数表示 a 更优，正数表示 b 更优，0 表示打平。
- */
-function comparePlans(a, b) {
-  if (a.goals.ok !== b.goals.ok) return a.goals.ok ? -1 : 1;
-
-  const sumDelta = a.goals.score.positiveSum - b.goals.score.positiveSum;
-  if (Math.abs(sumDelta) > EPSILON) return sumDelta > 0 ? -1 : 1;
-
-  const negativeDelta = a.goals.score.negative - b.goals.score.negative;
-  if (Math.abs(negativeDelta) > EPSILON) return negativeDelta < 0 ? -1 : 1;
-
-  return 0;
-}
-return { meets, shortfallOf, evaluateGoals, comparePlans };
 })();
 __ns["src/rules.js"] = (() => {
 const { isDate } = __ns["src/dates.js"];
@@ -3404,23 +4049,17 @@ function createSolver(rules) {
 }
 return { createSolver };
 })();
-__ns["web/app.js"] = (() => {
+__ns["web/ui.js"] = (() => {
 const rules = __ns["data/rules.json"];
-const { resolveCommand } = __ns["src/calendar.js"];
-const { addDays, weekStartOf } = __ns["src/dates.js"];
+const { addDays, weekStartOf, weekdayOf } = __ns["src/dates.js"];
 const { availableCommandIds, createClubLookup } = __ns["src/clubs.js"];
-const { attributeById, attributeIds } = __ns["src/lookup.js"];
-const { defaultInput, fromJson, toJson } = __ns["src/input.js"];
-const { createPlanner } = __ns["src/plan.js"];
-const { createSolver } = __ns["src/solver.js"];
-// 主线程：表单、指令选择、日历表与曲线、JSON 导入导出，以及一次 Worker 往返。
+const { defaultInput } = __ns["src/input.js"];
+const { resolveCommand } = __ns["src/calendar.js"];
+// 共享状态、标签、日期工具与弹窗骨架。
 //
-// 页面是从 file:// 双击打开的，而有些浏览器在 file:// 下拒绝构造 blob Worker。
-// 因此这里对 Worker 做降级：能建就用 Worker，建不了或中途报错就回退到主线程，
-// 保证"双击即用"这件事在任何浏览器里都成立。
-
-
-
+// 依赖方向是单向的：ui.js ← edits.js ← panels.js ← app.js，且 ui.js ← calendar.js ← panels.js。
+// （panels.js 同时用到 edits.js 与 calendar.js；没有任何一条边反向指回 ui.js。）
+// 打包器拒绝循环依赖，所以渲染入口由 app.js 通过 hooks 注入，而不是让 ui.js 反向 import app.js。
 
 
 
@@ -3429,63 +4068,1676 @@ const { createSolver } = __ns["src/solver.js"];
 
 
 const UNSET = '';
-const EMPTY = '__empty__';
-const NO_CLUB = '__no_club__';
+const CHOICE_EMPTY = '__empty__';
+const CHOICE_NO_CLUB = '__no_club__';
 
-const state = {
-  input: defaultInput(rules),
-  requestId: 0,
-  daysByDate: new Map(),
-  assignments: null,
-  solving: false,
+const $ = (id) => document.getElementById(id);
+
+const TIMELINE = rules.timeline;
+
+const ATTRIBUTES = rules.attributes.map((attribute) => ({
+  id: attribute.id,
+  name: attribute.name,
+  direction: attribute.direction,
+  min: attribute.min,
+  max: attribute.max,
+}));
+
+/** 「社团经验」在详情里与 9 项属性并列显示，但它不是属性表里的一项。 */
+const CLUB_EXPERIENCE = {
+  id: rules.clubExperience.id,
+  name: rules.clubExperience.name,
 };
-const pending = new Map();
-const inlinePlan = createPlanner(rules);
-const inlineSolve = createSolver(rules);
-const commandNames = new Map(rules.commands.map((c) => [c.id, c.name]));
-const attributeLabels = rules.attributes.map((a) => ({ id: a.id, name: a.name }));
 
-let worker = null;
-let workerUnavailable = false;
+/** 详情条里的 10 项数值：9 项属性 + 当前社团的社团经验。 */
+const VALUE_FIELDS = [
+  ...ATTRIBUTES.map((attribute) => ({ id: attribute.id, name: attribute.name })),
+  CLUB_EXPERIENCE,
+];
 
-let dayRows = new Map();
-let weekRows = new Map();
-let renderedKey = '';
+const CLUBS = rules.clubs.map((club) => ({ id: club.id, name: club.name }));
+const COMMANDS = rules.commands.map((command) => ({ id: command.id, name: command.name }));
 
-const BASE_COLUMNS = ['日期', '星期', '当天顺序', '结算', '指令', '休息日', '跳过'];
-const COLUMNS = [...BASE_COLUMNS, ...attributeLabels.map((a) => a.name)];
+const COMMAND_NAMES = new Map(COMMANDS.map((command) => [command.id, command.name]));
+const ATTRIBUTE_NAMES = new Map(ATTRIBUTES.map((attribute) => [attribute.id, attribute.name]));
 
-const SEQUENCE_LABELS = { 'day-command': '日指令', settle: '结算', 'week-command': '周指令' };
-const EMPTY_LABELS = {
+const SOURCE_LABELS = {
+  pinned: '使用者指定',
+  assigned: '求解器排定',
+  none: '待定',
+};
+
+const SKIP_LABELS = {
   day: '空过（指定本日）',
   'day-command': '空过（日指令置空）',
-  week: '空过（本周空过）',
+  week: '空过（本周周指令置空）',
 };
+
 const BLOCK_LABELS = {
   'club-not-unlocked': '不结算（社团未解锁）',
   'club-not-selected': '不结算（未加入社团）',
   'club-mismatch': '不结算（社团不符）',
 };
-const CURVE_COLORS = [
-  '#2f6fed',
-  '#e05252',
-  '#2f9e6f',
-  '#c98a1b',
-  '#8b5cf6',
-  '#0e9aa7',
-  '#d9578a',
-  '#6b7280',
-  '#a3541c',
-];
-const curveColorAt = (index) => CURVE_COLORS[index % CURVE_COLORS.length];
 
-const $ = (id) => document.getElementById(id);
+const state = {
+  input: defaultInput(rules),
+  /** 求解器排出的日程；`null` 表示还没算过。 */
+  assignments: null,
+  /** `plan()` 的结果；`null` 表示还没算过。 */
+  result: null,
+  /** 求解器给的不可达诊断（排不出达标日程时才存在）。 */
+  diagnosis: null,
+  /** 尚未计算的改动数。 */
+  pending: 0,
+  computing: false,
+  computedAt: null,
+  /** 选区。`from` 恒不晚于 `to`；单日选中时两者相等。 */
+  selection: { from: TIMELINE.start, to: TIMELINE.start },
+  /** 双月日历左侧那个月，`YYYY-MM`。 */
+  viewMonth: TIMELINE.start.slice(0, 7),
+  dayByDate: new Map(),
+  miniGoalByDate: new Map(),
+};
 
-function setStatus(text, isError = false) {
-  const status = $('status');
-  status.textContent = text;
-  status.classList.toggle('error', isError);
+/** app.js 注入的渲染入口；界面模块只管改状态，不互相直接调用渲染。 */
+const hooks = {
+  render() {},
+};
+
+function commandName(id) {
+  return COMMAND_NAMES.get(id) ?? id;
 }
+
+function attributeName(id) {
+  if (id === CLUB_EXPERIENCE.id) return CLUB_EXPERIENCE.name;
+  return ATTRIBUTE_NAMES.get(id) ?? id;
+}
+
+function opText(op) {
+  return op === '>=' ? '≥' : '<';
+}
+
+function fmt1(value) {
+  return Number(value ?? 0).toFixed(1);
+}
+
+function isStale() {
+  return state.pending > 0 || state.result === null;
+}
+
+/** 一个「空目标」：属性 + 方向 + 阈值。默认值只有这一处，免得三处各写一份。 */
+function defaultGoal() {
+  return { attribute: ATTRIBUTES[0].id, op: '>=', value: 50 };
+}
+
+/** 目标与小目标的日期都夹在时间轴内：越界的截止日会让画旗与评估走偏。 */
+function clampDeadline(date) {
+  if (date > TIMELINE.lastSettlement) return TIMELINE.lastSettlement;
+  if (date < TIMELINE.start) return TIMELINE.start;
+  return date;
+}
+
+/** 某一天所属的社团（`null` = 未加入）。社团只能在一个个周日内切换。 */
+function clubAt(date) {
+  return createClubLookup(state.input)(date);
+}
+
+function selectedDates() {
+  const { from, to } = state.selection;
+  if (!from || !to) return [];
+  const dates = [];
+  for (let date = from; date <= to; date = addDays(date, 1)) dates.push(date);
+  return dates;
+}
+
+function isRangeSelection() {
+  return state.selection.from !== state.selection.to;
+}
+
+// ---------------------------------------------------------------- 日期
+
+function inTimeline(date) {
+  return date >= TIMELINE.start && date <= TIMELINE.end;
+}
+
+function monthOf(date) {
+  return date.slice(0, 7);
+}
+
+function monthLabel(key) {
+  const [year, month] = key.split('-');
+  return `${year}年${Number(month)}月`;
+}
+
+function shiftMonth(key, delta) {
+  const [year, month] = key.split('-').map(Number);
+  const shifted = new Date(Date.UTC(year, month - 1 + delta, 1));
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}`;
+}
+
+/** 一个月的日期格：补齐前后溢出日，行数按实际需要（5 或 6 行）。 */
+function monthCells(key) {
+  const first = `${key}-01`;
+  const [year, month] = key.split('-').map(Number);
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const rows = Math.ceil((weekdayOf(first) + daysInMonth) / 7);
+  const start = weekStartOf(first);
+  return Array.from({ length: rows * 7 }, (_, index) => addDays(start, index));
+}
+
+// ---------------------------------------------------------------- 指令候选
+
+function commandsAvailableAt(date) {
+  const clubAt = createClubLookup(state.input);
+  const allowed = new Set(availableCommandIds(rules, clubAt(date), date));
+  return COMMANDS.filter((command) => allowed.has(command.id));
+}
+
+function isRestOn(date) {
+  return weekdayOf(date) === 0 || state.input.restDays.includes(date);
+}
+
+/** 与日历、求解器完全一致的指令解析口径（见 src/calendar.js 的 resolveCommand）。 */
+function resolveDayCommand(date) {
+  const rest = isRestOn(date);
+  const weekStart = weekStartOf(date);
+  return resolveCommand(state.input, state.assignments, {
+    isRestDay: rest,
+    date,
+    weekStart,
+  });
+}
+
+function setResult(result) {
+  state.result = result;
+  state.dayByDate = new Map(result.days.map((day) => [day.date, day]));
+  state.diagnosis = null;
+  state.computedAt = new Date();
+  state.pending = 0;
+}
+
+function dayOf(date) {
+  return state.dayByDate.get(date) ?? null;
+}
+
+/** 值：优先取计算结果，没有就退回起始属性（未计算时详情条仍要能显示起点）。 */
+function valueOf(date, id) {
+  const day = dayOf(date);
+  if (!day) return null;
+  return id === CLUB_EXPERIENCE.id ? day.clubExperience : day.attributes[id];
+}
+
+/** 当日增量：与前一天结算后的值比较；时间轴第一天与起始属性比较。 */
+function deltaOf(date, id) {
+  const day = dayOf(date);
+  if (!day) return null;
+  if (date === state.input.startDate) {
+    const base = id === CLUB_EXPERIENCE.id ? 0 : state.input.attributes[id];
+    const current = id === CLUB_EXPERIENCE.id ? day.clubExperience : day.attributes[id];
+    return current - base;
+  }
+  const previous = dayOf(addDays(date, -1));
+  if (!previous) return null;
+  const before = id === CLUB_EXPERIENCE.id ? previous.clubExperience : previous.attributes[id];
+  const after = id === CLUB_EXPERIENCE.id ? day.clubExperience : day.attributes[id];
+  return after - before;
+}
+
+// ---------------------------------------------------------------- 改动登记
+
+function markDirty(count = 1) {
+  state.pending += count;
+  hooks.render();
+}
+
+/** 改完周指令后，把本周全部平日亮一下——"这一改连坐六天"要看得见。 */
+function flashWeek(weekStart) {
+  const cells = document.querySelectorAll(`.cell[data-week="${weekStart}"].is-wd`);
+  for (const cell of cells) {
+    cell.classList.remove('is-flash');
+    void cell.offsetWidth;
+    cell.classList.add('is-flash');
+    setTimeout(() => cell.classList.remove('is-flash'), 1400);
+  }
+}
+
+// ---------------------------------------------------------------- 弹窗
+
+function openModal({ title, body, actions = [] }) {
+  $('modal-title').textContent = title;
+  const bodyHost = $('modal-body');
+  bodyHost.textContent = '';
+  if (body) bodyHost.append(body);
+
+  const actionHost = $('modal-actions');
+  actionHost.textContent = '';
+  for (const action of actions) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = action.primary ? 'btn btn-primary' : 'btn';
+    button.textContent = action.label;
+    button.addEventListener('click', action.onClick);
+    actionHost.append(button);
+  }
+  $('modal').hidden = false;
+}
+
+function closeModal() {
+  $('modal').hidden = true;
+}
+
+function modalIsOpen() {
+  return !$('modal').hidden;
+}
+
+function field(label, control) {
+  const row = document.createElement('label');
+  row.className = 'form-row';
+  const caption = document.createElement('span');
+  caption.textContent = label;
+  row.append(caption, control);
+  return row;
+}
+
+function numberInput(value, { min = 0, max = 999, step = 1 } = {}) {
+  const input = document.createElement('input');
+  input.type = 'number';
+  input.min = String(min);
+  input.max = String(max);
+  input.step = String(step);
+  input.value = String(value);
+  return input;
+}
+
+function selectOf(entries, value) {
+  const select = document.createElement('select');
+  for (const [optionValue, label] of entries) {
+    const option = document.createElement('option');
+    option.value = optionValue;
+    option.textContent = label;
+    select.append(option);
+  }
+  select.value = value;
+  return select;
+}
+
+function attributePicker(selected) {
+  const host = document.createElement('div');
+  host.className = 'attr-picker';
+  const chosen = new Set(selected);
+  for (const field2 of VALUE_FIELDS) {
+    const label = document.createElement('label');
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.value = field2.id;
+    box.checked = chosen.has(field2.id);
+    const caption = document.createElement('span');
+    caption.textContent = field2.name;
+    label.append(box, caption);
+    host.append(label);
+  }
+  return host;
+}
+
+function pickedAttributes(host) {
+  return [...host.querySelectorAll('input[type="checkbox"]')]
+    .filter((box) => box.checked)
+    .map((box) => box.value);
+}
+return { UNSET, CHOICE_EMPTY, CHOICE_NO_CLUB, $, TIMELINE, ATTRIBUTES, CLUB_EXPERIENCE, VALUE_FIELDS, CLUBS, COMMANDS, SOURCE_LABELS, SKIP_LABELS, BLOCK_LABELS, state, hooks, commandName, attributeName, opText, fmt1, isStale, defaultGoal, clampDeadline, clubAt, selectedDates, isRangeSelection, inTimeline, monthOf, monthLabel, shiftMonth, monthCells, commandsAvailableAt, isRestOn, resolveDayCommand, setResult, dayOf, valueOf, deltaOf, markDirty, flashWeek, openModal, closeModal, modalIsOpen, field, numberInput, selectOf, attributePicker, pickedAttributes };
+})();
+__ns["web/calendar.js"] = (() => {
+const { addDays, weekStartOf, weekdayOf } = __ns["src/dates.js"];
+const { $, BLOCK_LABELS, CLUBS, SKIP_LABELS, SOURCE_LABELS, TIMELINE, VALUE_FIELDS, clampDeadline, clubAt, commandName, deltaOf, fmt1, inTimeline, isRestOn, isStale, isRangeSelection, monthCells, monthLabel, monthOf, resolveDayCommand, selectedDates, shiftMonth, state, valueOf } = __ns["web/ui.js"];
+// 双月日历与当日详情条。
+//
+// 两件事在这里落地：
+//   1. 日历**从周日起排**，所以每一行恰好等于一个自然周（周日 + 周一至周六）——
+//      该周的周指令一眼是一个整体。
+//   2. 格子里写的是**当天实际执行的指令**：平日显示本周周指令，周日与休息日显示各自的日指令。
+
+
+
+
+const DOW = ['日', '一', '二', '三', '四', '五', '六'];
+const MAX_FLAGS = 4;
+
+/** 与 src/calendar.js 的 resolveSkipSource 同口径：界面在未计算时也要能画出"空过"。 */
+function skipSourceOn(date, rest) {
+  if (state.input.skippedDays.includes(date)) return 'day';
+  if (rest && state.input.dayCommands[date] === null) return 'day-command';
+  if (!rest && state.input.weekCommands[weekStartOf(date)] === null) return 'week';
+  return null;
+}
+
+/** `date` 上挂着哪几条小目标（按 input.miniGoals 的下标，用来取达标状态）。 */
+function miniGoalIndexesOn(date) {
+  const indexes = [];
+  state.input.miniGoals.forEach((goal, index) => {
+    if (clampDeadline(goal.deadline) === date) indexes.push(index);
+  });
+  return indexes;
+}
+
+function buildCell(date) {
+  const cell = document.createElement('div');
+  cell.className = 'cell';
+  cell.dataset.date = date;
+  cell.dataset.week = weekStartOf(date);
+  cell.tabIndex = 0;
+  cell.setAttribute('role', 'gridcell');
+
+  const weekday = weekdayOf(date);
+  const inRange = inTimeline(date);
+  const rest = isRestOn(date);
+  const history = state.input.playedUpTo ? date < state.input.playedUpTo : false;
+
+  if (weekday === 0) cell.classList.add('is-sun');
+  else cell.classList.add('is-wd');
+  if (rest && weekday !== 0) cell.classList.add('is-rest');
+  if (history) cell.classList.add('is-history');
+
+  const skipSource = inRange ? skipSourceOn(date, rest) : null;
+  if (skipSource) cell.classList.add('is-empty');
+  if (!inRange) {
+    cell.classList.add('is-ovf');
+    cell.setAttribute('aria-disabled', 'true');
+    cell.tabIndex = -1;
+  }
+  if (state.input.playedUpTo === date) cell.classList.add('is-played');
+  if (date === TIMELINE.end) cell.classList.add('is-end');
+
+  const number = document.createElement('span');
+  number.className = 'dn';
+  number.textContent = String(Number(date.slice(8, 10)));
+
+  const command = document.createElement('span');
+  command.className = 'dcmd';
+  if (skipSource) {
+    command.textContent = '空过';
+  } else if (inRange) {
+    const resolved = resolveDayCommand(date);
+    command.textContent = resolved.commandId ? commandName(resolved.commandId) : '待定';
+  } else {
+    command.textContent = '—';
+  }
+
+  cell.append(number);
+
+  const indexes = inRange ? miniGoalIndexesOn(date) : [];
+  if (indexes.length > 0) {
+    const flags = document.createElement('span');
+    flags.className = 'flags';
+    const shown = indexes.length > MAX_FLAGS ? MAX_FLAGS - 1 : indexes.length;
+    for (let i = 0; i < shown; i += 1) {
+      flags.append(buildFlag(indexes[i]));
+    }
+    if (indexes.length > MAX_FLAGS) {
+      const badge = document.createElement('span');
+      badge.className = 'flag-count';
+      badge.textContent = `⚑${indexes.length}`;
+      flags.append(badge);
+    }
+    cell.append(flags);
+  }
+
+  cell.append(command);
+
+  if (date === TIMELINE.end) {
+    const tag = document.createElement('span');
+    tag.className = 'tag-end';
+    tag.textContent = '终点';
+    cell.append(tag);
+  }
+  return cell;
+}
+
+function buildFlag(index) {
+  const flag = document.createElement('span');
+  const evaluated = state.result?.goals?.miniGoals?.[index];
+  flag.className = 'flag';
+  if (evaluated) {
+    flag.classList.add(evaluated.state === 'met' ? 'met' : 'unmet');
+    flag.title = evaluated.state === 'met' ? '小目标达标' : '小目标未达标';
+  } else {
+    flag.classList.add('unmet');
+    flag.title = '小目标（尚未计算）';
+  }
+  return flag;
+}
+
+function buildMonth(key) {
+  const month = document.createElement('div');
+  month.className = 'month';
+
+  const title = document.createElement('div');
+  title.className = 'month-title';
+  title.textContent = monthLabel(key);
+  month.append(title);
+
+  const dow = document.createElement('div');
+  dow.className = 'dow';
+  for (const name of DOW) {
+    const head = document.createElement('span');
+    head.textContent = name;
+    dow.append(head);
+  }
+  month.append(dow);
+
+  const grid = document.createElement('div');
+  grid.className = 'grid';
+  for (const date of monthCells(key)) {
+    const cell = buildCell(date);
+    cell.dataset.month = key;
+    // 溢出日：日期不属于本月，置灰不可选。
+    if (monthOf(date) !== key) {
+      cell.classList.add('is-ovf');
+      cell.setAttribute('aria-disabled', 'true');
+      cell.tabIndex = -1;
+      // 溢出格是"另一个月的那一天"，不该携带本月的任何标记——包括终点的底边与「终点」标签。
+      cell.classList.remove('is-empty', 'is-rest', 'is-history', 'is-end', 'is-played');
+      cell.querySelector('.dcmd').textContent = '—';
+      const flags = cell.querySelector('.flags');
+      if (flags) flags.remove();
+      const tag = cell.querySelector('.tag-end');
+      if (tag) tag.remove();
+    }
+    grid.append(cell);
+  }
+  month.append(grid);
+  return month;
+}
+
+function applySelectionClasses() {
+  const { from, to } = state.selection;
+  const range = from !== to;
+  for (const cell of document.querySelectorAll('.cell')) {
+    // 溢出格是"上/下个月的那一天"，不可选也不该显示选中态——否则同一日期会在
+    // 两张月历里同时亮起，其中一张还是灰的。
+    if (cell.classList.contains('is-ovf')) {
+      cell.classList.remove('is-range', 'is-selected');
+      cell.removeAttribute('aria-selected');
+      continue;
+    }
+    const date = cell.dataset.date;
+    const inside = range && date >= from && date <= to;
+    const selected = date === from || date === to;
+    cell.classList.toggle('is-range', inside && !selected);
+    cell.classList.toggle('is-selected', selected);
+    if (selected) cell.setAttribute('aria-selected', 'true');
+    else cell.removeAttribute('aria-selected');
+  }
+}
+
+function renderCalendar() {
+  const host = $('calendar');
+  host.textContent = '';
+
+  const stale = isStale();
+  const months = document.createElement('div');
+  months.className = 'cal-months';
+  months.append(buildMonth(state.viewMonth), buildMonth(shiftMonth(state.viewMonth, 1)));
+  host.append(months);
+
+  host.classList.toggle('stale', stale);
+  applySelectionClasses();
+
+  $('month-label').textContent = `${monthLabel(state.viewMonth)} · ${monthLabel(
+    shiftMonth(state.viewMonth, 1),
+  )}`;
+}
+
+function renderDetail() {
+  const host = $('detail');
+  host.textContent = '';
+  host.classList.toggle('stale', isStale());
+
+  const date = state.selection.to;
+  const range = isRangeSelection();
+  const weekday = weekdayOf(date);
+  const weekStart = weekStartOf(date);
+  const rest = isRestOn(date);
+  const skipSource = skipSourceOn(date, rest);
+  const resolved = resolveDayCommand(date);
+  const day = state.dayByDate.get(date) ?? null;
+
+  const when = document.createElement('div');
+  when.className = 'when';
+
+  const line = document.createElement('div');
+  const strong = document.createElement('strong');
+  strong.textContent = `${date} ${['周日', '周一', '周二', '周三', '周四', '周五', '周六'][weekday]}`;
+  const weekNo =
+    Math.round(
+      (Date.parse(`${weekStart}T00:00:00Z`) -
+        Date.parse(`${weekStartOf(state.input.startDate)}T00:00:00Z`)) /
+        604800000,
+    ) + 1;
+  const weekText = document.createElement('span');
+  weekText.textContent = ` · 第 ${Number.isFinite(weekNo) ? weekNo : '—'} 周`;
+  line.append(strong, weekText);
+  when.append(line);
+
+  const commandLine = document.createElement('p');
+  if (skipSource) {
+    commandLine.textContent = `当日指令：${SKIP_LABELS[skipSource]}`;
+  } else if (resolved.commandId) {
+    commandLine.textContent = `当日指令：${commandName(resolved.commandId)}（${SOURCE_LABELS[resolved.source]}）`;
+  } else {
+    commandLine.textContent = '当日指令：待定';
+  }
+  when.append(commandLine);
+
+  const settleLine = document.createElement('p');
+  if (day && !day.isSettled) {
+    settleLine.textContent = `不结算：${
+      day.commandBlocked ? BLOCK_LABELS[day.commandBlocked] : date === TIMELINE.end ? '时间轴终点' : '时间轴起点'
+    }`;
+  } else if (!state.result) {
+    settleLine.textContent = '尚未计算——点上方「计算」得到属性与达标判定。';
+  } else {
+    settleLine.textContent = '已结算';
+  }
+  when.append(settleLine);
+
+  if (rest && weekday !== 0) {
+    const restLine = document.createElement('p');
+    restLine.textContent = '这一天被标记为休息日：执行自己的日指令，不执行本周周指令。';
+    when.append(restLine);
+  }
+
+  const clubId = clubAt(date);
+  const clubLine = document.createElement('p');
+  clubLine.textContent = `社团：${
+    clubId ? (CLUBS.find((entry) => entry.id === clubId)?.name ?? clubId) : '未加入'
+  }`;
+  when.append(clubLine);
+
+  host.append(when);
+
+  const attrs = document.createElement('div');
+  attrs.className = 'attrs';
+  for (const field of VALUE_FIELDS) {
+    const row = document.createElement('div');
+    row.className = 'attr';
+    const name = document.createElement('span');
+    name.textContent = field.name;
+    row.append(name);
+
+    const value = document.createElement('b');
+    const current = valueOf(date, field.id);
+    value.textContent = current === null ? '—' : fmt1(current);
+    row.append(value);
+
+    const delta = deltaOf(date, field.id);
+    const deltaEl = document.createElement('em');
+    if (delta === null) {
+      deltaEl.textContent = 'Δ —';
+    } else {
+      const rounded = Math.abs(delta) < 0.05 ? 0 : delta;
+      deltaEl.textContent = `Δ ${rounded > 0 ? '+' : ''}${fmt1(rounded)}`;
+      if (rounded > 0) deltaEl.classList.add('up');
+      if (rounded < 0) deltaEl.classList.add('down');
+    }
+    row.append(deltaEl);
+    attrs.append(row);
+  }
+  host.append(attrs);
+
+  if (range) {
+    const note = document.createElement('div');
+    note.className = 'range-note';
+    const dates = selectedDates();
+    const weeks = new Set(dates.map((entry) => weekStartOf(entry)));
+    note.textContent = `已选 ${dates.length} 天（${state.selection.from} → ${state.selection.to}，跨 ${weeks.size} 周）：右键打开批量操作；在这段里改指令会写进它覆盖到的每一周的周指令。`;
+    host.append(note);
+  }
+}
+
+// ---------------------------------------------------------------- 选中与框选
+
+function setSelection(anchor, other) {
+  const from = anchor <= other ? anchor : other;
+  const to = anchor <= other ? other : anchor;
+  state.selection = { from, to };
+  applySelectionClasses();
+  renderDetail();
+}
+
+function selectDate(date) {
+  setSelection(date, date);
+}
+
+function goToMonth(key) {
+  const lowest = monthOf(TIMELINE.start);
+  const highest = monthOf(TIMELINE.end);
+  if (key < lowest) key = lowest;
+  if (key > highest) key = highest;
+  state.viewMonth = key;
+  renderCalendar();
+}
+
+/** 跳到某一天：把它所在的月份放到**左侧**，并选中它。 */
+function jumpToDate(date) {
+  if (!date) return;
+  goToMonth(monthOf(date));
+  selectDate(date);
+  const cell = cellFor(date);
+  if (cell) cell.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+/** 同一日期可能在两张月历里各有一格；永远挑可用（非溢出）的那一格。 */
+function cellFor(date) {
+  return (
+    document.querySelector(`.cell[data-date="${date}"]:not(.is-ovf)`) ??
+    document.querySelector(`.cell[data-date="${date}"]`)
+  );
+}
+
+let drag = null;
+
+function wireCalendar() {
+  const host = $('calendar');
+
+  host.addEventListener('mousedown', (event) => {
+    if (event.button !== 0) return;
+    const cell = event.target.closest('.cell');
+    if (!cell || cell.classList.contains('is-ovf')) return;
+    event.preventDefault();
+    drag = { anchor: cell.dataset.date, last: cell.dataset.date };
+    selectDate(cell.dataset.date);
+  });
+
+  host.addEventListener('mousemove', (event) => {
+    if (!drag) return;
+    const cell = event.target.closest('.cell');
+    if (!cell || cell.classList.contains('is-ovf')) return;
+    const date = cell.dataset.date;
+    if (date === drag.last) return;
+    drag.last = date;
+    setSelection(drag.anchor, date);
+  });
+
+  document.addEventListener('mouseup', () => {
+    drag = null;
+  });
+
+  host.addEventListener('keydown', (event) => {
+    const cell = event.target.closest('.cell');
+    if (!cell) return;
+    const date = cell.dataset.date;
+    const step = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 }[event.key];
+    if (!step) return;
+    event.preventDefault();
+    const next = addDays(date, step);
+    if (!inTimeline(next)) return;
+    if (monthOf(next) !== monthOf(date)) goToMonth(monthOf(next));
+    selectDate(next);
+    const moved = cellFor(next);
+    if (moved) moved.focus();
+  });
+
+  $('btn-prev-month').addEventListener('click', () => goToMonth(shiftMonth(state.viewMonth, -1)));
+  $('btn-next-month').addEventListener('click', () => goToMonth(shiftMonth(state.viewMonth, 1)));
+  $('btn-jump').addEventListener('click', () => jumpToDate($('jump-date').value));
+  $('btn-jump-start').addEventListener('click', () => jumpToDate(TIMELINE.start));
+  $('btn-jump-end').addEventListener('click', () => jumpToDate(TIMELINE.end));
+}
+return { renderCalendar, renderDetail, setSelection, selectDate, goToMonth, jumpToDate, cellFor, wireCalendar };
+})();
+__ns["web/edits.js"] = (() => {
+const { weekStartOf, weekdayOf } = __ns["src/dates.js"];
+const { ATTRIBUTES, CHOICE_EMPTY, CHOICE_NO_CLUB, TIMELINE, UNSET, clampDeadline, defaultGoal, flashWeek, inTimeline, isRestOn, markDirty, state } = __ns["web/ui.js"];
+// 编辑动作：把界面上的操作写进 `input`，并登记"待计算"。
+//
+// 一条硬规则：**这里从不改求解器给出的 assignments**。使用者显式指定的内容进 input，
+// 求解器的填空只是填空（见 src/calendar.js 的 resolveCommand）。
+//
+// 「平日的指令就是周指令」这条领域规则在这里落地：给平日指定指令＝给它的周锚点写周指令。
+
+
+
+
+/** 三态选择串 ↔ 输入值：未指定＝键不存在，空过＝显式 null。 */
+function choiceToCommandId(choice) {
+  if (choice === UNSET) return undefined;
+  if (choice === CHOICE_EMPTY) return null;
+  return choice;
+}
+
+function commandIdToChoice(commandId) {
+  if (commandId === undefined) return UNSET;
+  if (commandId === null) return CHOICE_EMPTY;
+  return commandId;
+}
+
+function applyChoice(map, key, commandId) {
+  if (commandId === undefined) delete map[key];
+  else map[key] = commandId;
+}
+
+function toggleInList(list, value, present) {
+  const next = new Set(list);
+  if (present) next.add(value);
+  else next.delete(value);
+  return [...next].sort();
+}
+
+// ---------------------------------------------------------------- 日历上的标记
+
+/** 标记/取消休息日。周日恒为休息日，不受影响。 */
+function setRestDays(dates, isRest) {
+  let touched = 0;
+  for (const date of dates) {
+    if (weekdayOf(date) === 0) continue;
+    if (!inTimeline(date)) continue;
+    // 只登记**真的变了**的那些：取消一个本来就不是休息日的日子不该让"待计算"计数上涨。
+    if (isRest === state.input.restDays.includes(date)) continue;
+    state.input.restDays = toggleInList(state.input.restDays, date, isRest);
+    touched += 1;
+  }
+  if (touched > 0) markDirty(touched);
+}
+
+/** 跳过 / 取消跳过（空过）。 */
+function setSkipped(dates, isSkipped) {
+  let touched = 0;
+  for (const date of dates) {
+    if (!inTimeline(date)) continue;
+    if (isSkipped === state.input.skippedDays.includes(date)) continue;
+    state.input.skippedDays = toggleInList(state.input.skippedDays, date, isSkipped);
+    touched += 1;
+  }
+  if (touched > 0) markDirty(touched);
+}
+
+/**
+ * 指定指令（含"空过"与"清除指定"）。
+ *
+ * 周日与休息日写自己的日指令。**周一至周六的格子**——包括其中被标记为休息日的那天——
+ * 还要把**它所在那一周的周指令**一起改掉，所以只要选区碰到某周的任何一天平日，
+ * 那一周的周指令就会被改，即使选区外的平日会跟着变。所有者明确要这个语义。
+ *
+ * 周日不牵动周指令：周日有自己的决策点，改它不该连坐整周。
+ */
+function setCommands(dates, choice) {
+  const commandId = choiceToCommandId(choice);
+  const weeks = new Set();
+  let touched = 0;
+
+  for (const date of dates) {
+    if (!inTimeline(date)) continue;
+    const isSunday = weekdayOf(date) === 0;
+    if (isSunday || isRestOn(date)) {
+      applyChoice(state.input.dayCommands, date, commandId);
+    }
+    if (!isSunday) {
+      const weekStart = weekStartOf(date);
+      applyChoice(state.input.weekCommands, weekStart, commandId);
+      weeks.add(weekStart);
+    }
+    touched += 1;
+  }
+
+  // 先登记改动（它会同步重绘日历，把格子换成新的），再亮特效——反过来的话
+  // 刚加上去的亮色会连同旧格子一起被丢掉。
+  if (touched > 0) markDirty(touched);
+
+  // 改完周指令，本周全部平日亮一下：这一改连坐六天，要看得见。
+  for (const weekStart of weeks) flashWeek(weekStart);
+}
+
+/** 「已玩到」：历史是前缀，取到这一天（含）。 */
+function setPlayedUpTo(date) {
+  const clamped = date < state.input.startDate ? state.input.startDate : date;
+  const next = clamped > TIMELINE.lastSettlement ? TIMELINE.lastSettlement : clamped;
+  if (state.input.playedUpTo === next) return;
+  state.input.playedUpTo = next;
+  markDirty();
+}
+
+// ---------------------------------------------------------------- 左栏输入
+
+function setStartDate(date) {
+  state.input.startDate = date;
+  if (state.input.playedUpTo < date) state.input.playedUpTo = date;
+  markDirty();
+}
+
+function setAttributeValue(attributeId, value) {
+  state.input.attributes[attributeId] = value;
+  markDirty();
+}
+
+function setInitialClub(clubId) {
+  state.input.initialClub = clubId === UNSET ? null : clubId;
+  markDirty();
+}
+
+// ---------------------------------------------------------------- 目标
+
+function addGlobalConstraint(goal) {
+  state.input.globalConstraints.push(goal ?? defaultGoal());
+  markDirty();
+}
+
+function updateGlobalConstraint(index, patch) {
+  state.input.globalConstraints[index] = { ...state.input.globalConstraints[index], ...patch };
+  markDirty();
+}
+
+function removeGlobalConstraint(index) {
+  state.input.globalConstraints.splice(index, 1);
+  markDirty();
+}
+
+function addEndingGoal(goal) {
+  state.input.endingGoals.push(goal ?? defaultGoal());
+  markDirty();
+}
+
+function updateEndingGoal(index, patch) {
+  state.input.endingGoals[index] = { ...state.input.endingGoals[index], ...patch };
+  markDirty();
+}
+
+function removeEndingGoal(index) {
+  state.input.endingGoals.splice(index, 1);
+  markDirty();
+}
+
+function addMiniGoal(goal) {
+  state.input.miniGoals.push(goal);
+  markDirty();
+}
+
+function updateMiniGoal(index, goal) {
+  state.input.miniGoals[index] = goal;
+  markDirty();
+}
+
+function removeMiniGoal(index) {
+  state.input.miniGoals.splice(index, 1);
+  markDirty();
+}
+
+/** 新小目标的形状：截止日 + 属性集合 + 求和阈值 + 方向。日期一律夹在时间轴内。 */
+function draftMiniGoal(deadline) {
+  return {
+    deadline: clampDeadline(deadline),
+    attributes: [ATTRIBUTES[0].id],
+    op: '>=',
+    value: 50,
+  };
+}
+
+/**
+ * 在某个周日加入 / 更换 / 退出社团。自该周日起生效，并影响该周日的日指令。
+ * 工具**绝不自行**选择或切换社团——这条只由使用者的右键操作触发（原规格故事 23）。
+ */
+function setClubChange(date, choice) {
+  const others = state.input.clubChanges.filter((entry) => entry.date !== date);
+  if (choice === UNSET) {
+    state.input.clubChanges = others;
+  } else {
+    const clubId = choice === CHOICE_NO_CLUB ? null : choice;
+    state.input.clubChanges = [...others, { date, clubId }].sort((a, b) => (a.date < b.date ? -1 : 1));
+  }
+  markDirty();
+}
+return { choiceToCommandId, commandIdToChoice, setRestDays, setSkipped, setCommands, setPlayedUpTo, setStartDate, setAttributeValue, setInitialClub, addGlobalConstraint, updateGlobalConstraint, removeGlobalConstraint, addEndingGoal, updateEndingGoal, removeEndingGoal, addMiniGoal, updateMiniGoal, removeMiniGoal, draftMiniGoal, setClubChange };
+})();
+__ns["web/panels.js"] = (() => {
+const { weekdayOf, weekStartOf } = __ns["src/dates.js"];
+const { $, ATTRIBUTES, CHOICE_EMPTY, CHOICE_NO_CLUB, CLUBS, TIMELINE, UNSET, attributeName, attributePicker, clampDeadline, closeModal, clubAt, commandsAvailableAt, defaultGoal, field, fmt1, isRestOn, isStale, modalIsOpen, numberInput, opText, openModal, pickedAttributes, selectOf, selectedDates, isRangeSelection, state } = __ns["web/ui.js"];
+const { addEndingGoal, addGlobalConstraint, addMiniGoal, commandIdToChoice, draftMiniGoal, removeEndingGoal, removeGlobalConstraint, removeMiniGoal, setClubChange, setCommands, setPlayedUpTo, setRestDays, setSkipped, updateEndingGoal, updateGlobalConstraint, updateMiniGoal } = __ns["web/edits.js"];
+const { jumpToDate, selectDate } = __ns["web/calendar.js"];
+// 达标清单、不可达诊断、右键菜单、小目标弹窗与目标编辑器。
+//
+// 「编辑」与「查看状态」在这里合到一处：每一行既是"达没达到"，也是改它的入口。
+
+
+
+
+
+
+// ---------------------------------------------------------------- 达标清单
+
+function goalRow({ name, threshold, actual, gap, met, actions, subtitle }) {
+  const row = document.createElement('div');
+  row.className = `goal-row ${met === null ? '' : met ? 'met' : 'unmet'}`;
+
+  const nameCell = document.createElement('span');
+  nameCell.className = 'name';
+  nameCell.textContent = name;
+  if (subtitle) nameCell.title = subtitle;
+
+  const thresholdCell = document.createElement('span');
+  thresholdCell.className = 'v';
+  thresholdCell.textContent = threshold;
+
+  const actualCell = document.createElement('span');
+  actualCell.className = 'v';
+  actualCell.textContent = actual;
+
+  const gapCell = document.createElement('span');
+  gapCell.className = 'gap';
+  gapCell.textContent = gap;
+
+  const stateCell = document.createElement('span');
+  stateCell.className = 'state';
+  if (met !== null) {
+    const dot = document.createElement('i');
+    dot.className = `dot ${met ? 'met' : 'unmet'}`;
+    stateCell.append(dot);
+    const text = document.createElement('span');
+    text.textContent = met ? '达标' : '未达标';
+    stateCell.append(text);
+  } else {
+    stateCell.textContent = '未计算';
+  }
+
+  const actionCell = document.createElement('span');
+  actionCell.className = 'row-actions';
+  for (const action of actions) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn';
+    button.textContent = action.label;
+    if (action.title) button.title = action.title;
+    button.addEventListener('click', action.onClick);
+    actionCell.append(button);
+  }
+
+  row.append(nameCell, thresholdCell, actualCell, gapCell, stateCell, actionCell);
+  return row;
+}
+
+function groupHeader(title, countText, onAdd) {
+  const header = document.createElement('header');
+  const label = document.createElement('span');
+  label.textContent = title;
+  const count = document.createElement('span');
+  count.className = 'count';
+  count.textContent = countText;
+  header.append(label, count);
+  if (onAdd) {
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'btn';
+    add.textContent = '+ 加一条';
+    add.addEventListener('click', onAdd);
+    header.append(add);
+  }
+  return header;
+}
+
+/** 组标题右边的"N 条 · 全部达标/有未达标"。没有结果时不加后半句。 */
+function groupCount(total, evaluated, allMet, someMet) {
+  const suffix = evaluated ? (evaluated.every((entry) => entry.state === 'met') ? allMet : someMet) : '';
+  return `${total} 条${suffix}`;
+}
+
+function columnsRow() {
+  const row = document.createElement('div');
+  row.className = 'goal-cols';
+  for (const label of ['名称', '阈值', '实际值', '差距', '状态', '']) {
+    const span = document.createElement('span');
+    span.textContent = label;
+    row.append(span);
+  }
+  return row;
+}
+
+/**
+ * 「未达标的条目排在前」（规格 R14）。排序是稳定的：同一档内保持输入顺序，
+ * 因为行的编辑/删除动作靠的是**输入数组里的下标**，不是显示位置。
+ */
+function orderedRows(goals, evaluated) {
+  const rank = (entry) => {
+    if (!entry) return 1;
+    return entry.state === 'met' ? 2 : 0;
+  };
+  return goals
+    .map((goal, index) => ({ goal, index, ev: evaluated[index] ?? null }))
+    .sort((a, b) => rank(a.ev) - rank(b.ev) || a.index - b.index);
+}
+
+function group() {
+  const host = document.createElement('div');
+  host.className = 'goal-group';
+  return host;
+}
+
+function renderGoals() {
+  const host = $('goals');
+  host.textContent = '';
+  host.classList.toggle('stale', isStale());
+
+  const evaluated = state.result?.goals ?? null;
+  const head = document.createElement('div');
+  head.className = 'goals-head';
+  const title = document.createElement('span');
+  title.textContent = '达标';
+  const count = document.createElement('span');
+  count.className = 'count';
+  if (evaluated) {
+    const met = (list) => list.filter((entry) => entry.state === 'met').length;
+    count.textContent = `结局 ${met(evaluated.endingGoals)}/${evaluated.endingGoals.length} · 小目标 ${met(
+      evaluated.miniGoals,
+    )}/${evaluated.miniGoals.length} · 全局 ${met(evaluated.globalConstraints)}/${
+      evaluated.globalConstraints.length
+    }`;
+  } else {
+    count.textContent = '尚未计算——下面的状态列显示「未计算」';
+  }
+  head.append(title, count);
+  host.append(head);
+
+  // 结局目标
+  const ending = group();
+  const endingEval = evaluated?.endingGoals ?? [];
+  ending.append(
+    groupHeader(
+      '结局目标',
+      groupCount(state.input.endingGoals.length, endingEval, ' · 全部达标', ' · 有未达标'),
+      () => openEndingEditor(null),
+    ),
+  );
+  if (state.input.endingGoals.length > 0) ending.append(columnsRow());
+  for (const { goal, index, ev } of orderedRows(state.input.endingGoals, endingEval)) {
+    ending.append(
+      goalRow({
+        name: attributeName(goal.attribute),
+        threshold: `${opText(goal.op)} ${goal.value}`,
+        actual: ev ? fmt1(ev.actual) : '—',
+        gap: ev && ev.state === 'unmet' ? `还差 ${fmt1(ev.shortfall)}` : ev ? '—' : '—',
+        met: ev ? ev.state === 'met' : null,
+        subtitle: '在 1998-03-01 评估',
+        actions: [
+          { label: '✎', title: '编辑', onClick: () => openEndingEditor(index) },
+          { label: '×', title: '删除', onClick: () => removeEndingGoal(index) },
+        ],
+      }),
+    );
+  }
+  host.append(ending);
+
+  // 小目标
+  const mini = group();
+  const miniEval = evaluated?.miniGoals ?? [];
+  mini.append(
+    groupHeader(
+      '小目标',
+      groupCount(state.input.miniGoals.length, miniEval, ' · 全部达标', ' · 有未达标'),
+      () => openMiniGoalPopup(state.selection.to, null),
+    ),
+  );
+  if (state.input.miniGoals.length > 0) mini.append(columnsRow());
+  for (const { goal, index, ev } of orderedRows(state.input.miniGoals, miniEval)) {
+    mini.append(
+      goalRow({
+        name: `${goal.deadline} ${miniGoalSummary(goal)}`,
+        threshold: `${opText(goal.op)} ${goal.value}`,
+        actual: ev ? fmt1(ev.actual) : '—',
+        gap: ev && ev.state === 'unmet' ? `还差 ${fmt1(ev.shortfall)}` : '—',
+        met: ev ? ev.state === 'met' : null,
+        subtitle: ev ? `在 ${ev.evaluatedOn} 结算后评估` : '阈值作用于所选属性的求和',
+        actions: [
+          {
+            label: '↗',
+            title: '跳到该日',
+            onClick: () => jumpToDate(goal.deadline),
+          },
+          { label: '✎', title: '编辑', onClick: () => openMiniGoalPopup(goal.deadline, index) },
+          { label: '×', title: '删除', onClick: () => removeMiniGoal(index) },
+        ],
+      }),
+    );
+  }
+  if (state.input.miniGoals.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-state';
+    empty.textContent =
+      '还没有小目标。在日历上右键某一天选「添加小目标…」，或者用上面的「+ 加一条」。';
+    mini.append(empty);
+  }
+  host.append(mini);
+
+  // 全局约束
+  const global = group();
+  const globalEval = evaluated?.globalConstraints ?? [];
+  global.append(
+    groupHeader(
+      '全局约束',
+      groupCount(state.input.globalConstraints.length, globalEval, ' · 全部成立', ' · 有被破的'),
+      () => openGlobalEditor(null),
+    ),
+  );
+  if (state.input.globalConstraints.length > 0) global.append(columnsRow());
+  for (const { goal, index, ev } of orderedRows(state.input.globalConstraints, globalEval)) {
+    let actual = '—';
+    if (ev) {
+      if (ev.state === 'met') actual = ev.metOn ? `${ev.metOn} 达成` : '成立';
+      else actual = `破了 ${ev.violatedOn.length} 天`;
+    }
+    global.append(
+      goalRow({
+        name: attributeName(goal.attribute),
+        threshold: `${opText(goal.op)} ${goal.value}`,
+        actual,
+        gap: ev && ev.mode ? (ev.mode === 'invariant' ? '硬不变量' : '尽快满足') : '—',
+        met: ev ? ev.state === 'met' : null,
+        subtitle: '每一次每日结算之后判定',
+        actions: [
+          { label: '✎', title: '编辑', onClick: () => openGlobalEditor(index) },
+          { label: '×', title: '删除', onClick: () => removeGlobalConstraint(index) },
+        ],
+      }),
+    );
+  }
+  host.append(global);
+}
+
+// ---------------------------------------------------------------- 诊断
+
+function renderDiagnosis() {
+  const host = $('diagnosis');
+  host.textContent = '';
+  host.classList.toggle('stale', isStale());
+
+  const diagnosis = state.diagnosis;
+  if (!diagnosis) return;
+
+  const head = document.createElement('div');
+  head.className = 'goals-head';
+  const title = document.createElement('span');
+  title.textContent = '不可达诊断（三项并列）';
+  head.append(title);
+  host.append(head);
+
+  const cards = [];
+  if (diagnosis.miniGoalsBlocking) {
+    const cancelled = diagnosis.mustCancel ?? [];
+    const last = cancelled.length > 0 ? cancelled[cancelled.length - 1] : null;
+    cards.push({
+      title: '小目标 是它在挡路',
+      text: last
+        ? `由近至远取消 ${cancelled.length} 条（到「${last.deadline} ${
+            last.attributes.map((id) => attributeName(id)).join('+')
+          } ${opText(last.op)} ${last.value}」为止）即可达标。`
+        : '取消全部小目标即可达标。',
+    });
+  } else {
+    cards.push({ title: '小目标 不是（唯一的）障碍', text: '只取消小目标不足以达标。' });
+  }
+
+  cards.push({
+    title: '结局 vs 全局',
+    text: diagnosis.endingAndGlobalConflict
+      ? '两者彼此冲突：必须连全局约束也拿掉，结局目标才可达。'
+      : '两者彼此不冲突。',
+  });
+
+  cards.push({
+    title: diagnosis.endingGoalsUnreachable ? '结局目标本身不可达' : '小目标之外',
+    text: diagnosis.endingGoalsUnreachable
+      ? '把小目标全部取消后仍不可达——问题出在结局目标本身。'
+      : '把小目标全部取消即可达标。',
+  });
+
+  for (const card of cards) {
+    const node = document.createElement('div');
+    node.className = 'diag-card';
+    const heading = document.createElement('b');
+    heading.textContent = card.title;
+    const text = document.createElement('p');
+    text.textContent = card.text;
+    node.append(heading, text);
+    host.append(node);
+  }
+}
+
+// ---------------------------------------------------------------- 右键菜单
+
+function closeMenu() {
+  $('menu').hidden = true;
+}
+
+function menuItem(label, onClick, { disabled = false, title } = {}) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'menu-item';
+  button.textContent = label;
+  if (title) button.title = title;
+  button.disabled = disabled;
+  if (!disabled) {
+    button.addEventListener('click', () => {
+      closeMenu();
+      onClick();
+    });
+  }
+  return button;
+}
+
+function separator() {
+  const node = document.createElement('div');
+  node.className = 'menu-sep';
+  return node;
+}
+
+function openMenu(clientX, clientY, date) {
+  const host = $('menu');
+  host.textContent = '';
+
+  const dates = selectedDates();
+  const range = isRangeSelection();
+  const restTargets = dates.filter((entry) => weekdayOf(entry) !== 0);
+  const canSetRest = restTargets.some((entry) => !isRestOn(entry));
+  const canUnsetRest = restTargets.some((entry) => isRestOn(entry));
+  const skipped = dates.filter((entry) => state.input.skippedDays.includes(entry));
+  const goalsOnDate = state.input.miniGoals.filter((goal) => goal.deadline === date).length;
+
+  host.append(menuItem('指定指令…', () => openCommandPicker()));
+  host.append(
+    menuItem('切换社团…', () => openClubPicker(state.selection.to), {
+      disabled: weekdayOf(date) !== 0,
+      title: weekdayOf(date) === 0 ? undefined : '社团只能在周日加入、更换或退出',
+    }),
+  );
+  host.append(separator());
+  host.append(menuItem('设为休息日', () => setRestDays(dates, true), { disabled: !canSetRest }));
+  host.append(menuItem('取消休息日', () => setRestDays(dates, false), { disabled: !canUnsetRest }));
+  host.append(
+    menuItem(range ? `跳过这 ${dates.length} 天` : '跳过这一天', () => setSkipped(dates, true), {
+      disabled: dates.length === 0,
+    }),
+  );
+  host.append(
+    menuItem(
+      skipped.length > 0 ? `取消跳过（${skipped.length}）` : '取消跳过',
+      () => setSkipped(dates, false),
+      { disabled: skipped.length === 0 },
+    ),
+  );
+  host.append(separator());
+  host.append(
+    menuItem('添加小目标…', () => openMiniGoalPopup(date, null), {
+      disabled: range,
+      title: range ? '小目标挂在具体某一天，请先只选一天' : undefined,
+    }),
+  );
+  host.append(
+    menuItem(
+      goalsOnDate > 0 ? `管理这一天的小目标（${goalsOnDate}）` : '管理这一天的小目标',
+      () => openMiniGoalPopup(date, null),
+      { disabled: range || goalsOnDate === 0 },
+    ),
+  );
+  host.append(separator());
+  host.append(
+    menuItem(`设为已玩到（${state.selection.to}）`, () => setPlayedUpTo(state.selection.to), {
+      title: '历史是前缀，取选区的最后一天',
+    }),
+  );
+
+  host.hidden = false;
+  const box = host.getBoundingClientRect();
+  const left = Math.min(clientX, window.innerWidth - box.width - 6);
+  const top = Math.min(clientY, window.innerHeight - box.height - 6);
+  host.style.left = `${Math.max(4, left)}px`;
+  host.style.top = `${Math.max(4, top)}px`;
+}
+
+// ---------------------------------------------------------------- 指定指令
+
+function currentChoiceOf(dates) {
+  const anchor = dates[dates.length - 1];
+  const isSunday = weekdayOf(anchor) === 0;
+  const value =
+    isSunday || isRestOn(anchor)
+      ? state.input.dayCommands[anchor]
+      : state.input.weekCommands[weekStartOf(anchor)];
+  return commandIdToChoice(value);
+}
+
+/** 社团切换：只在周日可行，且工具绝不自行选择或切换（原规格故事 23）。 */
+function openClubPicker(date) {
+  const existing = state.input.clubChanges.find((entry) => entry.date === date);
+  const value =
+    existing === undefined ? UNSET : existing.clubId === null ? CHOICE_NO_CLUB : existing.clubId;
+  const select = selectOf(
+    [
+      [UNSET, '不切换（沿用之前的社团）'],
+      [CHOICE_NO_CLUB, '退出社团'],
+      ...CLUBS.map((club) => [club.id, club.name]),
+    ],
+    value,
+  );
+
+  const currentClub = clubAt(date);
+  const body = document.createElement('div');
+  body.append(field('社团', select));
+  const hint = document.createElement('p');
+  hint.className = 'hint';
+  hint.textContent = `自 ${date}（周日）起生效，并影响该周日的日指令。当天生效的社团：${
+    currentClub ? CLUBS.find((entry) => entry.id === currentClub)?.name ?? currentClub : '未加入'
+  }。`;
+  body.append(hint);
+
+  openModal({
+    title: `切换社团（${date}）`,
+    body,
+    actions: [
+      { label: '取消', onClick: closeModal },
+      {
+        label: '确定',
+        primary: true,
+        onClick: () => {
+          setClubChange(date, select.value);
+          closeModal();
+        },
+      },
+    ],
+  });
+}
+
+function openCommandPicker() {
+  const dates = selectedDates();
+  if (dates.length === 0) return;
+  const anchor = state.selection.to;
+  const entries = [
+    [UNSET, '清除指定'],
+    [CHOICE_EMPTY, '空过'],
+    ...commandsAvailableAt(anchor).map((command) => [command.id, command.name]),
+  ];
+  const select = selectOf(entries, currentChoiceOf(dates));
+
+  const dayCount = dates.filter((entry) => isRestOn(entry)).length;
+  const weekdayDates = dates.filter((entry) => weekdayOf(entry) !== 0);
+  const weeks = new Set(weekdayDates.map((entry) => weekStartOf(entry)));
+  const spill = Math.max(0, weeks.size * 6 - weekdayDates.length);
+
+  const scope = document.createElement('p');
+  scope.className = 'hint';
+  scope.textContent =
+    dayCount > 0 || weeks.size > 0
+      ? `将写入 ${dayCount} 天的日指令、${weeks.size} 周的周指令。周一至周六执行的是整周周指令，所以这些周里最多还有 ${spill} 个未被选中的平日会跟着改。`
+      : '没有可写入的日期。';
+
+  const body = document.createElement('div');
+  body.append(field('指令', select), scope);
+
+  openModal({
+    title: `指定指令（${dates.length} 天）`,
+    body,
+    actions: [
+      { label: '取消', onClick: closeModal },
+      {
+        label: '确定',
+        primary: true,
+        onClick: () => {
+          setCommands(dates, select.value);
+          closeModal();
+        },
+      },
+    ],
+  });
+}
+
+// ---------------------------------------------------------------- 小目标弹窗
+
+function miniGoalSummary(goal) {
+  const attributes = goal.attributes.map((id) => attributeName(id)).join('+');
+  return `${attributes} ${opText(goal.op)} ${goal.value}`;
+}
+
+function openMiniGoalPopup(date, editIndex) {
+  let editing = editIndex;
+
+  const render = () => {
+    const isNew = editing === null;
+    const goal = isNew ? draftMiniGoal(date) : state.input.miniGoals[editing];
+
+    const deadline = document.createElement('input');
+    deadline.type = 'date';
+    deadline.min = TIMELINE.start;
+    deadline.max = TIMELINE.lastSettlement;
+    deadline.value = goal.deadline;
+
+    const picker = attributePicker(goal.attributes);
+    const op = selectOf(OP_ENTRIES, goal.op);
+    const value = numberInput(goal.value, { min: 0, max: 9999, step: 1 });
+
+    const body = document.createElement('div');
+    body.append(
+      field('截止日期', deadline),
+      field('属性集合', picker),
+      field('方向', op),
+      field('阈值', value),
+    );
+    const sum = document.createElement('p');
+    sum.className = 'hint';
+    sum.textContent = '阈值作用于所选属性的**求和**；集合里可以包含「社团经验」，指当前所选社团的那一份。';
+    body.append(sum);
+
+    const list = document.createElement('div');
+    list.className = 'modal-list';
+    const heading = document.createElement('h4');
+    heading.textContent =
+      state.input.miniGoals.filter((entry) => entry.deadline === date).length > 0
+        ? `${date} 这一天的小目标`
+        : `${date} 这一天还没有小目标`;
+    list.append(heading);
+
+    state.input.miniGoals.forEach((entry, index) => {
+      if (entry.deadline !== date) return;
+      const row = document.createElement('div');
+      row.className = 'mini-row';
+      const name = document.createElement('span');
+      name.textContent = miniGoalSummary(entry);
+      if (index === editing) name.textContent += '（正在编辑）';
+      const evaluated = state.result?.goals?.miniGoals?.[index];
+      const stateCell = document.createElement('span');
+      stateCell.className = 'v';
+      stateCell.textContent = evaluated ? (evaluated.state === 'met' ? '达标' : '未达标') : '未计算';
+      const actions = document.createElement('span');
+      actions.className = 'row-actions';
+      const edit = document.createElement('button');
+      edit.type = 'button';
+      edit.className = 'btn';
+      edit.textContent = '✎';
+      edit.title = '编辑';
+      edit.addEventListener('click', () => {
+        editing = index;
+        render();
+      });
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'btn';
+      remove.textContent = '×';
+      remove.title = '删除';
+      remove.addEventListener('click', () => {
+        removeMiniGoal(index);
+        editing = null;
+        render();
+      });
+      actions.append(edit, remove);
+      row.append(name, stateCell, actions);
+      list.append(row);
+    });
+    body.append(list);
+
+    openModal({
+      title: isNew ? `添加小目标（${date}）` : `编辑小目标（${date}）`,
+      body,
+      actions: [
+        { label: '取消', onClick: closeModal },
+        {
+          label: isNew ? '添加' : '保存',
+          primary: true,
+          onClick: () => {
+            const attributes = pickedAttributes(picker);
+            if (attributes.length === 0) {
+              sum.textContent = '至少要选一个属性。';
+              return;
+            }
+            const next = {
+              deadline: clampDeadline(deadline.value),
+              attributes,
+              op: op.value,
+              value: Number(value.value),
+            };
+            if (isNew) addMiniGoal(next);
+            else updateMiniGoal(editing, next);
+            closeModal();
+          },
+        },
+      ],
+    });
+  };
+
+  render();
+}
+
+// ---------------------------------------------------------------- 目标编辑器
+
+const OP_ENTRIES = [
+  ['>=', '≥ 至少达到'],
+  ['<', '< 低于（越低越好）'],
+];
+
+/** 结局目标与全局约束的形状相同（属性 + 方向 + 阈值），只有标题与说明不同。 */
+function openSimpleGoalEditor({ isNew, goal, what, hint, onSave }) {
+  const attribute = selectOf(ATTRIBUTES.map((entry) => [entry.id, entry.name]), goal.attribute);
+  const op = selectOf(OP_ENTRIES, goal.op);
+  const value = numberInput(goal.value, { min: 0, max: 9999 });
+
+  const body = document.createElement('div');
+  body.append(field('属性', attribute), field('方向', op), field('阈值', value));
+  const note = document.createElement('p');
+  note.className = 'hint';
+  note.textContent = hint;
+  body.append(note);
+
+  openModal({
+    title: `${isNew ? '添加' : '编辑'}${what}`,
+    body,
+    actions: [
+      { label: '取消', onClick: closeModal },
+      {
+        label: isNew ? '添加' : '保存',
+        primary: true,
+        onClick: () => {
+          onSave({ attribute: attribute.value, op: op.value, value: Number(value.value) });
+          closeModal();
+        },
+      },
+    ],
+  });
+}
+
+function openEndingEditor(index) {
+  const isNew = index === null;
+  openSimpleGoalEditor({
+    isNew,
+    goal: isNew ? defaultGoal() : state.input.endingGoals[index],
+    what: '结局目标',
+    hint: '结局目标在时间轴终点 1998-03-01 逐项评估。',
+    onSave: (patch) => (isNew ? addEndingGoal(patch) : updateEndingGoal(index, patch)),
+  });
+}
+
+function openGlobalEditor(index) {
+  const isNew = index === null;
+  openSimpleGoalEditor({
+    isNew,
+    goal: isNew ? defaultGoal() : state.input.globalConstraints[index],
+    what: '全局约束',
+    hint: '全局约束在每一次每日结算之后判定：起点已满足的就是硬不变量，未满足的尽快满足。',
+    onSave: (patch) => (isNew ? addGlobalConstraint(patch) : updateGlobalConstraint(index, patch)),
+  });
+}
+
+// ---------------------------------------------------------------- 接线
+
+function wirePanels() {
+  $('calendar').addEventListener('contextmenu', (event) => {
+    // Shift+右键放行浏览器原生菜单：不能因为做了右键菜单就吞掉"另存为/检查元素"。
+    if (event.shiftKey) return;
+    const cell = event.target.closest('.cell');
+    if (!cell || cell.classList.contains('is-ovf')) return;
+    event.preventDefault();
+    const date = cell.dataset.date;
+    const { from, to } = state.selection;
+    if (date < from || date > to) selectDate(date);
+    openMenu(event.clientX, event.clientY, date);
+  });
+
+  $('btn-more').addEventListener('click', (event) => {
+    const box = event.currentTarget.getBoundingClientRect();
+    openMenu(box.left, box.bottom + 4, state.selection.to);
+  });
+
+  document.addEventListener('mousedown', (event) => {
+    if ($('menu').hidden) return;
+    // target 不一定是元素（点在滚动条或空白处时是 document），所以先判类型再 closest，
+    // 否则这里抛异常、菜单就永远关不上。
+    const target = event.target;
+    if (target instanceof Element && target.closest('#menu')) return;
+    closeMenu();
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    if (!$('menu').hidden) closeMenu();
+    else if (modalIsOpen()) closeModal();
+  });
+
+  $('btn-modal-close').addEventListener('click', closeModal);
+  $('modal').addEventListener('mousedown', (event) => {
+    if (event.target === $('modal')) closeModal();
+  });
+}
+return { renderGoals, renderDiagnosis, openMiniGoalPopup, wirePanels };
+})();
+__ns["web/app.js"] = (() => {
+const rules = __ns["data/rules.json"];
+const { createPlanner } = __ns["src/plan.js"];
+const { createSolver } = __ns["src/solver.js"];
+const { fromJson, toJson } = __ns["src/input.js"];
+const { $, ATTRIBUTES, CLUBS, TIMELINE, UNSET, hooks, isStale, monthOf, setResult, state } = __ns["web/ui.js"];
+const { renderCalendar, renderDetail, wireCalendar } = __ns["web/calendar.js"];
+const { renderDiagnosis, renderGoals, wirePanels } = __ns["web/panels.js"];
+const { setAttributeValue, setInitialClub, setPlayedUpTo, setStartDate } = __ns["web/edits.js"];
+// 主线程入口：接线、计算流程、左栏输入与 JSON 导入导出。
+//
+// 页面从 file:// 双击打开，而有些浏览器在 file:// 下拒绝构造 blob Worker，
+// 所以 Worker 有降级路径：建不了或中途报错就回退到主线程，保证"双击即用"成立。
+//
+// 计算是**显式**的：改任何输入只登记"待计算"，点「计算」才跑求解器。
+
+
+
+
+
+
+
+
+
+
+const inlinePlan = createPlanner(rules);
+const inlineSolve = createSolver(rules);
+
+let worker = null;
+let workerUnavailable = false;
+let requestId = 0;
+const pending = new Map();
+
+let elapsedTimer = null;
+let startedAt = 0;
+let notice = null;
 
 // ---------------------------------------------------------------- Worker
 
@@ -3513,7 +5765,7 @@ function startWorker() {
   }
 }
 
-function runOnMainThread(input) {
+function runPlanOnMainThread(input) {
   try {
     return { ok: true, result: inlinePlan(input, { assignments: state.assignments }) };
   } catch (error) {
@@ -3522,16 +5774,15 @@ function runOnMainThread(input) {
 }
 
 function requestPlan(input) {
-  if (workerUnavailable || !worker) return Promise.resolve(runOnMainThread(input));
+  if (workerUnavailable || !worker) return Promise.resolve(runPlanOnMainThread(input));
 
-  const id = ++state.requestId;
+  const id = ++requestId;
   return new Promise((resolve) => {
     pending.set(id, resolve);
     worker.postMessage({ id, type: 'plan', input, assignments: state.assignments });
   }).then((reply) => {
     if (!reply.fallback) return reply;
-    setStatus('当前浏览器不允许内联 Worker，已回退到主线程计算。');
-    return runOnMainThread(input);
+    return runPlanOnMainThread(input);
   });
 }
 
@@ -3546,7 +5797,7 @@ function runSolveOnMainThread(input, options) {
 function requestSolve(input, options) {
   if (workerUnavailable || !worker) return Promise.resolve(runSolveOnMainThread(input, options));
 
-  const id = ++state.requestId;
+  const id = ++requestId;
   return new Promise((resolve) => {
     pending.set(id, resolve);
     worker.postMessage({ id, type: 'solve', input, ...options });
@@ -3556,9 +5807,9 @@ function requestSolve(input, options) {
   });
 }
 
-/** 取消：直接把 worker 掐掉重建——求解是同步循环，没有协作式中断点。 */
+/** 取消：求解是同步循环，没有协作式中断点，只能把 worker 掐掉重建。 */
 function cancelSolve() {
-  if (!state.solving) return;
+  if (!state.computing) return;
   const inflight = [...pending.values()];
   pending.clear();
   if (worker) {
@@ -3570,145 +5821,99 @@ function cancelSolve() {
   for (const settle of inflight) settle({ cancelled: true });
 }
 
-// ---------------------------------------------------------------- 指令选择器
+// ---------------------------------------------------------------- 计算流程
 
-/** 三态选择串与输入值之间的互转：未指定 ↔ 键不存在，空过 ↔ 显式 null。 */
-function commandIdFromChoice(choice) {
-  if (choice === EMPTY) return null;
-  if (choice === UNSET) return undefined;
-  return choice;
+function startProgress() {
+  startedAt = Date.now();
+  $('progress').hidden = false;
+  $('btn-cancel').hidden = false;
+  $('btn-compute').disabled = true;
+  const tick = () => {
+    $('progress-elapsed').textContent = `已用 ${((Date.now() - startedAt) / 1000).toFixed(1)}s`;
+  };
+  tick();
+  elapsedTimer = setInterval(tick, 100);
 }
 
-function choiceFromCommandId(commandId) {
-  if (commandId === undefined) return UNSET;
-  if (commandId === null) return EMPTY;
-  return commandId;
+function stopProgress() {
+  if (elapsedTimer !== null) clearInterval(elapsedTimer);
+  elapsedTimer = null;
+  $('progress').hidden = true;
+  $('btn-cancel').hidden = true;
+  $('btn-compute').disabled = false;
+  $('progress-elapsed').textContent = '';
 }
 
-/** 三个下拉框共用的建 option 循环。 */
-function fillSelect(select, entries, value) {
-  select.textContent = '';
-  for (const [optionValue, label] of entries) {
-    const option = document.createElement('option');
-    option.value = optionValue;
-    option.textContent = label;
-    select.append(option);
-  }
-  select.value = value;
-}
+async function compute() {
+  if (state.computing) return;
+  state.computing = true;
+  notice = null;
+  startProgress();
+  renderComputeRow();
 
-/**
- * 指令下拉框。`choice` 是已经归一化过的选择串。
- * `commands` 用来把不可用的社团指令挡在候选之外。
- */
-function fillCommandSelect(select, choice, { commands = rules.commands } = {}) {
-  const entries = [[UNSET, '未指定'], [EMPTY, '空过']];
-  for (const command of commands) entries.push([command.id, command.name]);
-
-  // 已经写进输入、但当前**不可用**的指令也要留在选项里——否则下拉框会显示成"未指定"，
-  // 与输入里那条真实存在的指定对不上。至于为什么没执行，由结算列说明。
-  if (choice && !entries.some(([value]) => value === choice)) {
-    entries.push([choice, `${commandNames.get(choice) ?? choice}（不可用）`]);
-  }
-  fillSelect(select, entries, choice);
-}
-
-/** 这一天能选的指令——社团指令受解锁日与当前社团限制。 */
-function commandsAvailableAt(clubAt, date) {
-  const allowed = new Set(availableCommandIds(rules, clubAt(date), date));
-  return rules.commands.filter((command) => allowed.has(command.id));
-}
-
-function fillClubSelect(select, value) {
-  const clubs = rules.clubs.map((club) => [club.id, club.name]);
-  fillSelect(select, [[UNSET, '未加入'], ...clubs], value ?? UNSET);
-}
-
-/** 每周表头里的社团下拉框：三态——不切换 / 退出社团 / 某个社团。 */
-function fillWeekClubSelect(select, value) {
-  const clubs = rules.clubs.map((club) => [club.id, club.name]);
-  const entries = [[UNSET, '不切换'], [NO_CLUB, '退出社团'], ...clubs];
-  fillSelect(select, entries, value === undefined ? UNSET : value === null ? NO_CLUB : value);
-}
-
-function setMapEntry(map, key, choice) {
-  const commandId = commandIdFromChoice(choice);
-  if (commandId === undefined) delete map[key];
-  else map[key] = commandId;
-}
-
-/**
- * 一天的「指令」单元格：休息日给可改的下拉框，平日只显示本周周指令（不可单独决策）。
- * 休息日只在**真正需要**时才建下拉框——一千多行每行都塞一个二十项的下拉框太重。
- */
-/**
- * 下拉框该显示什么：使用者指定的优先，其次是求解器排的（**改它就等于指定**），
- * 再次是全局默认指令。
- */
-/** 下拉框要显示的选择串。解析口径与日历、求解器完全一致（见 resolveCommand）。 */
-function selectionChoice(day) {
-  const { commandId, source } = resolveCommand(state.input, state.assignments, {
-    isRestDay: day.isRestDay,
-    date: day.date,
-    weekStart: day.weekStart,
-  });
-  return source === 'pinned' || source === 'assigned'
-    ? choiceFromCommandId(commandId)
-    : (commandId ?? UNSET);
-}
-
-/** 周指令下拉框的选择串。 */
-function weekSelectionChoice(week) {
-  const { commandId, source } = resolveCommand(state.input, state.assignments, {
-    isRestDay: false,
-    date: week.firstDay,
-    weekStart: week.start,
-  });
-  return source === 'pinned' || source === 'assigned'
-    ? choiceFromCommandId(commandId)
-    : (commandId ?? UNSET);
-}
-
-function fillCommandCell(cell, day, clubAt) {
-  cell.textContent = '';
-  if (day.isRestDay) {
-    const select = document.createElement('select');
-    select.dataset.action = 'day-command';
-    select.dataset.date = day.date;
-    fillCommandSelect(select, selectionChoice(day), {
-      commands: commandsAvailableAt(clubAt, day.date),
+  try {
+    const solved = await requestSolve(state.input, {
+      previous: state.assignments,
+      fromDate: null,
     });
-    cell.append(select);
-    return;
+    if (solved.cancelled) {
+      notice = { text: '已取消计算。' };
+      return;
+    }
+    if (!solved.ok) {
+      notice = { text: `求解失败：${solved.error}`, error: true };
+      return;
+    }
+
+    const previous = state.assignments;
+    state.assignments = solved.assignments;
+    const planned = await requestPlan(state.input);
+
+    if (!planned.ok) {
+      state.assignments = previous;
+      notice = { text: `规划失败：${(planned.problems ?? [planned.error]).join('；')}`, error: true };
+      return;
+    }
+
+    setResult(planned.result);
+    state.diagnosis = solved.assignments.diagnosis ?? null;
+  } finally {
+    state.computing = false;
+    stopProgress();
+    renderAll();
   }
-  // 平日不单独决策：显示本周实际执行的周指令（可能来自使用者的指定，也可能来自求解器）。
-  if (day.skipSource === 'week') {
-    cell.textContent = '空过';
-    return;
-  }
-  cell.textContent = day.commandId ? (commandNames.get(day.commandId) ?? day.commandId) : '—';
 }
 
-// ---------------------------------------------------------------- 输入区
+// ---------------------------------------------------------------- 左栏
 
-function renderForm() {
-  const startDate = $('start-date');
-  startDate.min = rules.timeline.start;
-  startDate.max = rules.timeline.lastSettlement;
-  startDate.value = state.input.startDate;
+const attributeInputs = new Map();
 
-  const playedUpTo = $('played-up-to');
-  playedUpTo.min = rules.timeline.start;
-  playedUpTo.max = rules.timeline.lastSettlement;
-  playedUpTo.value = state.input.playedUpTo ?? state.input.startDate;
+function buildRail() {
+  $('rail-start-date').min = TIMELINE.start;
+  $('rail-start-date').max = TIMELINE.lastSettlement;
+  $('rail-played-up-to').min = TIMELINE.start;
+  $('rail-played-up-to').max = TIMELINE.lastSettlement;
+  $('jump-date').min = TIMELINE.start;
+  $('jump-date').max = TIMELINE.end;
 
-  const container = $('attributes');
-  container.textContent = '';
-  for (const id of attributeIds(rules)) {
-    const attribute = attributeById(rules, id);
+  const clubSelect = $('rail-initial-club');
+  clubSelect.textContent = '';
+  const none = document.createElement('option');
+  none.value = UNSET;
+  none.textContent = '未加入';
+  clubSelect.append(none);
+  for (const club of CLUBS) {
+    const option = document.createElement('option');
+    option.value = club.id;
+    option.textContent = club.name;
+    clubSelect.append(option);
+  }
 
+  const host = $('attributes');
+  host.textContent = '';
+  for (const attribute of ATTRIBUTES) {
     const label = document.createElement('label');
-    label.className = 'field';
+    label.className = `attr-cell ${attribute.direction === 'down' ? 'down' : ''}`;
 
     const caption = document.createElement('span');
     caption.textContent = attribute.name;
@@ -3717,659 +5922,86 @@ function renderForm() {
     input.type = 'number';
     input.min = String(attribute.min);
     input.max = String(attribute.max);
-    input.value = String(state.input.attributes[id]);
     input.addEventListener('change', () => {
-      state.input.attributes[id] = Number(input.value);
-      generate({ previous: state.assignments });
+      setAttributeValue(attribute.id, Number(input.value));
     });
 
     label.append(caption, input);
-    container.append(label);
+    host.append(label);
+    attributeInputs.set(attribute.id, input);
   }
-
-  fillClubSelect($('initial-club'), state.input.initialClub);
-  renderGoalEditors();
 }
 
-// ---------------------------------------------------------------- 日历表
-
-/**
- * 结果表的渲染缓存键：只要它没变，就只更新既有行、不重建 DOM。
- * 社团会改变每个时点能选的指令（下拉框候选），所以它也在键里。
- */
-function renderKey(result) {
-  const last = result.days[result.days.length - 1];
-  const clubs = `${state.input.initialClub}|${JSON.stringify(state.input.clubChanges)}`;
-  return `${result.startDate}|${result.days.length}|${last ? last.date : ''}|${clubs}`;
-}
-
-function renderCalendar(result, clubAt) {
-  const host = $('calendar');
-  host.textContent = '';
-  dayRows = new Map();
-  weekRows = new Map();
-  renderedKey = renderKey(result);
-
-  const table = document.createElement('table');
-  table.className = 'calendar';
-
-  const head = document.createElement('thead');
-  const headRow = document.createElement('tr');
-  for (const name of COLUMNS) {
-    const th = document.createElement('th');
-    th.textContent = name;
-    headRow.append(th);
-  }
-  head.append(headRow);
-  table.append(head);
-
-  const body = document.createElement('tbody');
-  const fragment = document.createDocumentFragment();
-  const dayByDate = new Map(result.days.map((d) => [d.date, d]));
-
-  for (const week of result.weeks) {
-    fragment.append(buildWeekRow(week, clubAt));
-    for (const date of week.days) {
-      fragment.append(buildDayRow(dayByDate.get(date), clubAt));
+function syncRail() {
+  $('rail-start-date').value = state.input.startDate;
+  $('rail-played-up-to').value = state.input.playedUpTo;
+  $('rail-initial-club').value = state.input.initialClub ?? UNSET;
+  for (const attribute of ATTRIBUTES) {
+    const input = attributeInputs.get(attribute.id);
+    if (input && document.activeElement !== input) {
+      input.value = String(state.input.attributes[attribute.id]);
     }
   }
-
-  body.append(fragment);
-  table.append(body);
-  host.append(table);
 }
 
-function buildWeekRow(week, clubAt) {
-  const row = document.createElement('tr');
-  row.className = 'week-row';
+// ---------------------------------------------------------------- 渲染
 
-  const cell = document.createElement('th');
-  cell.colSpan = COLUMNS.length;
+function renderComputeRow() {
+  const row = $('compute-row');
+  const note = $('pending-note');
+  const stale = isStale();
+  const dirty = state.pending > 0;
 
-  const anchor = document.createElement('span');
-  anchor.textContent = `周锚点 ${week.start}（${week.firstDay} 起）`;
+  row.classList.toggle('is-dirty', dirty && !state.computing);
 
-  const commandFlag = document.createElement('label');
-  commandFlag.className = 'week-flag';
-  const commandSelect = document.createElement('select');
-  commandSelect.dataset.action = 'week-command';
-  commandSelect.dataset.week = week.start;
-  fillCommandSelect(commandSelect, weekSelectionChoice(week), {
-    commands: commandsAvailableAt(clubAt, week.firstDay),
-  });
-  commandFlag.append(document.createTextNode(' 周指令 '), commandSelect);
-
-  // 社团只能在周日切换，而每周表头正是那个周日。
-  const clubFlag = document.createElement('label');
-  clubFlag.className = 'week-flag';
-  const clubSelect = document.createElement('select');
-  clubSelect.dataset.action = 'club-change';
-  clubSelect.dataset.week = week.start;
-  fillWeekClubSelect(clubSelect, clubChangeValueAt(week.start));
-  clubFlag.append(document.createTextNode(' 社团 '), clubSelect);
-
-  cell.append(anchor, commandFlag, clubFlag);
-  row.append(cell);
-  weekRows.set(week.start, row);
-  return row;
-}
-
-/** 该周锚点上是否有一条「切换社团」记录；undefined 表示不切换。 */
-function clubChangeValueAt(date) {
-  const change = state.input.clubChanges.find((entry) => entry.date === date);
-  return change ? change.clubId : undefined;
-}
-
-function buildDayRow(day, clubAt) {
-  const row = document.createElement('tr');
-  row.className = 'day-row';
-  row.dataset.date = day.date;
-
-  for (const name of BASE_COLUMNS) {
-    const cell = document.createElement('td');
-    if (name === '日期') cell.textContent = day.date;
-    if (name === '星期') cell.textContent = day.weekdayName;
-    if (name === '结算') cell.className = 'state';
-    if (name === '指令') fillCommandCell(cell, day, clubAt);
-    if (name === '休息日' || name === '跳过') {
-      const box = document.createElement('input');
-      box.type = 'checkbox';
-      box.dataset.action = name === '休息日' ? 'rest' : 'skip';
-      box.dataset.date = day.date;
-      cell.append(box);
-    }
-    row.append(cell);
-  }
-
-  for (let i = 0; i < attributeLabels.length; i += 1) {
-    const cell = document.createElement('td');
-    cell.className = 'num';
-    row.append(cell);
-  }
-
-  dayRows.set(day.date, row);
-  return row;
-}
-
-/** 结果形状没变时只更新既有行，不重建 DOM——否则改一个下拉就要重画一千多行。 */
-function applyCalendar(result) {
-  const clubAt = createClubLookup(state.input);
-
-  if (renderedKey !== renderKey(result)) {
-    renderCalendar(result, clubAt);
-  }
-
-  const sequenceByDate = new Map();
-  for (const entry of result.sequence) {
-    if (!sequenceByDate.has(entry.date)) sequenceByDate.set(entry.date, []);
-    sequenceByDate.get(entry.date).push(SEQUENCE_LABELS[entry.kind] ?? entry.kind);
-  }
-
-  for (const day of result.days) {
-    const row = dayRows.get(day.date);
-    if (!row) continue;
-    row.classList.toggle('is-rest', day.isRestDay);
-    row.classList.toggle('is-empty', day.isEmpty);
-    row.classList.toggle('is-unsettled', !day.isSettled && !day.isEmpty);
-
-    const cells = row.children;
-    cells[2].textContent = (sequenceByDate.get(day.date) ?? []).join(' → ');
-    cells[3].textContent = day.isEmpty
-      ? EMPTY_LABELS[day.skipSource]
-      : !day.isSettled
-        ? '不结算'
-        : day.commandBlocked
-          ? BLOCK_LABELS[day.commandBlocked]
-          : day.commandId
-            ? '结算'
-            : '待定';
-
-    const restFlag = day.isRestDay ? '1' : '0';
-    if (row.dataset.rest !== restFlag) {
-      row.dataset.rest = restFlag;
-      fillCommandCell(cells[4], day, clubAt);
-    }
-    const select = cells[4].querySelector('select');
-    if (select) {
-      select.value = selectionChoice(day);
-    } else {
-      fillCommandCell(cells[4], day, clubAt);
-    }
-
-    const restBox = row.querySelector('input[data-action="rest"]');
-    restBox.checked = day.isRestDay;
-    restBox.disabled = day.weekday === 0;
-
-    // 「跳过」勾选框只代表**逐日跳过**这一个来源；周空过由周表头负责，
-    // 休息日置空由它自己的指令下拉框负责。三者互不冒充。
-    row.querySelector('input[data-action="skip"]').checked = day.skipSource === 'day';
-
-    let column = BASE_COLUMNS.length;
-    for (const attribute of attributeLabels) {
-      cells[column].textContent = day.attributes[attribute.id].toFixed(1);
-      column += 1;
-    }
-  }
-
-  for (const week of result.weeks) {
-    const row = weekRows.get(week.start);
-    if (!row) continue;
-    const commandSelect = row.querySelector('select[data-action="week-command"]');
-    if (commandSelect) commandSelect.value = weekSelectionChoice(week);
-    const clubSelect = row.querySelector('select[data-action="club-change"]');
-    if (clubSelect) {
-      const value = clubChangeValueAt(week.start);
-      clubSelect.value = value === undefined ? UNSET : value === null ? NO_CLUB : value;
-    }
-  }
-
-  state.daysByDate = new Map(result.days.map((d) => [d.date, d]));
-}
-
-function renderSummary(result) {
-  const s = result.summary;
-  $('summary').textContent =
-    `共 ${s.totalDays} 天 · 结算 ${s.settledDays} · 空过 ${s.emptyDays} · ` +
-    `休息日 ${s.restDays} · 自然周 ${s.weeks}`;
-}
-
-/** 九条属性随时间的曲线。没有引入任何图表库——一张内联 SVG 就够。 */
-function renderCurve(result) {
-  const host = $('curve');
-  host.textContent = '';
-  const days = result.days;
-  if (days.length < 2) return;
-
-  const width = 1000;
-  const height = 170;
-  const padding = 24;
-
-  let min = Infinity;
-  let max = -Infinity;
-  for (const day of days) {
-    for (const attribute of attributeLabels) {
-      const value = day.attributes[attribute.id];
-      if (value < min) min = value;
-      if (value > max) max = value;
-    }
-  }
-  if (!Number.isFinite(min)) return;
-  if (max - min < 1) max = min + 1;
-
-  const x = (index) => padding + (index / (days.length - 1)) * (width - padding * 2);
-  const y = (value) => height - padding - ((value - min) / (max - min)) * (height - padding * 2);
-
-  const paths = attributeLabels
-    .map((attribute, index) => {
-      const points = days
-        .map(
-          (day, i) =>
-            `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)} ${y(day.attributes[attribute.id]).toFixed(1)}`,
-        )
-        .join(' ');
-      const color = curveColorAt(index);
-      return `<path d="${points}" fill="none" stroke="${color}" stroke-width="1.4" />`;
-    })
-    .join('');
-
-  const legend = attributeLabels
-    .map(
-      (attribute, index) =>
-        `<span><i style="background:${curveColorAt(index)}"></i>${escapeText(attribute.name)}</span>`,
-    )
-    .join('');
-
-  // 用 HTML 字符串整体写入：浏览器会把内层 <svg> 按 SVG 命名空间解析，
-  // 因此源码里不需要出现那个命名空间常量（产物必须零外部引用）。
-  host.innerHTML =
-    `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">` +
-    `<line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" stroke="#d0d5dd" />` +
-    `<text x="${padding + 4}" y="15" font-size="13" fill="#5b6472">最高 ${max.toFixed(1)}</text>` +
-    `<text x="${padding + 4}" y="${height - padding - 6}" font-size="13" fill="#5b6472">最低 ${min.toFixed(1)}</text>` +
-    paths +
-    '</svg>' +
-    `<div class="legend">${legend}</div>`;
-}
-
-function escapeText(value) {
-  return String(value).replace(/[&<>"]/g, (ch) => `&#${ch.charCodeAt(0)};`);
-}
-
-function scrollToDate(date) {
-  if (!date) {
-    setStatus('请先在「跳到日期」里选一个完整日期。', true);
-    return;
-  }
-  const row = dayRows.get(date);
-  if (!row) {
-    setStatus(`日历里没有 ${date}。`, true);
-    return;
-  }
-  row.scrollIntoView({ block: 'center' });
-  row.classList.add('is-highlight');
-  setTimeout(() => row.classList.remove('is-highlight'), 1200);
-}
-
-// ---------------------------------------------------------------- 约束与目标编辑
-
-const OPS = [
-  ['>=', '≥'],
-  ['<', '<'],
-];
-
-function nameOf(attributeId) {
-  if (attributeId === rules.clubExperience.id) return rules.clubExperience.name;
-  return attributeLabels.find((attribute) => attribute.id === attributeId)?.name ?? attributeId;
-}
-
-function goalAttributes(allowClubExperience) {
-  if (!allowClubExperience) return attributeLabels;
-  return [...attributeLabels, { id: rules.clubExperience.id, name: rules.clubExperience.name }];
-}
-
-function option(value, label, selected) {
-  const element = document.createElement('option');
-  element.value = value;
-  element.textContent = label;
-  element.selected = Boolean(selected);
-  return element;
-}
-
-function buildGoalRow(goal, { withDeadline = false, allowClubExperience = false } = {}) {
-  const row = document.createElement('div');
-  row.className = 'goal-row';
-
-  if (withDeadline) {
-    const deadline = document.createElement('input');
-    deadline.type = 'date';
-    deadline.className = 'date';
-    deadline.dataset.role = 'deadline';
-    deadline.min = rules.timeline.start;
-    deadline.max = rules.timeline.lastSettlement;
-    deadline.value = goal.deadline;
-    row.append(deadline);
-
-    // 小目标的属性集合可以含社团经验（指当前社团那一份）
-    const attributes = document.createElement('select');
-    attributes.multiple = true;
-    attributes.className = 'attrs';
-    attributes.dataset.role = 'attributes';
-    for (const attribute of goalAttributes(true)) {
-      attributes.append(option(attribute.id, attribute.name, goal.attributes.includes(attribute.id)));
-    }
-    row.append(attributes);
+  if (state.computing) {
+    note.textContent = '求解中…';
+  } else if (notice) {
+    note.textContent = notice.text;
+  } else if (state.result === null) {
+    note.textContent =
+      state.pending > 0
+        ? `尚未计算——已有 ${state.pending} 处改动，点右上角「计算」排出日程`
+        : '尚未计算——点右上角「计算」排出日程';
+  } else if (dirty) {
+    note.textContent = `${state.pending} 处改动待计算`;
   } else {
-    const attribute = document.createElement('select');
-    attribute.className = 'attr';
-    attribute.dataset.role = 'attribute';
-    for (const entry of goalAttributes(allowClubExperience)) {
-      attribute.append(option(entry.id, entry.name, false));
-    }
-    attribute.value = goal.attribute;
-    row.append(attribute);
+    note.textContent = '已计算';
+  }
+  note.classList.toggle('error', Boolean(notice?.error));
+
+  if (state.result && stale) {
+    $('stale-note').textContent = '以下数值基于上次计算结果';
+  } else if (state.result) {
+    $('stale-note').textContent = `上次计算 ${state.computedAt.toLocaleTimeString()}`;
+  } else {
+    $('stale-note').textContent = '';
   }
 
-  const op = document.createElement('select');
-  op.dataset.role = 'op';
-  for (const [value, label] of OPS) op.append(option(value, label, false));
-  op.value = goal.op;
-  row.append(op);
-
-  const threshold = document.createElement('input');
-  threshold.type = 'number';
-  threshold.className = 'num';
-  threshold.dataset.role = 'value';
-  threshold.value = String(goal.value);
-  row.append(threshold);
-
-  const remove = document.createElement('button');
-  remove.type = 'button';
-  remove.className = 'remove';
-  remove.dataset.role = 'remove';
-  remove.textContent = '×';
-  row.append(remove);
-
-  return row;
-}
-
-const GOAL_LISTS = [
-  { hostId: 'global-constraints', listKey: 'globalConstraints', options: {} },
-  { hostId: 'ending-goals', listKey: 'endingGoals', options: {} },
-  {
-    hostId: 'mini-goals',
-    listKey: 'miniGoals',
-    options: { withDeadline: true, allowClubExperience: true },
-  },
-];
-
-function renderGoalEditors() {
-  for (const { hostId, listKey, options } of GOAL_LISTS) {
-    const host = $(hostId);
-    host.textContent = '';
-    state.input[listKey].forEach((goal, index) => {
-      const row = buildGoalRow(goal, options);
-      row.dataset.index = String(index);
-      host.append(row);
-    });
+  const chip = $('status-chip');
+  const goals = state.result?.goals;
+  if (!goals) {
+    chip.textContent = '尚未计算';
+    chip.className = 'chip';
+  } else if (goals.ok) {
+    chip.textContent = '全部达标';
+    chip.className = 'chip met';
+  } else {
+    chip.textContent = '未达标';
+    chip.className = 'chip unmet';
   }
 }
 
-function goalFromRow(row, options) {
-  const value = Number(row.querySelector('[data-role="value"]').value);
-  const op = row.querySelector('[data-role="op"]').value;
-
-  if (options.withDeadline) {
-    const selected = row.querySelector('[data-role="attributes"]').selectedOptions;
-    return {
-      deadline: row.querySelector('[data-role="deadline"]').value,
-      attributes: [...selected].map((element) => element.value),
-      op,
-      value,
-    };
-  }
-  return { attribute: row.querySelector('[data-role="attribute"]').value, op, value };
+function renderAll() {
+  syncRail();
+  renderCalendar();
+  renderDetail();
+  renderGoals();
+  renderDiagnosis();
+  renderComputeRow();
 }
 
-function wireGoalList({ hostId, listKey, options }) {
-  const host = $(hostId);
-  host.addEventListener('change', (event) => {
-    const row = event.target.closest('.goal-row');
-    if (!row) return;
-    state.input[listKey][Number(row.dataset.index)] = goalFromRow(row, options);
-    generate({ previous: state.assignments });
-  });
-  host.addEventListener('click', (event) => {
-    if (event.target.dataset.role !== 'remove') return;
-    const row = event.target.closest('.goal-row');
-    state.input[listKey].splice(Number(row.dataset.index), 1);
-    renderGoalEditors();
-    generate({ previous: state.assignments });
-  });
-}
-
-// ---------------------------------------------------------------- 达标状态
-
-function goalLine(tag, text, met) {
-  const item = document.createElement('li');
-  item.className = met ? 'met' : 'unmet';
-  const label = document.createElement('span');
-  label.className = 'tag';
-  label.textContent = tag;
-  item.append(label, document.createTextNode(text));
-  return item;
-}
-
-function describeGlobalConstraint(goal) {
-  const name = nameOf(goal.attribute);
-  const relation = `${name} ${goal.op === '>=' ? '≥' : '<'} ${goal.value}`;
-  if (goal.state === 'met') {
-    return goal.mode === 'invariant'
-      ? `${relation} —— 硬不变量，全程成立`
-      : `${relation} —— 尽快满足，${goal.metOn} 达成`;
-  }
-  if (goal.mode === 'invariant') {
-    return `${relation} —— 破了 ${goal.violatedOn.length} 天，首次 ${goal.violatedOn[0]}`;
-  }
-  return `${relation} —— 一直到终点都没有满足`;
-}
-
-function describeMiniGoal(goal) {
-  const relation = `${goal.deadline} ${goalRelation(goal)}`;
-  return goal.state === 'met'
-    ? `${relation} —— 实际 ${goal.actual.toFixed(1)}`
-    : `${relation} —— 实际 ${goal.actual.toFixed(1)}，还差 ${goal.shortfall.toFixed(1)}`;
-}
-
-function describeEndingGoal(goal) {
-  const relation = goalRelation(goal);
-  return goal.state === 'met'
-    ? `${relation} —— 实际 ${goal.actual.toFixed(1)}`
-    : `${relation} —— 实际 ${goal.actual.toFixed(1)}，还差 ${goal.shortfall.toFixed(1)}`;
-}
-
-/**
- * 改动落在哪一天，就从**不早于它**的那个决策点起重算。
- * 取"不早于"而不是"所在周"：否则锚点与改动日之间的那几天也会被牵连着重排，
- * "之前的安排逐格不变"就没了保证。
- */
-function anchorAtOrAfter(date) {
-  const anchor = weekStartOf(date);
-  return anchor === date ? anchor : addDays(anchor, 7);
-}
-
-/** 「文科 + 理科 ≥ 561」这种关系串，三种描述共用。 */
-function goalRelation(goal) {
-  const names = goal.attributes ? goal.attributes.map(nameOf).join(' + ') : nameOf(goal.attribute);
-  return `${names} ${goal.op === '>=' ? '≥' : '<'} ${goal.value}`;
-}
-
-/** 诊断里的目标是输入原件，没有实际值，只拼关系串（外加截止日期）。 */
-function describeGoalBriefly(goal) {
-  return `${goal.deadline ? `${goal.deadline} ` : ''}${goalRelation(goal)}`;
-}
-
-/**
- * 不可达诊断：**三项并列**，不是只报第一个命中的原因。
- * 只报一项会让使用者误以为是唯一原因，从而去改错地方。
- */
-function buildDiagnosis(diagnosis) {
-  const wrap = document.createElement('div');
-  wrap.className = 'diagnosis';
-
-  const title = document.createElement('div');
-  title.className = 'headline';
-  title.textContent = '不可达诊断（三项并列）';
-  wrap.append(title);
-
-  const cancelled = diagnosis.mustCancel ?? [];
-  const nearest = cancelled[cancelled.length - 1];
-  const blocks = diagnosis.miniGoalsBlocking;
-
-  const list = document.createElement('ul');
-  list.append(
-    goalLine(
-      '小目标',
-      blocks
-        ? `是它在挡路——由近至远取消 ${cancelled.length} 条（到「${describeGoalBriefly(nearest)}」为止）即可达标`
-        : '不是小目标在挡路',
-      !blocks,
-    ),
-  );
-  list.append(
-    goalLine(
-      '结局 vs 全局',
-      diagnosis.endingAndGlobalConflict ? '两者冲突——把小目标全删了也达不到' : '彼此不冲突',
-      !diagnosis.endingAndGlobalConflict,
-    ),
-  );
-  list.append(
-    goalLine(
-      '小目标之外',
-      diagnosis.endingGoalsUnreachable
-        ? '把小目标全部取消仍达不到——问题不在小目标'
-        : '把小目标全部取消即可达标',
-      !diagnosis.endingGoalsUnreachable,
-    ),
-  );
-
-  wrap.append(list);
-  return wrap;
-}
-
-function renderGoalsStatus(result) {
-  const host = $('goals-status');
-  host.textContent = '';
-
-  const { goals } = result;
-  const unmet =
-    goals.globalConstraints.filter((g) => g.state !== 'met').length +
-    goals.miniGoals.filter((g) => g.state !== 'met').length +
-    goals.endingGoals.filter((g) => g.state !== 'met').length;
-
-  const headline = document.createElement('div');
-  headline.className = `headline ${goals.ok ? 'ok' : 'bad'}`;
-  headline.textContent = goals.ok ? '硬约束全部达标' : `硬约束未全部达标（${unmet} 项）`;
-  host.append(headline);
-
-  const list = document.createElement('ul');
-  for (const goal of goals.globalConstraints) {
-    list.append(goalLine('全局', describeGlobalConstraint(goal), goal.state === 'met'));
-  }
-  for (const goal of goals.miniGoals) {
-    list.append(goalLine('小目标', describeMiniGoal(goal), goal.state === 'met'));
-  }
-  for (const goal of goals.endingGoals) {
-    list.append(goalLine('结局', describeEndingGoal(goal), goal.state === 'met'));
-  }
-  list.append(
-    goalLine(
-      '目标函数',
-      `正向等权总和 ${goals.score.positiveSum.toFixed(1)} · 压力 ${goals.score.negative.toFixed(1)}`,
-      true,
-    ),
-  );
-  host.append(list);
-
-  // 可达时不显示任何不可达诊断（见票 08 的验收标准）。
-  const diagnosis = state.assignments?.diagnosis;
-  if (!goals.ok && diagnosis) host.append(buildDiagnosis(diagnosis));
-}
-
-// ---------------------------------------------------------------- 结果
-
-function renderResult(result) {
-  if (!result.ok) {
-    const label = result.status === 'invalid-input' ? '输入有问题' : '规则数据有问题';
-    setStatus(`${label}：\n${result.problems.join('\n')}`, true);
-    return;
-  }
-
-  setStatus(`时间轴 ${result.startDate} → ${result.endDate}（最后结算日 ${result.lastSettlement}）`);
-
-  // 渲染出错时留下半张表比抛出去更难看：抓起来，把原因摆到状态栏。
-  try {
-    renderSummary(result);
-    renderGoalsStatus(result);
-    applyCalendar(result);
-    renderCurve(result);
-  } catch (error) {
-    setStatus(`界面渲染出错：${error.message}`, true);
-    throw error;
-  }
-
-  const jump = $('jump-date');
-  jump.min = result.startDate;
-  jump.max = result.endDate;
-}
-
-async function runPlan() {
-  setStatus(state.assignments ? '计算中…' : '尚未生成日程——点「生成」让工具排出一份。');
-  const reply = await requestPlan(state.input);
-  if (reply.cancelled) return;
-  if (!reply.ok) {
-    setStatus(`计算失败：${reply.error}`, true);
-    return;
-  }
-  renderResult(reply.result);
-}
-
-/** 「生成」：先求解出完整日程，再按这份日程规划。 */
-async function generate({ fromDate = null } = {}) {
-  // 求解期间又来的改动不能丢：记下来，这一轮结束后再排一次。
-  if (state.solving) {
-    state.resolveQueued = { fromDate };
-    return;
-  }
-  state.solving = true;
-  $('btn-cancel').hidden = false;
-  $('btn-plan').disabled = true;
-  setStatus('求解中…');
-
-  // 有重算起点就冻结它之前的部分：使用者之前的安排不该因为改了一处就整体翻新。
-  const options = { previous: state.assignments, fromDate };
-  try {
-    const reply = await requestSolve(state.input, options);
-    if (reply.cancelled) {
-      setStatus('已取消计算。');
-      return;
-    }
-    if (!reply.ok) {
-      setStatus(`求解失败：${reply.error}`, true);
-      return;
-    }
-    state.assignments = reply.assignments;
-    await runPlan();
-  } finally {
-    state.solving = false;
-    $('btn-cancel').hidden = true;
-    $('btn-plan').disabled = false;
-    if (state.resolveQueued) {
-      const queued = state.resolveQueued;
-      state.resolveQueued = false;
-      generate(queued);
-    }
-  }
-}
+hooks.render = renderAll;
 
 // ---------------------------------------------------------------- JSON
 
@@ -4390,139 +6022,68 @@ async function importJson(file) {
   try {
     state.input = fromJson(await file.text(), rules);
   } catch (error) {
-    setStatus(`导入失败：${error.message}`, true);
+    notice = { text: `导入失败：${error.message}`, error: true };
+    renderComputeRow();
     return;
   }
-  renderForm();
-  await generate({ previous: state.assignments });
+  // 导入换了整套输入：结果作废，回到"尚未计算"。
+  state.assignments = null;
+  state.result = null;
+  state.diagnosis = null;
+  state.dayByDate = new Map();
+  state.pending = 0;
+  state.computedAt = null;
+  state.viewMonth = monthOf(state.input.startDate);
+  state.selection = { from: state.input.startDate, to: state.input.startDate };
+  notice = null;
+  renderAll();
 }
 
-// ---------------------------------------------------------------- 交互
+// ---------------------------------------------------------------- 接线
 
-function toggleInList(list, value, present) {
-  const next = new Set(list);
-  if (present) next.add(value);
-  else next.delete(value);
-  return [...next].sort();
-}
+function wireTopbar() {
+  $('btn-compute').addEventListener('click', () => compute());
+  $('btn-cancel').addEventListener('click', () => cancelSolve());
+  $('btn-export').addEventListener('click', exportJson);
+  $('btn-export-foot').addEventListener('click', exportJson);
 
-/** 在一个周锚点上写入/清除社团切换。不切换 = 没有这条记录。 */
-function setClubChange(weekStart, choice) {
-  const others = state.input.clubChanges.filter((entry) => entry.date !== weekStart);
-  if (choice === UNSET) {
-    state.input.clubChanges = others;
-    return;
+  for (const id of ['file-import', 'file-import-foot']) {
+    $(id).addEventListener('change', (event) => {
+      const file = event.target.files && event.target.files[0];
+      event.target.value = '';
+      if (file) importJson(file);
+    });
   }
-  const clubId = choice === NO_CLUB ? null : choice;
-  state.input.clubChanges = [...others, { date: weekStart, clubId }].sort((a, b) =>
-    a.date < b.date ? -1 : 1,
-  );
+
+  $('btn-collapse').addEventListener('click', () => {
+    const shell = $('shell');
+    shell.classList.toggle('collapsed');
+    $('btn-collapse').innerHTML = shell.classList.contains('collapsed')
+      ? '▶'
+      : '◀<span> 收起左栏</span>';
+  });
 }
 
-$('calendar').addEventListener('change', (event) => {
-  const control = event.target;
-  const action = control.dataset && control.dataset.action;
+function wireRail() {
+  $('rail-start-date').addEventListener('change', (event) => setStartDate(event.target.value));
+  $('rail-played-up-to').addEventListener('change', (event) => setPlayedUpTo(event.target.value));
+  $('rail-initial-club').addEventListener('change', (event) => setInitialClub(event.target.value));
+}
 
-  if (action === 'rest') {
-    state.input.restDays = toggleInList(state.input.restDays, control.dataset.date, control.checked);
-    generate({ fromDate: (anchorAtOrAfter(control.dataset.date)) });
-    return;
-  } else if (action === 'skip') {
-    state.input.skippedDays = toggleInList(
-      state.input.skippedDays,
-      control.dataset.date,
-      control.checked,
-    );
-    generate({ fromDate: (anchorAtOrAfter(control.dataset.date)) });
-    return;
-  } else if (action === 'week-command') {
-    setMapEntry(state.input.weekCommands, control.dataset.week, control.value);
-    generate({ fromDate: control.dataset.week });
-    return;
-  } else if (action === 'day-command') {
-    setMapEntry(state.input.dayCommands, control.dataset.date, control.value);
-    generate({ fromDate: (anchorAtOrAfter(control.dataset.date)) });
-    return;
-  } else if (action === 'club-change') {
-    setClubChange(control.dataset.week, control.value);
-    generate({ fromDate: control.dataset.week });
-    return;
-  } else {
-    return;
-  }
-});
+// ---------------------------------------------------------------- 启动
 
 startWorker();
-renderForm();
+buildRail();
+wireTopbar();
+wireRail();
+wireCalendar();
+wirePanels();
 
-for (const list of GOAL_LISTS) wireGoalList(list);
+state.selection = { from: state.input.startDate, to: state.input.startDate };
+state.viewMonth = monthOf(state.input.startDate);
+$('jump-date').value = state.input.startDate;
 
-$('btn-add-global').addEventListener('click', () => {
-  state.input.globalConstraints.push({ attribute: attributeLabels[0].id, op: '>=', value: 50 });
-  renderGoalEditors();
-  generate({ previous: state.assignments });
-});
-
-$('btn-add-ending').addEventListener('click', () => {
-  state.input.endingGoals.push({ attribute: attributeLabels[0].id, op: '>=', value: 50 });
-  renderGoalEditors();
-  generate({ previous: state.assignments });
-});
-
-$('btn-add-mini').addEventListener('click', () => {
-  state.input.miniGoals.push({
-    deadline: rules.timeline.lastSettlement,
-    attributes: [attributeLabels[0].id],
-    op: '>=',
-    value: 50,
-  });
-  renderGoalEditors();
-  generate({ previous: state.assignments });
-});
-
-$('start-date').addEventListener('change', (event) => {
-  state.input.startDate = event.target.value;
-  // 起点动了就等于"我现在在别处"，重算起点跟着它走
-  if (state.input.playedUpTo < state.input.startDate) state.input.playedUpTo = state.input.startDate;
-  $('played-up-to').value = state.input.playedUpTo;
-  generate({ previous: state.assignments });
-});
-
-$('played-up-to').addEventListener('change', (event) => {
-  state.input.playedUpTo = event.target.value;
-  generate({ previous: state.assignments });
-});
-
-$('initial-club').addEventListener('change', (event) => {
-  state.input.initialClub = event.target.value === UNSET ? null : event.target.value;
-  generate({ previous: state.assignments });
-});
-
-$('btn-plan').addEventListener('click', () => {
-  // 使用者明确要求"重新生成"：历史仍然不动，其余的整份重排。
-  generate({ previous: state.assignments });
-});
-
-$('btn-cancel').addEventListener('click', () => {
-  cancelSolve();
-});
-
-$('btn-export').addEventListener('click', () => {
-  exportJson();
-});
-
-$('btn-jump').addEventListener('click', () => {
-  scrollToDate($('jump-date').value);
-});
-
-$('file-import').addEventListener('change', (event) => {
-  const file = event.target.files && event.target.files[0];
-  event.target.value = '';
-  if (file) importJson(file);
-});
-
-// 打开就先排一份，使用者不必先点一次「生成」才看得到东西。
-generate();
+renderAll();
 return {  };
 })();
 

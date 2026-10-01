@@ -4,399 +4,1044 @@
     <meta charset="utf-8" />
     <title>Tokimeki-Planner</title>
     <style>
+      /* 视觉基调＝A 版（1995 纸面台账）。令牌与取值见 .scratch/ui-redesign/spec.md。 */
       :root {
-        color-scheme: light dark;
-        --line: #d0d5dd;
-        --bg-soft: #f6f7f9;
-        --accent: #2f6fed;
-        --muted: #5b6472;
+        --paper: #efe4cd;
+        --panel: #fbf5e6;
+        --panel-2: #f3e9d2;
+        --panel-3: #e7d9bb;
+        --ink: #2e2622;
+        --ink-2: #6b5b4c;
+        --ink-3: #77675a;
+        --line: #c9b691;
+        --line-2: #a89070;
+        --line-3: #7d6746;
+        --rose: #c2506b;
+        --rose-deep: #a83350;
+        --rose-soft: #f6dde3;
+        --rose-line: #d9a3b1;
+        --green: #2f6b4a;
+        --green-soft: #e6f0e9;
+        --amber: #7d5f18;
+        --amber-soft: #f2e7c9;
+        --cell: #fffdf5;
+        --cell-sun: #f0e2c6;
+        --cell-off: #e9dec4;
+        --cell-hist: #e2d8c2;
+        --raise: inset 1px 1px 0 #fffdf6, inset -1px -1px 0 #cdb896;
+        --sink: inset -1px -1px 0 #fffdf6, inset 1px 1px 0 #cdb896;
+        --font-ui: system-ui, -apple-system, "Segoe UI", "Noto Sans CJK SC", sans-serif;
+        --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       }
       * {
         box-sizing: border-box;
       }
+      /* 类选择器上的 display 会盖过 hidden 属性，所以这里统一把 hidden 摆到最高优先级。 */
+      [hidden] {
+        display: none !important;
+      }
+      html,
+      body {
+        height: 100%;
+      }
       body {
         margin: 0;
-        font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans CJK SC", sans-serif;
-        line-height: 1.6;
-        color: #1a1c1f;
-        background: #fff;
-      }
-      header {
-        padding: 16px 22px 10px;
-        border-bottom: 1px solid var(--line);
-      }
-      header h1 {
-        margin: 0;
-        font-size: 19px;
-      }
-      header p {
-        margin: 4px 0 0;
+        font-family: var(--font-ui);
         font-size: 13px;
-        color: var(--muted);
+        line-height: 1.5;
+        color: var(--ink);
+        background-color: var(--paper);
+        background-image: radial-gradient(rgba(125, 103, 70, 0.16) 1px, transparent 1.2px);
+        background-size: 6px 6px;
       }
-      main {
-        display: grid;
-        grid-template-columns: minmax(340px, 400px) 1fr;
+      /* 全页唯一允许的圆角例外是状态点；其余一律 0。 */
+      button,
+      input,
+      select {
+        font: inherit;
+        color: inherit;
       }
-      #input-pane {
-        padding: 16px 22px;
-        border-right: 1px solid var(--line);
-        background: var(--bg-soft);
+      h1,
+      h2,
+      h3 {
+        margin: 0;
+        font-weight: 700;
       }
-      #result-pane {
-        padding: 16px 22px;
+      .num {
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* ---------------------------------------------------------------- 顶栏 */
+      .topbar {
+        height: 56px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 0 14px;
+        background: linear-gradient(180deg, #f4e9d1, #e5d6b4);
+        border-bottom: 3px double var(--line-3);
+        box-shadow: inset 0 1px 0 #fffdf6;
+      }
+      .brand {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
         min-width: 0;
       }
-      h2 {
-        font-size: 14px;
-        margin: 0 0 10px;
-        letter-spacing: 0.04em;
-        color: #3b4250;
+      .brand h1 {
+        font-size: 20px;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
       }
-      h2.spaced {
-        margin-top: 16px;
+      .brand .subtitle {
+        font-size: 12px;
+        color: var(--ink-2);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .brand svg {
+        vertical-align: -2px;
+        margin-right: 2px;
+      }
+      .topbar-right {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .chip {
+        font-size: 12px;
+        padding: 3px 10px;
+        border: 1px solid var(--line-2);
+        border-radius: 0;
+        background: var(--panel-2);
+        box-shadow: var(--raise);
+        white-space: nowrap;
+      }
+      .chip.met {
+        color: var(--green);
+        border-color: var(--green);
+        background: var(--green-soft);
+      }
+      .chip.unmet {
+        color: var(--rose-deep);
+        border-color: var(--rose-line);
+        background: #fbeff2;
+      }
+
+      /* ---------------------------------------------------------------- 控件 */
+      .btn {
+        font-size: 12px;
+        padding: 5px 11px;
+        border: 1px solid var(--line-2);
+        border-radius: 0;
+        background: linear-gradient(180deg, #fdf8ec, #f0e6d1);
+        box-shadow: var(--raise);
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .btn:hover {
+        background: linear-gradient(180deg, #fffdf5, #f5ecd8);
+      }
+      .btn:active {
+        box-shadow: var(--sink);
+      }
+      .btn[disabled] {
+        color: var(--ink-3);
+        cursor: default;
+        opacity: 0.7;
+      }
+      .btn-primary {
+        color: #fffafb;
+        font-weight: 700;
+        border-color: var(--rose-deep);
+        background: linear-gradient(180deg, #c85a72, #ab3c55);
+        box-shadow: inset 1px 1px 0 #e79aab, inset -1px -1px 0 #8d2a43;
+      }
+      .btn-primary:hover {
+        background: linear-gradient(180deg, #d0687e, #b8465f);
+      }
+      .btn-icon {
+        padding: 4px 9px;
+        font-size: 13px;
+        line-height: 1.1;
+      }
+      .btn-quiet {
+        background: var(--panel);
+      }
+      .file-btn input {
+        display: none;
+      }
+      input[type="date"],
+      input[type="number"],
+      input[type="text"],
+      select {
+        font-size: 12px;
+        padding: 3px 5px;
+        border: 1px solid var(--line-2);
+        border-radius: 0;
+        background: #fffdf7;
+        box-shadow: var(--sink);
+        max-width: 100%;
       }
       .field {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 10px;
-        margin-bottom: 6px;
-        font-size: 13px;
-      }
-      .field input,
-      .field select {
-        width: 148px;
-        padding: 4px 6px;
-        font: inherit;
-        font-size: 13px;
-        border: 1px solid var(--line);
-        border-radius: 5px;
-        background: #fff;
-      }
-      #attributes {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 0 14px;
-        margin-bottom: 16px;
-      }
-      #attributes .field input {
-        width: 72px;
-      }
-      .actions {
-        display: flex;
-        flex-wrap: wrap;
         gap: 8px;
-        margin: 12px 0 10px;
+        margin-bottom: 6px;
+        font-size: 12px;
       }
-      button,
-      .file-button {
-        font: inherit;
-        font-size: 13px;
-        padding: 6px 12px;
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        background: #fff;
-        cursor: pointer;
+      .field > span {
+        color: var(--ink-2);
+        white-space: nowrap;
       }
-      button.primary {
-        background: var(--accent);
-        border-color: var(--accent);
-        color: #fff;
-        font-weight: 600;
+      .hint {
+        margin: 6px 0 0;
+        font-size: 12px;
+        color: var(--ink-3);
       }
-      .file-button input {
+
+      /* ---------------------------------------------------------------- 骨架 */
+      .shell {
+        display: grid;
+        grid-template-columns: 280px 1fr;
+        height: calc(100vh - 56px);
+      }
+      .shell.collapsed {
+        grid-template-columns: 46px 1fr;
+      }
+      .rail {
+        overflow: auto;
+        padding: 10px;
+        border-right: 1px solid var(--line-2);
+        background: rgba(251, 245, 230, 0.55);
+      }
+      .shell.collapsed .rail .panel,
+      .shell.collapsed .rail .btn-collapse span {
         display: none;
       }
-      small {
-        display: block;
-        color: var(--muted);
-        font-size: 12px;
-      }
-      #status {
-        font-size: 13px;
-        padding: 8px 12px;
-        border-radius: 6px;
-        background: #eef1f5;
-        margin-bottom: 10px;
-        white-space: pre-wrap;
-      }
-      #status.error {
-        background: #fdeceb;
-        color: #8c1d18;
-      }
-      #summary {
-        font-size: 13px;
-        color: var(--muted);
+      .btn-collapse {
+        width: 100%;
         margin-bottom: 8px;
       }
-      #goals-status {
-        font-size: 12px;
-        border: 1px solid var(--line);
-        border-radius: 6px;
+      .shell.collapsed .btn-collapse {
+        padding: 5px 4px;
+      }
+      .panel {
         margin-bottom: 10px;
+        padding: 8px 9px;
+        border: 1px solid var(--line-2);
+        background: var(--panel);
+        box-shadow: 0 1px 0 rgba(125, 103, 70, 0.18);
+      }
+      .panel h2 {
+        font-size: 13px;
+        margin-bottom: 7px;
+        padding-bottom: 4px;
+        border-bottom: 1px dashed var(--line-2);
+        color: var(--ink);
+      }
+      .attr-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 5px 6px;
+      }
+      .attr-cell {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        font-size: 12px;
+      }
+      .attr-cell > span {
+        color: var(--ink-2);
+        white-space: nowrap;
         overflow: hidden;
+        text-overflow: ellipsis;
       }
-      #goals-status .headline {
-        padding: 6px 12px;
-        font-weight: 600;
-      }
-      #goals-status .headline.ok {
-        background: #e7f6ec;
-        color: #14663a;
-      }
-      #goals-status .headline.bad {
-        background: #fdeceb;
-        color: #8c1d18;
-      }
-      #goals-status ul {
-        list-style: none;
-        margin: 0;
-        padding: 6px 12px;
-      }
-      #goals-status li {
-        padding: 1px 0;
+      .attr-cell input {
+        width: 100%;
         font-variant-numeric: tabular-nums;
       }
-      #goals-status li .tag {
+      .attr-cell.down > span::after {
+        content: " ▼";
+        font-size: 12px;
+        color: var(--rose-deep);
+      }
+
+      .work {
+        overflow: auto;
+        padding: 10px 12px 30px;
+        min-width: 0;
+      }
+      .pinned {
+        position: sticky;
+        top: -10px;
+        z-index: 5;
+        background: var(--paper);
+        background-image: radial-gradient(rgba(125, 103, 70, 0.16) 1px, transparent 1.2px);
+        background-size: 6px 6px;
+        padding-top: 10px;
+        margin-top: -10px;
+      }
+      /* 视口不够高时，日历 + 详情条撑不下：退化为整栏滚动，别把达标清单挤出屏幕。 */
+      @media (max-height: 760px) {
+        .pinned {
+          position: static;
+          margin-top: 0;
+          padding-top: 0;
+        }
+      }
+
+      /* ---------------------------------------------------------------- 日历工具行 */
+      .toolbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        padding: 7px 9px;
+        border: 1px solid var(--line-2);
+        background: linear-gradient(180deg, #efe2c6, #e4d4b1);
+        box-shadow: var(--raise);
+      }
+      .month-label {
+        font-size: 13px;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        min-width: 168px;
+        text-align: center;
+      }
+      .toolbar-gap {
+        flex: 1 1 auto;
+      }
+      .jump {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 12px;
+        color: var(--ink-2);
+      }
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 12px;
+        padding: 6px 2px 7px;
+        font-size: 12px;
+        color: var(--ink-2);
+      }
+      .legend i {
         display: inline-block;
-        min-width: 62px;
-        color: var(--muted);
+        width: 11px;
+        height: 11px;
+        margin-right: 4px;
+        vertical-align: -1px;
+        border: 1px solid var(--line-2);
       }
-      #goals-status li.met {
-        color: #14663a;
+      .legend .k-weekday i {
+        background: var(--cell);
       }
-      #goals-status li.unmet {
-        color: #8c1d18;
+      .legend .k-sun i {
+        background: var(--cell-sun);
       }
-      #goals-status .diagnosis {
-        border-top: 1px solid var(--line);
-        background: #fffaf5;
+      .legend .k-rest i {
+        background: var(--rose-soft);
+        border-color: var(--rose-line);
       }
-      #goals-status .diagnosis .headline {
-        background: #fdf0e2;
-        color: #8a4b12;
+      .legend .k-empty i {
+        background: repeating-linear-gradient(135deg, #e2d6ba 0 3px, #c6b795 3px 4px);
       }
-      .goal-list {
-        margin-bottom: 6px;
+      .legend .k-hist i {
+        background: var(--cell-hist);
+      }
+      .legend .k-flag i {
+        background: var(--rose);
+        border-color: var(--rose-deep);
+      }
+      .legend .k-played i {
+        border-left: 3px solid var(--line-3);
+        background: var(--cell);
+      }
+
+      /* ---------------------------------------------------------------- 日历 */
+      .cal-months {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+      .month {
+        border: 1px solid var(--line-2);
+        background: var(--panel);
+        padding: 6px;
+        box-shadow: 0 1px 0 rgba(125, 103, 70, 0.18);
+        min-width: 0;
+      }
+      .month-title {
+        font-size: 13px;
+        font-weight: 700;
+        text-align: center;
+        padding: 3px 0 5px;
+        margin-bottom: 5px;
+        background: linear-gradient(180deg, #f4e9d1, #e5d6b4);
+        border: 1px solid var(--line-2);
+        box-shadow: var(--raise);
+        font-variant-numeric: tabular-nums;
+      }
+      .dow,
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+      }
+      .dow {
+        gap: 2px;
+        margin-bottom: 2px;
+      }
+      .dow span {
+        font-size: 12px;
+        text-align: center;
+        color: var(--ink-2);
+        padding: 2px 0;
+        border: 1px solid var(--line);
+        background: var(--panel-2);
+      }
+      .dow span:first-child {
+        color: var(--rose-deep);
+      }
+      .grid {
+        gap: 2px;
+      }
+      .cell {
+        position: relative;
+        min-height: 46px;
+        padding: 2px 3px;
+        border: 1px solid #ded0b2;
+        background: var(--cell);
+        cursor: pointer;
+        overflow: hidden;
+      }
+      .cell .dn {
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+        display: block;
+        line-height: 1.25;
+      }
+      .cell .dcmd {
+        display: block;
+        font-size: 12px;
+        line-height: 1.25;
+        color: var(--ink);
+        word-break: break-all;
+      }
+      .cell .flags {
+        position: absolute;
+        top: 2px;
+        right: 3px;
+        display: flex;
+        gap: 2px;
+        align-items: center;
+      }
+      /* 一个旗＝一条小目标：红旗达标、白旗未达标。 */
+      .flag {
+        width: 9px;
+        height: 9px;
+        border: 1px solid var(--ink);
+        background: #fff;
+        display: inline-block;
+      }
+      .flag.met {
+        background: var(--rose);
+        border-color: var(--rose-deep);
+      }
+      .flag-count {
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+        color: var(--ink);
+        background: var(--panel-2);
+        border: 1px solid var(--ink-2);
+        padding: 0 2px;
+        line-height: 1.2;
+      }
+      .cell.is-sun {
+        background: var(--cell-sun);
+      }
+      .cell.is-rest {
+        background: var(--rose-soft);
+        border-color: var(--rose-line);
+      }
+      .cell.is-empty {
+        background: repeating-linear-gradient(135deg, #e2d6ba 0 4px, #c6b795 4px 5px);
+      }
+      .cell.is-history {
+        background: var(--cell-hist);
+        color: var(--ink-2);
+      }
+      .cell.is-ovf {
+        background: var(--cell-off);
+        border-style: dashed;
+        color: var(--ink-3);
+        cursor: not-allowed;
+      }
+      .cell.is-ovf .dcmd {
+        color: var(--ink-3);
+      }
+      .cell.is-played {
+        border-left: 3px solid var(--line-3);
+      }
+      .cell.is-end {
+        border-bottom: 2px solid var(--rose);
+      }
+      .cell .tag-end {
+        position: absolute;
+        right: 2px;
+        bottom: 0;
+        font-size: 12px;
+        color: var(--rose-deep);
+      }
+      .cell.is-range {
+        background: #fbe9ee;
+      }
+      .cell.is-selected {
+        background: var(--rose-soft);
+        outline: 2px solid var(--rose-deep);
+        outline-offset: -2px;
+        border-color: var(--rose-deep);
+        z-index: 2;
+      }
+      .cell.is-flash {
+        animation: cellflash 0.42s ease-out 3;
+      }
+      @keyframes cellflash {
+        0%,
+        100% {
+          box-shadow: none;
+        }
+        50% {
+          box-shadow: inset 0 0 0 3px rgba(194, 80, 107, 0.6);
+        }
+      }
+
+      /* ---------------------------------------------------------------- 当日详情条 */
+      .detail-wrap {
+        display: flex;
+        gap: 8px;
+        align-items: stretch;
+        margin-top: 8px;
+      }
+      .detail {
+        flex: 1 1 auto;
+        min-width: 0;
+        padding: 7px 9px;
+        border: 1px solid var(--line-2);
+        background: var(--panel);
+        box-shadow: 0 4px 10px rgba(125, 103, 70, 0.18);
+        display: grid;
+        grid-template-columns: 190px 1fr;
+        gap: 6px 10px;
+      }
+      .detail .when {
+        font-size: 12px;
+      }
+      .detail .when strong {
+        font-variant-numeric: tabular-nums;
+      }
+      .detail .when p {
+        margin: 2px 0 0;
+        color: var(--ink-2);
+      }
+      .detail .attrs {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 2px 10px;
+        min-width: 0;
+      }
+      .detail .attr {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 5px;
+        font-size: 12px;
+        padding: 1px 0;
+        border-bottom: 1px dotted var(--line);
+      }
+      .detail .attr b {
+        font-variant-numeric: tabular-nums;
+        font-weight: 700;
+      }
+      .detail .attr em {
+        font-style: normal;
+        font-variant-numeric: tabular-nums;
+        color: var(--ink-3);
+      }
+      .detail .attr em.up {
+        color: var(--green);
+      }
+      .detail .attr em.down {
+        color: var(--rose-deep);
+      }
+      .detail .range-note {
+        grid-column: 1 / -1;
+        font-size: 12px;
+        color: var(--amber);
+        background: var(--amber-soft);
+        border: 1px dashed var(--line-2);
+        padding: 3px 6px;
+      }
+      .btn-more {
+        align-self: flex-start;
+      }
+
+      /* ---------------------------------------------------------------- 计算状态 */
+      .compute-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 10px 0;
+        padding: 7px 9px;
+        border: 1px dashed var(--line-2);
+        background: rgba(251, 245, 230, 0.6);
+        font-size: 12px;
+      }
+      .compute-row.is-dirty {
+        border-color: var(--amber);
+        background: var(--amber-soft);
+        color: var(--amber);
+      }
+      .progress {
+        display: inline-block;
+        width: 190px;
+        height: 11px;
+        border: 1px solid var(--line-2);
+        background: #fffdf7;
+        box-shadow: var(--sink);
+        overflow: hidden;
+        vertical-align: -2px;
+      }
+      .progress-bar {
+        display: block;
+        height: 100%;
+        width: 40%;
+        background: repeating-linear-gradient(
+          115deg,
+          var(--rose) 0 7px,
+          #e7a5b4 7px 14px
+        );
+        animation: indeterminate 1.1s linear infinite;
+      }
+      @keyframes indeterminate {
+        from {
+          transform: translateX(-110%);
+        }
+        to {
+          transform: translateX(260%);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .progress-bar {
+          animation-duration: 3s;
+        }
+        .cell.is-flash {
+          animation: none;
+          box-shadow: inset 0 0 0 3px rgba(194, 80, 107, 0.6);
+        }
+      }
+      .elapsed {
+        font-variant-numeric: tabular-nums;
+        color: var(--ink-2);
+      }
+      .stale-note {
+        margin-left: auto;
+        font-size: 12px;
+        color: var(--ink-3);
+      }
+
+      /* 陈旧态：数值、旗帜、达标清单都基于上一次计算。 */
+      .stale {
+        filter: saturate(0.5);
+        outline: 1px dashed var(--line-2);
+        outline-offset: 2px;
+      }
+
+      /* ---------------------------------------------------------------- 达标清单 */
+      .results {
+        margin-top: 4px;
+      }
+      .goals-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 13px;
+        font-weight: 700;
+        padding: 6px 9px;
+        border: 1px solid var(--line-2);
+        background: linear-gradient(180deg, #efe2c6, #e4d4b1);
+        box-shadow: var(--raise);
+      }
+      .goals-head .count {
+        font-weight: 400;
+        color: var(--ink-2);
+        font-size: 12px;
+      }
+      .goal-group {
+        margin-top: 8px;
+        border: 1px solid var(--line-2);
+        background: var(--panel);
+      }
+      .goal-group > header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 5px 9px;
+        border-bottom: 1px solid var(--line-2);
+        background: var(--panel-2);
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .goal-group > header .count {
+        font-weight: 400;
+        color: var(--ink-2);
+        margin-left: auto;
+      }
+      .goal-cols,
+      .goal-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 92px 110px 92px 78px 74px;
+        gap: 6px;
+        align-items: center;
+        padding: 3px 9px;
+        font-size: 12px;
+      }
+      .goal-cols {
+        color: var(--ink-3);
+        border-bottom: 1px dotted var(--line);
+        padding-top: 4px;
+        padding-bottom: 4px;
       }
       .goal-row {
+        border-bottom: 1px dotted var(--line);
+      }
+      .goal-row:last-child {
+        border-bottom: 0;
+      }
+      .goal-row.unmet {
+        background: #fbeff2;
+      }
+      .goal-row .name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .goal-row .v {
+        font-variant-numeric: tabular-nums;
+        text-align: right;
+      }
+      .goal-row .gap {
+        font-variant-numeric: tabular-nums;
+        text-align: right;
+        color: var(--ink-3);
+      }
+      .goal-row .state {
         display: flex;
         align-items: center;
         gap: 4px;
-        margin-bottom: 4px;
-        font-size: 12px;
+        color: var(--ink-2);
       }
-      .goal-row select,
-      .goal-row input {
-        font: inherit;
-        font-size: 12px;
-        padding: 2px 4px;
-        border: 1px solid var(--line);
-        border-radius: 4px;
-        background: #fff;
-        min-width: 0;
-      }
-      .goal-row .attr {
-        flex: 1 1 auto;
-      }
-      .goal-row .num {
-        width: 62px;
-      }
-      .goal-row .date {
-        width: 124px;
-      }
-      .goal-row .attrs {
-        flex: 1 1 auto;
-        height: 52px;
-      }
-      .goal-row .remove {
-        padding: 2px 7px;
-        line-height: 1.2;
-      }
-      .goal-add {
-        font-size: 12px;
-        padding: 3px 9px;
-      }
-      #summary {
-        font-size: 13px;
-      }
-      #curve {
-        margin-bottom: 10px;
-      }
-      #curve svg {
-        width: 100%;
-        height: 170px;
-        display: block;
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        background: #fff;
-      }
-      #curve .legend {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 4px 14px;
-        font-size: 12px;
-        color: var(--muted);
-        margin-top: 4px;
-      }
-      #curve .legend i {
+      .dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
         display: inline-block;
-        width: 11px;
-        height: 3px;
-        margin-right: 5px;
-        vertical-align: middle;
+        flex: 0 0 auto;
       }
-      .calendar-tools {
+      .dot.met {
+        background: var(--green);
+      }
+      .dot.unmet {
+        border: 2px solid var(--rose-deep);
+        background: transparent;
+      }
+      .row-actions {
+        display: flex;
+        gap: 4px;
+        justify-content: flex-end;
+      }
+      .row-actions .btn {
+        padding: 2px 6px;
+      }
+      .diagnosis {
+        margin-top: 8px;
+      }
+      .diag-card {
+        border: 1px solid var(--line-2);
+        border-left: 3px solid var(--amber);
+        background: #fffaf5;
+        padding: 6px 9px;
+        font-size: 12px;
+        margin-bottom: 6px;
+      }
+      .diag-card b {
+        color: var(--amber);
+      }
+      .diag-card p {
+        margin: 2px 0 0;
+        color: var(--ink-2);
+      }
+      .foot {
+        display: flex;
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      /* ---------------------------------------------------------------- 右键菜单 */
+      .menu {
+        position: fixed;
+        z-index: 40;
+        min-width: 190px;
+        padding: 3px;
+        border: 1px solid var(--line-3);
+        background: var(--panel);
+        box-shadow: 3px 3px 0 rgba(125, 103, 70, 0.3);
+      }
+      .menu-item {
+        display: block;
+        width: 100%;
+        text-align: left;
+        border: 0;
+        background: transparent;
+        padding: 4px 8px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .menu-item:hover {
+        background: var(--panel-3);
+      }
+      .menu-item[disabled] {
+        color: var(--ink-3);
+        cursor: default;
+      }
+      .menu-item[disabled]:hover {
+        background: transparent;
+      }
+      .menu-sep {
+        height: 0;
+        margin: 3px 6px;
+        border-top: 1px dashed var(--line-2);
+      }
+
+      /* ---------------------------------------------------------------- 弹窗 */
+      .modal {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        background: rgba(46, 38, 34, 0.28);
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        padding-top: 8vh;
+      }
+      .modal-card {
+        width: min(560px, 92vw);
+        border: 1px solid var(--line-3);
+        background: var(--panel);
+        box-shadow: 4px 4px 0 rgba(125, 103, 70, 0.3);
+      }
+      .modal-head {
         display: flex;
         align-items: center;
-        gap: 8px;
-        margin-bottom: 8px;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 6px 9px;
+        background: linear-gradient(180deg, #efe2c6, #e4d4b1);
+        border-bottom: 1px solid var(--line-2);
+      }
+      .modal-head h3 {
         font-size: 13px;
       }
-      .calendar-tools input {
-        font: inherit;
-        font-size: 13px;
-        padding: 3px 6px;
-        border: 1px solid var(--line);
-        border-radius: 5px;
-      }
-      #calendar {
-        max-height: 56vh;
+      .modal-body {
+        padding: 10px;
+        max-height: 60vh;
         overflow: auto;
-        border: 1px solid var(--line);
-        border-radius: 6px;
       }
-      table.calendar {
-        border-collapse: collapse;
+      .modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        padding: 8px 10px;
+        border-top: 1px solid var(--line-2);
+        background: var(--panel-2);
+      }
+      .form-row {
+        display: grid;
+        grid-template-columns: 96px 1fr;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 8px;
         font-size: 12px;
       }
-      table.calendar th,
-      table.calendar td {
-        padding: 2px 8px;
-        border-bottom: 1px solid #eceff3;
-        text-align: left;
-        white-space: nowrap;
+      .form-row > span {
+        color: var(--ink-2);
       }
-      table.calendar td.num {
-        text-align: right;
+      .modal-list {
+        margin-top: 10px;
+        border-top: 1px dashed var(--line-2);
+        padding-top: 8px;
+      }
+      .modal-list h4 {
+        margin: 0 0 6px;
+        font-size: 12px;
+      }
+      .mini-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 74px 68px;
+        gap: 6px;
+        align-items: center;
+        font-size: 12px;
+        padding: 3px 0;
+        border-bottom: 1px dotted var(--line);
+      }
+      .mini-row .v {
         font-variant-numeric: tabular-nums;
-        color: #2b3038;
+        text-align: right;
       }
-      tr.week-row th {
-        background: #eef1f5;
-        font-weight: 600;
-        color: #3b4250;
-        position: sticky;
-        top: 0;
+      .attr-picker {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 10px;
+        padding: 4px;
+        border: 1px solid var(--line-2);
+        background: #fffdf7;
+        box-shadow: var(--sink);
       }
-      tr.week-row .week-flag {
-        font-weight: 400;
-        color: var(--muted);
-        margin-left: 10px;
-      }
-      tr.week-row select,
-      tr.day-row td select {
-        font: inherit;
+      .attr-picker label {
+        display: flex;
+        align-items: center;
+        gap: 4px;
         font-size: 12px;
-        padding: 1px 4px;
-        border: 1px solid var(--line);
-        border-radius: 4px;
-        background: #fff;
       }
-      tr.day-row td select {
-        max-width: 150px;
-      }
-      tr.day-row td.state {
-        color: var(--muted);
-      }
-      tr.day-row.is-rest td {
-        background: #fff5f5;
-      }
-      tr.day-row.is-empty td {
-        background: #f1f2f4;
-        color: #8b93a1;
-      }
-      tr.day-row.is-unsettled td {
-        color: #8b93a1;
-      }
-      tr.day-row td input[type="checkbox"] {
-        margin: 0;
-      }
-      tr.day-row.is-highlight td {
-        outline: 2px solid var(--accent);
-        outline-offset: -2px;
+      .empty-state {
+        padding: 10px;
+        border: 1px dashed var(--line-2);
+        background: rgba(251, 245, 230, 0.7);
+        font-size: 12px;
+        color: var(--ink-2);
       }
     </style>
   </head>
   <body>
-    <header>
-      <h1>Tokimeki-Planner</h1>
-      <p>《心跳回忆·永远属于你》（95 版）日程规划工具 · 单文件、离线、零依赖</p>
+    <header class="topbar">
+      <div class="brand">
+        <h1>
+          <svg width="14" height="13" viewBox="0 0 14 13" aria-hidden="true"
+            ><path
+              d="M7 12S0 8.2 0 4.2C0 1.9 1.7 0 4 0c1.4 0 2.4.8 3 1.7C7.6.8 8.6 0 10 0c2.3 0 4 1.9 4 4.2C14 8.2 7 12 7 12z"
+              fill="#c2506b"
+          /></svg>
+          Tokimeki-Planner
+        </h1>
+        <p class="subtitle">《心跳回忆·永远属于你》（95 版）日程规划工具</p>
+      </div>
+      <div class="topbar-right">
+        <span id="status-chip" class="chip">尚未计算</span>
+        <button id="btn-compute" class="btn btn-primary" type="button">计算</button>
+        <button id="btn-export" class="btn" type="button">导出</button>
+        <label class="btn file-btn"
+          >导入<input id="file-import" type="file" accept="application/json,.json"
+        /></label>
+      </div>
     </header>
 
-    <main>
-      <section id="input-pane">
-        <h2>起点</h2>
-        <div class="field">
-          <span>当前日期</span>
-          <input id="start-date" type="date" />
+    <div id="shell" class="shell">
+      <aside class="rail">
+        <button id="btn-collapse" class="btn btn-collapse" type="button">
+          ◀<span> 收起左栏</span>
+        </button>
+
+        <div class="panel">
+          <h2>起点</h2>
+          <label class="field"
+            ><span>当前日期</span><input id="rail-start-date" type="date"
+          /></label>
+          <label class="field"
+            ><span>已玩到</span><input id="rail-played-up-to" type="date"
+          /></label>
+          <p class="hint">这一日之前的日程算历史；也可在日历上右键设置。</p>
         </div>
-        <div class="field">
-          <span>已玩到</span>
-          <input id="played-up-to" type="date" />
+
+        <div class="panel">
+          <h2>当前属性</h2>
+          <div id="attributes" class="attr-grid"></div>
+          <p class="hint">带 ▼ 的是越低越好的负面指标。</p>
         </div>
-        <small>这一日之前的日程算历史——改任何东西都不会动它。</small>
 
-        <h2 class="spaced">当前属性</h2>
-        <div id="attributes"></div>
-
-        <h2 class="spaced">社团</h2>
-        <div class="field">
-          <span>起始社团</span>
-          <select id="initial-club"></select>
+        <div class="panel">
+          <h2>社团</h2>
+          <label class="field"
+            ><span>起始社团</span><select id="rail-initial-club"></select
+          ></label>
+          <p class="hint">社团只能在周日切换（在日历上右键该周日）；未加入时社团指令不可选。</p>
         </div>
-        <small>社团只能在周日切换，用每周表头的社团下拉框；未加入社团时社团指令不可选。</small>
+      </aside>
 
-        <h2 class="spaced">全局约束</h2>
-        <div id="global-constraints" class="goal-list"></div>
-        <button id="btn-add-global" class="goal-add" type="button">+ 加一条</button>
-        <small>起点已满足的，往后每天都要成立；起点未满足的，尽快满足。</small>
+      <section class="work">
+        <div class="pinned">
+          <div class="toolbar">
+            <button id="btn-prev-month" class="btn btn-icon" type="button" title="上一个月">‹</button>
+            <span id="month-label" class="month-label">—</span>
+            <button id="btn-next-month" class="btn btn-icon" type="button" title="下一个月">›</button>
+            <span class="toolbar-gap"></span>
+            <label class="jump"><span>跳到</span><input id="jump-date" type="date" /></label>
+            <button id="btn-jump" class="btn" type="button">跳转</button>
+            <button id="btn-jump-start" class="btn btn-quiet" type="button">起点</button>
+            <button id="btn-jump-end" class="btn btn-quiet" type="button">终点</button>
+          </div>
+          <div class="legend">
+            <span>右键日期格打开操作菜单；从一格拖到另一格可框选一段日期。</span>
+            <span class="k-weekday"><i></i>平日</span>
+            <span class="k-sun"><i></i>周日</span>
+            <span class="k-rest"><i></i>休息日</span>
+            <span class="k-empty"><i></i>空过</span>
+            <span class="k-flag"><i></i>小目标截止</span>
+            <span class="k-hist"><i></i>历史</span>
+            <span class="k-played"><i></i>已玩到</span>
+          </div>
+          <div id="calendar" class="calendar"></div>
+          <div class="detail-wrap">
+            <div id="detail" class="detail"></div>
+            <button id="btn-more" class="btn btn-more" type="button" title="更多操作">⋯</button>
+          </div>
+        </div>
 
-        <h2 class="spaced">小目标</h2>
-        <div id="mini-goals" class="goal-list"></div>
-        <button id="btn-add-mini" class="goal-add" type="button">+ 加一条</button>
-        <small>阈值作用于所选属性的求和。</small>
-
-        <h2 class="spaced">结局目标</h2>
-        <div id="ending-goals" class="goal-list"></div>
-        <button id="btn-add-ending" class="goal-add" type="button">+ 加一条</button>
-        <small>在 1998-03-01 逐项评估。</small>
-
-        <div class="actions">
-          <button id="btn-plan" class="primary" type="button">生成</button>
-          <button id="btn-cancel" type="button" hidden>取消</button>
-          <button id="btn-export" type="button">导出 JSON</button>
-          <label class="file-button">
-            导入 JSON
-            <input id="file-import" type="file" accept="application/json,.json" />
-          </label>
+        <div class="results">
+          <div id="compute-row" class="compute-row">
+            <span id="pending-note">尚未计算</span>
+            <span id="progress" class="progress" hidden><span id="progress-bar" class="progress-bar"></span></span>
+            <span id="progress-elapsed" class="elapsed"></span>
+            <button id="btn-cancel" class="btn" type="button" hidden>取消</button>
+            <span id="stale-note" class="stale-note"></span>
+          </div>
+          <div id="goals" class="goals"></div>
+          <div id="diagnosis" class="diagnosis"></div>
+          <div class="foot">
+            <button id="btn-export-foot" class="btn" type="button">导出 JSON</button>
+            <label class="btn file-btn"
+              >导入 JSON<input id="file-import-foot" type="file" accept="application/json,.json"
+            /></label>
+          </div>
         </div>
       </section>
+    </div>
 
-      <section id="result-pane">
-        <h2>结果</h2>
-        <div id="status">尚未计算。</div>
-        <div id="summary"></div>
-        <div id="goals-status"></div>
-        <div id="curve"></div>
-        <div class="calendar-tools">
-          <label>跳到日期 <input id="jump-date" type="date" /></label>
-          <button id="btn-jump" type="button">跳转</button>
+    <div id="menu" class="menu" hidden></div>
+
+    <div id="modal" class="modal" hidden>
+      <div class="modal-card">
+        <div class="modal-head">
+          <h3 id="modal-title">标题</h3>
+          <button id="btn-modal-close" class="btn btn-icon" type="button">×</button>
         </div>
-        <div id="calendar"></div>
-      </section>
-    </main>
+        <div id="modal-body" class="modal-body"></div>
+        <div id="modal-actions" class="modal-actions"></div>
+      </div>
+    </div>
 
     <script id="worker-source" type="text/plain">
 /*__WORKER__*/

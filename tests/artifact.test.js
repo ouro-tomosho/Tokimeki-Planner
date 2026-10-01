@@ -72,3 +72,14 @@ test('Worker 对未知消息类型返回错误回执，而不是静默丢弃', (
 test('内联的应用脚本可以被解析', () => {
   assert.doesNotThrow(() => new vm.Script(appSource(buildHtml())), '应用脚本无法解析');
 });
+
+// 规格的「可核查的视觉验收」把这两条定为可机械断言的项：只做亮色，且不引外链。
+test('产物是纯亮色：没有 color-scheme 声明，也不含任何外链资源', () => {
+  const html = buildHtml();
+
+  assert.ok(!/color-scheme\s*:/.test(html), '产物里仍有 color-scheme 声明');
+  assert.ok(!/prefers-color-scheme/.test(html), '产物里仍有暗色模式分支');
+
+  const external = html.match(/https?:\/\/|<link\b|<img\b|@import|url\(/g) ?? [];
+  assert.deepEqual(external, [], `产物里有外链资源：${external.join('、')}`);
+});

@@ -8,7 +8,9 @@ import { bundle } from './bundle.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
-export const OUTPUT_URL = new URL('../Tokimeki-Planner.html', import.meta.url);
+// 产物落在仓库根目录，文件名必须是 index.html——GitHub Pages 直接发布仓库根目录时，
+// 用这个文件名才能让站点根路径就是应用本体。
+export const OUTPUT_URL = new URL('../index.html', import.meta.url);
 
 const WORKER_PLACEHOLDER = '/*__WORKER__*/';
 const APP_PLACEHOLDER = '/*__APP__*/';
@@ -72,5 +74,5 @@ export function writeBuild() {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const html = writeBuild();
-  console.log(`已写出 Tokimeki-Planner.html（${(Buffer.byteLength(html) / 1024).toFixed(1)} KB）`);
+  console.log(`已写出 index.html（${(Buffer.byteLength(html) / 1024).toFixed(1)} KB）`);
 }

@@ -127,3 +127,24 @@ test('形状合法但不是真实日历的日期被拒绝', () => {
   input.skippedDays = ['1996-13-45'];
   assert.deepEqual(validateInput(input, rules), ['skippedDays 含非法日期：1996-13-45']);
 });
+
+test('默认的两个全局默认指令都是空', () => {
+  const input = defaultInput(rules);
+  assert.equal(input.defaultWeekCommand, null);
+  assert.equal(input.defaultDayCommand, null);
+});
+
+test('全局默认指令引用未知指令时被拒绝', () => {
+  const input = defaultInput(rules);
+  input.defaultWeekCommand = 'cmd-does-not-exist';
+  assert.deepEqual(validateInput(input, rules), [
+    'defaultWeekCommand 引用了未知指令 cmd-does-not-exist',
+  ]);
+});
+
+test('全局默认指令不影响「键为 null」所表示的空过', () => {
+  const input = defaultInput(rules);
+  input.defaultWeekCommand = 'cmd-rest';
+  input.weekCommands['1996-05-12'] = null;
+  assert.deepEqual(validateInput(input, rules), []);
+});

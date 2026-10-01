@@ -21,6 +21,10 @@ export function defaultInput(rules) {
     globalConstraints: structuredClone(rules.defaultGlobalConstraints),
     endingGoals: structuredClone(rules.defaultEndingGoals),
     miniGoals: structuredClone(rules.defaultMiniGoals),
+    // 全局默认指令：某一周 / 某一天**没有显式指定**时用它。显式的 null 仍然表示空过，
+    // 因为那时键是存在的——「键不存在」与「键为 null」是两件不同的事。
+    defaultWeekCommand: null,
+    defaultDayCommand: null,
     initialClub: null,
     clubChanges: [],
     weekCommands: {},
@@ -86,6 +90,8 @@ export function validateInput(input, rules) {
   );
 
   checkClub(input, clubIds, inTimeline, problems);
+  checkCommandId('defaultWeekCommand', input.defaultWeekCommand, commandIds, problems);
+  checkCommandId('defaultDayCommand', input.defaultDayCommand, commandIds, problems);
   checkWeekCommands(input.weekCommands, commandIds, inTimeline, problems);
   checkDayCommands(input.dayCommands, commandIds, inTimeline, problems);
   checkDayList('restDays', input.restDays, inTimeline, problems);
@@ -130,6 +136,11 @@ function checkClub(input, clubIds, inTimeline, problems) {
       problems.push(`clubChanges 引用了未知社团 ${change?.clubId}`);
     }
   }
+}
+
+function checkCommandId(label, commandId, commandIds, problems) {
+  if (commandId === null) return;
+  if (!commandIds.has(commandId)) problems.push(`${label} 引用了未知指令 ${commandId}`);
 }
 
 function checkWeekCommands(map, commandIds, inTimeline, problems) {

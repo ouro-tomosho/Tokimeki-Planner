@@ -44,7 +44,11 @@ export function buildCalendar(rules, input) {
     const isTimelineEnd = date === end;
     const isSettled = !isEmpty && !isGameOpening && !isTimelineEnd;
 
-    const declared = isRestDay ? input.dayCommands[date] : input.weekCommands[weekStart];
+    // 显式指定（含显式 null = 空过）优先；键不存在时才落到全局默认指令。
+    const pinned = isRestDay ? input.dayCommands[date] : input.weekCommands[weekStart];
+    const fallback = isRestDay ? input.defaultDayCommand : input.defaultWeekCommand;
+    // commandId 记的是「本来会执行的指令」，即使这天因为跳过而没结算——界面靠它显示。
+    const commandId = pinned === undefined ? (fallback ?? null) : pinned;
 
     days.push({
       date,
@@ -55,7 +59,7 @@ export function buildCalendar(rules, input) {
       isEmpty,
       skipSource,
       isSettled,
-      commandId: isEmpty ? null : (declared ?? null),
+      commandId,
     });
   }
 

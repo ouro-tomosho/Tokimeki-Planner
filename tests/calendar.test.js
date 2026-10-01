@@ -280,3 +280,63 @@ test('非法输入不会让 plan 抛错，而是回报问题列表', () => {
   assert.equal(result.status, 'invalid-input');
   assert.ok(result.problems.some((p) => p.includes('startDate')));
 });
+
+test('全局默认指令能铺满整条时间轴，逐日属性按期望值演变', () => {
+  const result = planOf((input) => {
+    input.startDate = '1998-02-22';
+    input.attributes.stress = 50;
+    input.defaultWeekCommand = 'cmd-rest';
+    input.defaultDayCommand = 'cmd-rest';
+  });
+
+  // 02-22 是周日（休息日）：休息指令的体力 +3.1×4、压力 -2.9×4
+  const sunday = dayAt(result, '1998-02-22');
+  assert.equal(sunday.commandId, 'cmd-rest');
+  assert.ok(Math.abs(sunday.attributes.stamina - 112.4) < 1e-5, `${sunday.attributes.stamina}`);
+  assert.ok(Math.abs(sunday.attributes.stress - 38.4) < 1e-5, `${sunday.attributes.stress}`);
+
+  // 02-23 是平日：体力 +3.1、压力 -2.9
+  const monday = dayAt(result, '1998-02-23');
+  assert.ok(Math.abs(monday.attributes.stamina - 115.5) < 1e-5, `${monday.attributes.stamina}`);
+  assert.ok(Math.abs(monday.attributes.stress - 35.5) < 1e-5, `${monday.attributes.stress}`);
+
+  // 终点当天不结算，属性停在前一天
+  assert.deepEqual(dayAt(result, '1998-03-01').attributes, dayAt(result, '1998-02-28').attributes);
+});
+
+test('空过日不结算，属性原样带入下一天', () => {
+  const result = planOf((input) => {
+    input.startDate = '1998-02-22';
+    input.defaultWeekCommand = 'cmd-rest';
+    input.skippedDays = ['1998-02-24'];
+  });
+
+  assert.deepEqual(dayAt(result, '1998-02-24').attributes, dayAt(result, '1998-02-23').attributes);
+  assert.notDeepEqual(
+    dayAt(result, '1998-02-25').attributes,
+    dayAt(result, '1998-02-24').attributes,
+  );
+});
+
+test('显式指定的周指令优先于全局默认', () => {
+  const result = planOf((input) => {
+    input.startDate = '1998-02-22';
+    input.defaultWeekCommand = 'cmd-rest';
+    input.weekCommands['1998-02-22'] = 'cmd-exercise';
+  });
+
+  const monday = dayAt(result, '1998-02-23');
+  assert.equal(monday.commandId, 'cmd-exercise');
+  // 运动的运动 +3.3（成功）→ 期望 0.63×3.3 + 0.37×1.65 = 2.6895
+  assert.ok(Math.abs(monday.attributes.sports - 42.6895) < 1e-5, `${monday.attributes.sports}`);
+});
+
+test('同一输入两次规划，逐日属性完全一致', () => {
+  const build = () => {
+    const input = defaultInput(rules);
+    input.startDate = '1998-02-22';
+    input.defaultWeekCommand = 'cmd-study-literature';
+    return plan(input);
+  };
+  assert.deepEqual(build().days, build().days);
+});

@@ -275,6 +275,10 @@ function renderSummary(result) {
 }
 
 function scrollToDate(date) {
+  if (!date) {
+    setStatus('请先在「跳到日期」里选一个完整日期。', true);
+    return;
+  }
   const row = dayRows.get(date);
   if (!row) {
     setStatus(`日历里没有 ${date}。`, true);

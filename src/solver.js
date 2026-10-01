@@ -34,8 +34,8 @@ const INVARIANT_MARGIN = 4;
 
 // 终局修补的预算。贪心是滚动时域的、短视的；结局目标只看终点状态，
 // 所以排完之后再单独收一次尾，只在前面的结果没达标时才跑（这一步会慢到秒级）。
-const REPAIR_PASSES = 3;
-const REPAIR_WEEKS = 24;
+const REPAIR_PASSES = 2;
+const REPAIR_WEEKS = 10;
 
 export function createSolver(rules) {
   const settleDay = createSettlement(rules);
@@ -57,7 +57,11 @@ export function createSolver(rules) {
     };
   }
 
-  return function solve(input) {
+  /**
+   * 排一份日程：滚动时域贪心，不达标再收尾。
+   * 诊断阶段也走这里，只不过那时拿到的输入是**副本**（小目标被拿掉若干条）。
+   */
+  function search(input) {
     const calendar = buildCalendar(rules, input);
     const clubAt = createClubLookup(input);
     const dayByDate = new Map(calendar.days.map((day) => [day.date, day]));
@@ -231,6 +235,72 @@ export function createSolver(rules) {
     // 没达标就再收一次尾：从后往前逐个槽位试遍候选，只接受让整份规划更好的改动。
     if (planner(input, { assignments }).goals.ok) return assignments;
     return repair(input, assignments);
+  }
+
+  /**
+   * 不可达诊断：三项结论**并列**给出，不只报第一个命中的原因。
+   * 全程在输入的深拷贝上做，绝不改动使用者设定的任何目标或约束。
+   */
+  function diagnose(input) {
+    /** 在输入的深拷贝上改条件再排一次；绝不碰使用者设定的东西。 */
+    const reachableWith = (mutate) => {
+      const copy = structuredClone(input);
+      mutate(copy);
+      return planner(copy, { assignments: search(copy) }).goals.ok;
+    };
+
+    // 一：把全部小目标拿掉，只留结局目标与全局约束。
+    const withGlobalOnly = reachableWith((copy) => {
+      copy.miniGoals = [];
+    });
+
+    // 二：连全局约束也拿掉，只剩结局目标。
+    //     用来把"结局目标与全局约束冲突"和"结局目标本身不可达"分开——
+    //     后者怎么删约束都没救，前者只删小目标也没救。withGlobalOnly 为真时不必再跑。
+    const endingAlone = withGlobalOnly
+      ? true
+      : reachableWith((copy) => {
+          copy.miniGoals = [];
+          copy.globalConstraints = [];
+        });
+
+    // 三：由近至远逐个取消小目标，看取消到哪一个之后才可达。
+    //     全部取消仍不可达时（withGlobalOnly 为假）不必跑：没有哪个前缀能救。
+    let reachableAfterCancelling = null;
+    if (withGlobalOnly) {
+      const byDeadline = [...input.miniGoals].sort((a, b) =>
+        a.deadline < b.deadline ? -1 : a.deadline > b.deadline ? 1 : 0,
+      );
+      // 按**序号**取消。不能拿目标对象做 includes——reachableWith 里是 structuredClone，
+      // 副本里的对象引用与原件对不上，一个都取消不掉。
+      for (let count = 1; count <= byDeadline.length; count += 1) {
+        const ok = reachableWith((copy) => {
+          copy.miniGoals = [...copy.miniGoals]
+            .sort((a, b) => (a.deadline < b.deadline ? -1 : a.deadline > b.deadline ? 1 : 0))
+            .slice(count);
+        });
+        if (ok) {
+          reachableAfterCancelling = byDeadline[count - 1];
+          break;
+        }
+      }
+    }
+
+    return {
+      // 拿掉全部小目标就可达 → 是小目标在挡路
+      miniGoalsBlamed: withGlobalOnly,
+      // 连全局约束也拿掉才可达 → 是两者彼此冲突
+      endingAndGlobalConflict: endingAlone && !withGlobalOnly,
+      // 怎么删约束都不可达 → 结局目标本身就不可能
+      endingGoalsUnreachable: !endingAlone,
+      reachableAfterCancelling,
+    };
+  }
+
+  return function solve(input) {
+    const assignments = search(input);
+    if (planner(input, { assignments }).goals.ok) return assignments;
+    return { ...assignments, diagnosis: diagnose(input) };
   };
 
   /** 一份日程的好坏：先看达标，再看还差多少，最后才是正向总和与压力。 */

@@ -760,6 +760,58 @@ function describeEndingGoal(goal) {
     : `${relation} —— 实际 ${goal.actual.toFixed(1)}，还差 ${goal.shortfall.toFixed(1)}`;
 }
 
+/** 诊断里的目标是输入原件，没有 actual/shortfall，得单独拼一句人话。 */
+function describeGoalBriefly(goal) {
+  const names = goal.attributes ? goal.attributes.map(nameOf).join(' + ') : nameOf(goal.attribute);
+  return `${goal.deadline ? `${goal.deadline} ` : ''}${names} ${goal.op === '>=' ? '≥' : '<'} ${goal.value}`;
+}
+
+/**
+ * 不可达诊断：**三项并列**，不是只报第一个命中的原因。
+ * 只报一项会让使用者误以为是唯一原因，从而去改错地方。
+ */
+function buildDiagnosis(diagnosis) {
+  const wrap = document.createElement('div');
+  wrap.className = 'diagnosis';
+
+  const title = document.createElement('div');
+  title.className = 'headline';
+  title.textContent = '不可达诊断（三项并列）';
+  wrap.append(title);
+
+  const list = document.createElement('ul');
+  list.append(
+    goalLine(
+      '小目标',
+      diagnosis.miniGoalsBlamed
+        ? `是它在挡路——取消「${describeGoalBriefly(diagnosis.reachableAfterCancelling)}」之后即可达标`
+        : '不是小目标在挡路',
+      !diagnosis.miniGoalsBlamed,
+    ),
+  );
+  list.append(
+    goalLine(
+      '结局 vs 全局',
+      diagnosis.endingAndGlobalConflict
+        ? '两者冲突——把小目标全删了也达不到'
+        : '彼此不冲突',
+      !diagnosis.endingAndGlobalConflict,
+    ),
+  );
+  list.append(
+    goalLine(
+      '结局目标本身',
+      diagnosis.endingGoalsUnreachable
+        ? '不可达——连全局约束一起拿掉也达不到'
+        : '可达',
+      !diagnosis.endingGoalsUnreachable,
+    ),
+  );
+
+  wrap.append(list);
+  return wrap;
+}
+
 function renderGoalsStatus(result) {
   const host = $('goals-status');
   host.textContent = '';
@@ -793,6 +845,10 @@ function renderGoalsStatus(result) {
     ),
   );
   host.append(list);
+
+  // 可达时不显示任何不可达诊断（见票 08 的验收标准）。
+  const diagnosis = state.assignments?.diagnosis;
+  if (!goals.ok && diagnosis) host.append(buildDiagnosis(diagnosis));
 }
 
 // ---------------------------------------------------------------- 结果

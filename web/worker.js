@@ -17,7 +17,10 @@ self.onmessage = (event) => {
     }
     if (message.type === 'solve') {
       // 求解很慢，先把中间结论交出去也没意义——一次性把日程交回，由主线程再规划一次。
-      const assignments = solve(message.input);
+      const assignments = solve(message.input, {
+        previous: message.previous,
+        fromDate: message.fromDate,
+      });
       self.postMessage({ id, ok: true, assignments });
       return;
     }

@@ -64,7 +64,16 @@ export function createSolver(rules) {
    * 排一份日程：滚动时域贪心，不达标再收尾。
    * 诊断阶段也走这里，只不过那时拿到的输入是**副本**（小目标被拿掉若干条）。
    */
-  function search(input) {
+  function search(input, frozenBefore = null, previous = null) {
+    /**
+     * 该槽位是否已被冻结：早于重算起点，且上一份日程里已经有决定。
+     * 冻结的部分原样保留——使用者之前的安排不该因为改了一处就整体翻新。
+     */
+    const frozen = (date, key, map) => {
+      if (frozenBefore === null || date >= frozenBefore) return undefined;
+      return previous?.[map]?.[key];
+    };
+
     const calendar = buildCalendar(rules, input);
     const clubAt = createClubLookup(input);
     const dayByDate = new Map(calendar.days.map((day) => [day.date, day]));
@@ -213,8 +222,9 @@ export function createSolver(rules) {
       for (const day of restDays) {
         const pinned = input.dayCommands[day.date];
         let chosen = pinned;
-        if (pinned === undefined) {
-          chosen = pick(state, [day], candidatesAt(day.date), clubAt(day.date), day.date);
+        if (chosen === undefined) {
+          const kept = frozen(day.date, day.date, 'dayCommands');
+          chosen = kept ?? pick(state, [day], candidatesAt(day.date), clubAt(day.date), day.date);
           dayCommands[day.date] = chosen;
         }
         state = simulate(state, [day], chosen).state;
@@ -223,9 +233,10 @@ export function createSolver(rules) {
       if (workdays.length > 0) {
         const pinned = input.weekCommands[week.start];
         let chosen = pinned;
-        if (pinned === undefined) {
+        if (chosen === undefined) {
           const date = workdays[0].date;
-          chosen = pick(state, workdays, candidatesAt(date), clubAt(date), date);
+          const kept = frozen(date, week.start, 'weekCommands');
+          chosen = kept ?? pick(state, workdays, candidatesAt(date), clubAt(date), date);
           weekCommands[week.start] = chosen;
         }
         state = simulate(state, workdays, chosen).state;
@@ -237,7 +248,7 @@ export function createSolver(rules) {
     // 滚动时域贪心对"终点长什么样"没有直接视野，只靠加权引导。
     // 没达标就再收一次尾：从后往前逐个槽位试遍候选，只接受让整份规划更好的改动。
     if (planner(input, { assignments }).goals.ok) return assignments;
-    return repair(input, assignments);
+    return repair(input, assignments, frozenBefore);
   }
 
   /**
@@ -299,8 +310,13 @@ export function createSolver(rules) {
     };
   }
 
-  return function solve(input) {
-    const assignments = search(input);
+  /**
+   * @param options.previous  上一份日程；配合 fromDate 用来冻结前缀
+   * @param options.fromDate  重算起点（含）。这一天之前的决定原样保留，
+   *                          之后的重新排。不传就是整份重排。
+   */
+  return function solve(input, { previous = null, fromDate = null } = {}) {
+    const assignments = search(input, fromDate, previous);
     if (planner(input, { assignments }).goals.ok) return assignments;
     return { ...assignments, diagnosis: diagnose(input) };
   };
@@ -320,7 +336,7 @@ export function createSolver(rules) {
     return score;
   }
 
-  function repair(input, assignments) {
+  function repair(input, assignments, frozenBefore = null) {
     const clubAt = createClubLookup(input);
     const calendar = buildCalendar(rules, input, assignments);
     const dayByDate = new Map(calendar.days.map((day) => [day.date, day]));
@@ -339,7 +355,9 @@ export function createSolver(rules) {
         const days = week.days.map((date) => dayByDate.get(date));
         const workdays = days.filter((day) => !day.isRestDay);
 
-        if (workdays.length > 0 && input.weekCommands[week.start] === undefined) {
+        const weekDate = workdays[0]?.date;
+        const weekFrozen = frozenBefore !== null && weekDate !== undefined && weekDate < frozenBefore;
+        if (workdays.length > 0 && !weekFrozen && input.weekCommands[week.start] === undefined) {
           const date = workdays[0].date;
           const original = assignments.weekCommands[week.start];
           for (const id of candidatesAt(date)) {
@@ -357,6 +375,7 @@ export function createSolver(rules) {
 
         for (const day of days) {
           if (!day.isRestDay || !day.isSettled) continue;
+          if (frozenBefore !== null && day.date < frozenBefore) continue;
           if (input.dayCommands[day.date] !== undefined) continue;
           const original = assignments.dayCommands[day.date];
           for (const id of candidatesAt(day.date)) {

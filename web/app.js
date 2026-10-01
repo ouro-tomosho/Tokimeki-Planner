@@ -6,6 +6,7 @@
 
 import rules from '../data/rules.json';
 import { resolveCommand } from '../src/calendar.js';
+import { weekStartOf } from '../src/dates.js';
 import { availableCommandIds, createClubLookup } from '../src/clubs.js';
 import { attributeById, attributeIds } from '../src/lookup.js';
 import { defaultInput, fromJson, toJson } from '../src/input.js';
@@ -16,7 +17,15 @@ const UNSET = '';
 const EMPTY = '__empty__';
 const NO_CLUB = '__no_club__';
 
-const state = { input: defaultInput(rules), requestId: 0, daysByDate: new Map(), assignments: null, solving: false };
+const state = {
+  input: defaultInput(rules),
+  requestId: 0,
+  daysByDate: new Map(),
+  assignments: null,
+  solving: false,
+  // 下一次求解从哪一天起重算；null = 整份重排。改一处只影响它之后的部分（票 07）。
+  fromDate: null,
+};
 const pending = new Map();
 const inlinePlan = createPlanner(rules);
 const inlineSolve = createSolver(rules);
@@ -113,24 +122,24 @@ function requestPlan(input) {
   });
 }
 
-function runSolveOnMainThread(input) {
+function runSolveOnMainThread(input, options) {
   try {
-    return { ok: true, assignments: inlineSolve(input) };
+    return { ok: true, assignments: inlineSolve(input, options) };
   } catch (error) {
     return { ok: false, error: error.message };
   }
 }
 
-function requestSolve(input) {
-  if (workerUnavailable || !worker) return Promise.resolve(runSolveOnMainThread(input));
+function requestSolve(input, options) {
+  if (workerUnavailable || !worker) return Promise.resolve(runSolveOnMainThread(input, options));
 
   const id = ++state.requestId;
   return new Promise((resolve) => {
     pending.set(id, resolve);
-    worker.postMessage({ id, type: 'solve', input });
+    worker.postMessage({ id, type: 'solve', input, ...options });
   }).then((reply) => {
     if (!reply.fallback) return reply;
-    return runSolveOnMainThread(input);
+    return runSolveOnMainThread(input, options);
   });
 }
 
@@ -907,8 +916,16 @@ async function generate() {
   $('btn-plan').disabled = true;
   setStatus('求解中…');
 
+  // 有重算起点就冻结它之前的部分：使用者之前的安排不该因为改了一处就整体翻新。
+  const options =
+    state.fromDate === null
+      ? {}
+      : { previous: state.assignments, fromDate: state.fromDate };
+  const recomputedFrom = state.fromDate;
+  state.fromDate = null;
+
   try {
-    const reply = await requestSolve(state.input);
+    const reply = await requestSolve(state.input, options);
     if (reply.cancelled) {
       setStatus('已取消计算。');
       return;
@@ -919,6 +936,9 @@ async function generate() {
     }
     state.assignments = reply.assignments;
     await runPlan();
+    if (recomputedFrom) {
+      setStatus(`已从 ${recomputedFrom} 起重算——之前的安排原样保留。`);
+    }
   } finally {
     state.solving = false;
     $('btn-cancel').hidden = true;
@@ -984,18 +1004,23 @@ $('calendar').addEventListener('change', (event) => {
 
   if (action === 'rest') {
     state.input.restDays = toggleInList(state.input.restDays, control.dataset.date, control.checked);
+    state.fromDate = weekStartOf(control.dataset.date);
   } else if (action === 'skip') {
     state.input.skippedDays = toggleInList(
       state.input.skippedDays,
       control.dataset.date,
       control.checked,
     );
+    state.fromDate = weekStartOf(control.dataset.date);
   } else if (action === 'week-command') {
     setMapEntry(state.input.weekCommands, control.dataset.week, control.value);
+    state.fromDate = control.dataset.week;
   } else if (action === 'day-command') {
     setMapEntry(state.input.dayCommands, control.dataset.date, control.value);
+    state.fromDate = weekStartOf(control.dataset.date);
   } else if (action === 'club-change') {
     setClubChange(control.dataset.week, control.value);
+    state.fromDate = control.dataset.week;
   } else {
     return;
   }

@@ -1,10 +1,15 @@
 // 使用者输入的形状与校验。JSON 只承载输入，不承载结果。
 //
-// weekCommands / dayCommands 用「显式的 null」表示空过，用「键不存在」表示
-// 尚未指定（交由求解器决定）。这两种状态必须能穿过 JSON 往返而不被混淆。
+// 约定：`weekCommands` 的键是**周锚点**，即该自然周的周日；`dayCommands` 的键是
+// 某个休息日的日期。同一个周日可以既是一个周锚点、又拥有自己的日指令——这两者
+// 并存是正确模型，不是冲突。
+//
+// 用「显式的 null」表示空过，用「键不存在」表示尚未指定（交由求解器决定）。
+// 这两种状态必须能穿过 JSON 往返而不被混淆。
 
-import { attributeIds } from './rules.js';
-import { isDate } from './dates.js';
+import { isDate, weekdayOf } from './dates.js';
+import { goalProblems, miniGoalProblems } from './goals.js';
+import { attributeIds } from './lookup.js';
 
 export const CURRENT_VERSION = 1;
 
@@ -52,25 +57,39 @@ export function validateInput(input, rules) {
   const clubIds = new Set(rules.clubs.map((c) => c.id));
   const ceId = rules.clubExperience.id;
 
+  // version 不在票 01 列举的输入字段里，是刻意加的：这份 JSON 会随后续票继续长大，
+  // 没有版本号就无法在格式变化时给出可读的拒绝理由，只能报一堆形状错误。
   if (input.version !== CURRENT_VERSION) {
     problems.push(`版本号不受支持：${input.version}`);
   }
 
+  const { start, lastSettlement } = rules.timeline;
+  const inTimeline = (date) => isDate(date) && date >= start && date <= lastSettlement;
+
   if (!isDate(input.startDate)) {
     problems.push(`startDate 格式错误：${input.startDate}`);
-  } else if (input.startDate < rules.timeline.start || input.startDate > rules.timeline.lastSettlement) {
+  } else if (!inTimeline(input.startDate)) {
     problems.push(`startDate 超出时间轴：${input.startDate}`);
   }
 
   checkAttributes(input, rules, problems);
-  checkGoals(input.globalConstraints, 'globalConstraints', attributeIdSet, false, ceId, problems);
-  checkGoals(input.endingGoals, 'endingGoals', attributeIdSet, false, ceId, problems);
-  checkMiniGoals(input.miniGoals, attributeIdSet, ceId, problems);
-  checkClub(input, clubIds, problems);
-  checkCommandMap('weekCommands', input.weekCommands, commandIds, problems);
-  checkCommandMap('dayCommands', input.dayCommands, commandIds, problems);
-  checkDates('restDays', input.restDays, problems);
-  checkDates('skippedDays', input.skippedDays, problems);
+
+  const goalContext = {
+    attributeIds: attributeIdSet,
+    clubExperienceId: ceId,
+    allowClubExperience: false,
+  };
+  problems.push(...goalProblems(input.globalConstraints, 'globalConstraints', goalContext));
+  problems.push(...goalProblems(input.endingGoals, 'endingGoals', goalContext));
+  problems.push(
+    ...miniGoalProblems(input.miniGoals, 'miniGoals', { ...goalContext, allowClubExperience: true }),
+  );
+
+  checkClub(input, clubIds, inTimeline, problems);
+  checkWeekCommands(input.weekCommands, commandIds, inTimeline, problems);
+  checkDayCommands(input.dayCommands, commandIds, inTimeline, problems);
+  checkDayList('restDays', input.restDays, inTimeline, problems);
+  checkDayList('skippedDays', input.skippedDays, inTimeline, problems);
 
   return problems;
 }
@@ -96,40 +115,7 @@ function checkAttributes(input, rules, problems) {
   }
 }
 
-function checkGoals(list, label, attributeIdSet, allowClubExperience, ceId, problems) {
-  if (!Array.isArray(list)) {
-    problems.push(`${label} 必须是数组`);
-    return;
-  }
-  for (const goal of list) {
-    if (!attributeIdSet.has(goal?.attribute) && !(allowClubExperience && goal?.attribute === ceId)) {
-      problems.push(`${label} 引用了未知属性 ${goal?.attribute}`);
-    }
-    if (goal?.op !== '>=' && goal?.op !== '<') problems.push(`${label} 的 op 非法：${goal?.op}`);
-    if (!Number.isInteger(goal?.value)) problems.push(`${label} 的 value 必须是整数`);
-  }
-}
-
-function checkMiniGoals(list, attributeIdSet, ceId, problems) {
-  if (!Array.isArray(list)) {
-    problems.push('miniGoals 必须是数组');
-    return;
-  }
-  for (const goal of list) {
-    if (!isDate(goal?.deadline)) problems.push(`miniGoals 的截止日期格式错误：${goal?.deadline}`);
-    if (!Array.isArray(goal?.attributes) || goal.attributes.length === 0) {
-      problems.push('miniGoals 的属性集合不能为空');
-    } else {
-      for (const id of goal.attributes) {
-        if (!attributeIdSet.has(id) && id !== ceId) problems.push(`miniGoals 引用了未知属性 ${id}`);
-      }
-    }
-    if (goal?.op !== '>=' && goal?.op !== '<') problems.push(`miniGoals 的 op 非法：${goal?.op}`);
-    if (!Number.isInteger(goal?.value)) problems.push('miniGoals 的 value 必须是整数');
-  }
-}
-
-function checkClub(input, clubIds, problems) {
+function checkClub(input, clubIds, inTimeline, problems) {
   if (input.initialClub !== null && !clubIds.has(input.initialClub)) {
     problems.push(`initialClub 引用了未知社团 ${input.initialClub}`);
   }
@@ -139,30 +125,51 @@ function checkClub(input, clubIds, problems) {
   }
   for (const change of input.clubChanges) {
     if (!isDate(change?.date)) problems.push(`clubChanges 的日期格式错误：${change?.date}`);
+    else if (!inTimeline(change.date)) problems.push(`clubChanges 的日期超出时间轴：${change.date}`);
     if (change?.clubId !== null && !clubIds.has(change?.clubId)) {
       problems.push(`clubChanges 引用了未知社团 ${change?.clubId}`);
     }
   }
 }
 
-function checkCommandMap(label, map, commandIds, problems) {
+function checkWeekCommands(map, commandIds, inTimeline, problems) {
   if (!map || typeof map !== 'object' || Array.isArray(map)) {
-    problems.push(`缺少 ${label}`);
+    problems.push('缺少 weekCommands');
     return;
   }
   for (const [date, commandId] of Object.entries(map)) {
-    if (!isDate(date)) problems.push(`${label} 的键不是日期：${date}`);
+    if (!isDate(date)) {
+      problems.push(`weekCommands 的键不是日期：${date}`);
+    } else if (!inTimeline(date)) {
+      problems.push(`weekCommands 的日期超出时间轴：${date}`);
+    } else if (weekdayOf(date) !== 0) {
+      problems.push(`weekCommands 的键必须是周日（周锚点）：${date}`);
+    }
     if (commandId === null) continue;
-    if (!commandIds.has(commandId)) problems.push(`${label} 引用了未知指令 ${commandId}`);
+    if (!commandIds.has(commandId)) problems.push(`weekCommands 引用了未知指令 ${commandId}`);
   }
 }
 
-function checkDates(label, list, problems) {
+function checkDayCommands(map, commandIds, inTimeline, problems) {
+  if (!map || typeof map !== 'object' || Array.isArray(map)) {
+    problems.push('缺少 dayCommands');
+    return;
+  }
+  for (const [date, commandId] of Object.entries(map)) {
+    if (!isDate(date)) problems.push(`dayCommands 的键不是日期：${date}`);
+    else if (!inTimeline(date)) problems.push(`dayCommands 的日期超出时间轴：${date}`);
+    if (commandId === null) continue;
+    if (!commandIds.has(commandId)) problems.push(`dayCommands 引用了未知指令 ${commandId}`);
+  }
+}
+
+function checkDayList(label, list, inTimeline, problems) {
   if (!Array.isArray(list)) {
     problems.push(`${label} 必须是数组`);
     return;
   }
   for (const date of list) {
     if (!isDate(date)) problems.push(`${label} 含非法日期：${date}`);
+    else if (!inTimeline(date)) problems.push(`${label} 的日期超出时间轴：${date}`);
   }
 }

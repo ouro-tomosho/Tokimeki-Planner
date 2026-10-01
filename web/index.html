@@ -2,7 +2,6 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Tokimeki-Planner</title>
     <style>
       :root {
@@ -133,15 +132,6 @@
       #result-body dd {
         margin: 0;
       }
-      @media (max-width: 780px) {
-        main {
-          grid-template-columns: 1fr;
-        }
-        #input-pane {
-          border-right: none;
-          border-bottom: 1px solid var(--line);
-        }
-      }
     </style>
   </head>
   <body>
@@ -155,7 +145,7 @@
         <h2>起点</h2>
         <div class="field">
           <span>当前日期</span>
-          <input id="start-date" type="date" min="1995-04-04" max="1998-02-28" />
+          <input id="start-date" type="date" />
         </div>
 
         <h2 style="margin-top: 18px">当前属性</h2>

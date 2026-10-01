@@ -2,7 +2,6 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Tokimeki-Planner</title>
     <style>
       :root {
@@ -133,15 +132,6 @@
       #result-body dd {
         margin: 0;
       }
-      @media (max-width: 780px) {
-        main {
-          grid-template-columns: 1fr;
-        }
-        #input-pane {
-          border-right: none;
-          border-bottom: 1px solid var(--line);
-        }
-      }
     </style>
   </head>
   <body>
@@ -155,7 +145,7 @@
         <h2>起点</h2>
         <div class="field">
           <span>当前日期</span>
-          <input id="start-date" type="date" min="1995-04-04" max="1998-02-28" />
+          <input id="start-date" type="date" />
         </div>
 
         <h2 style="margin-top: 18px">当前属性</h2>
@@ -181,45 +171,120 @@
 
     <script id="worker-source" type="text/plain">
 const __ns = {};
-__ns["data/rules.json"] = {"timeline":{"start":"1995-04-04","end":"1998-03-01","lastSettlement":"1998-02-28"},"clubUnlockDate":"1995-04-09","fixedPointScale":1000000,"restDayBonus":{"daily":4,"club":6,"restCommandNegative":4},"clubExperienceGain":{"weekday":1,"restDay":6},"clubExperience":{"id":"clubExperience","name":"社团经验","min":0,"max":999},"attributes":[{"id":"tili","name":"体力","direction":"up","min":0,"max":999,"default":100},{"id":"wenke","name":"文科","direction":"up","min":0,"max":999,"default":40},{"id":"like","name":"理科","direction":"up","min":0,"max":999,"default":40},{"id":"yishu","name":"艺术","direction":"up","min":0,"max":999,"default":40},{"id":"yundong","name":"运动","direction":"up","min":0,"max":999,"default":40},{"id":"renyuan","name":"人缘","direction":"up","min":0,"max":999,"default":32},{"id":"rongzi","name":"容姿","direction":"up","min":0,"max":999,"default":60},{"id":"yili","name":"毅力","direction":"up","min":0,"max":999,"default":5},{"id":"yali","name":"压力","direction":"down","min":0,"max":999,"default":0}],"clubs":[{"id":"wenyishe","name":"文艺社"},{"id":"yanjushe","name":"演剧社"},{"id":"kexueshe","name":"科学社"},{"id":"diannaoshe","name":"电脑社"},{"id":"meishushe","name":"美术社"},{"id":"guanyueshe","name":"管乐社"},{"id":"bangqiushe","name":"棒球社"},{"id":"zuqiushe","name":"足球社"},{"id":"wangqiushe","name":"网球社"},{"id":"youyongshe","name":"游泳社"},{"id":"lanqiushe","name":"篮球社"}],"commands":[{"id":"c-yandu-wenke","name":"研读文科","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"clubExperienceGain":0,"effects":{"tili":-0.8,"wenke":0.9,"like":0.1,"yishu":0.1,"yundong":-0.4,"renyuan":0.3,"rongzi":-0.3,"yili":-0.1,"yali":0.8}},{"id":"c-yandu-like","name":"研读理科","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"clubExperienceGain":0,"effects":{"tili":-0.8,"wenke":0.1,"like":0.9,"yishu":0.1,"yundong":-0.8,"renyuan":0.1,"rongzi":-0.4,"yili":0.3,"yali":0.3}},{"id":"c-peiyang-yishu","name":"培养艺术气质","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"clubExperienceGain":0,"effects":{"tili":-0.8,"wenke":0.1,"like":0.1,"yishu":0.9,"yundong":-0.4,"renyuan":0.1,"rongzi":-0.1,"yili":-0.1,"yali":-0.3}},{"id":"c-yundong","name":"运动","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"clubExperienceGain":0,"effects":{"tili":-2.4,"wenke":-0.1,"like":-0.1,"yishu":-0.1,"yundong":3.3,"renyuan":0.1,"rongzi":-0.4,"yili":1.4,"yali":0.1}},{"id":"c-xianliao","name":"和同学闲聊","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"clubExperienceGain":0,"effects":{"tili":-1.2,"wenke":-0.3,"like":-0.3,"yishu":-0.3,"yundong":0.2,"renyuan":1.5,"rongzi":0.8,"yili":-0.4,"yali":-0.9}},{"id":"c-zhengli-yirong","name":"整理仪容","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"clubExperienceGain":0,"effects":{"tili":-0.6,"wenke":-0.1,"like":-0.1,"yishu":-0.1,"yundong":-0.1,"renyuan":0.5,"rongzi":2.1,"yili":-0.6,"yali":0.1}},{"id":"c-xiuxi","name":"休息","kind":"daily","clubId":null,"isRestCommand":true,"successRate":1,"clubExperienceGain":0,"effects":{"tili":3.1,"wenke":0,"like":0,"yishu":0,"yundong":0,"renyuan":-0.6,"rongzi":-0.8,"yili":-0.1,"yali":-2.9}},{"id":"c-wenyishe","name":"文艺社","kind":"club","clubId":"wenyishe","isRestCommand":false,"successRate":0.63,"clubExperienceGain":1,"effects":{"tili":-0.8,"wenke":0.8,"like":0.3,"yishu":0.1,"yundong":0,"renyuan":0.1,"rongzi":-0.3,"yili":-0.1,"yali":1.1}},{"id":"c-yanjushe","name":"演剧社","kind":"club","clubId":"yanjushe","isRestCommand":false,"successRate":0.63,"clubExperienceGain":1,"effects":{"tili":-0.9,"wenke":0.9,"like":0,"yishu":0.4,"yundong":0.1,"renyuan":0.1,"rongzi":-0.1,"yili":0.1,"yali":1.1}},{"id":"c-kexueshe","name":"科学社","kind":"club","clubId":"kexueshe","isRestCommand":false,"successRate":0.63,"clubExperienceGain":1,"effects":{"tili":-0.8,"wenke":0.1,"like":0.9,"yishu":0.3,"yundong":0,"renyuan":0.1,"rongzi":-0.3,"yili":0.3,"yali":1.4}},{"id":"c-diannaoshe","name":"电脑社","kind":"club","clubId":"diannaoshe","isRestCommand":false,"successRate":0.63,"clubExperienceGain":1,"effects":{"tili":-0.8,"wenke":0.1,"like":0.7,"yishu":0.3,"yundong":0,"renyuan":0.2,"rongzi":-0.4,"yili":0.2,"yali":1.8}},{"id":"c-meishushe","name":"美术社","kind":"club","clubId":"meishushe","isRestCommand":false,"successRate":0.63,"clubExperienceGain":1,"effects":{"tili":-0.9,"wenke":0.1,"like":0,"yishu":0.9,"yundong":0.1,"renyuan":0.1,"rongzi":-0.1,"yili":-0.1,"yali":0.9}},{"id":"c-guanyueshe","name":"管乐社","kind":"club","clubId":"guanyueshe","isRestCommand":false,"successRate":0.63,"clubExperienceGain":1,"effects":{"tili":-0.9,"wenke":0.1,"like":0.1,"yishu":0.9,"yundong":0.2,"renyuan":0.1,"rongzi":-0.2,"yili":0.1,"yali":0.9}},{"id":"c-bangqiushe","name":"棒球社","kind":"club","clubId":"bangqiushe","isRestCommand":false,"successRate":0.63,"clubExperienceGain":1,"effects":{"tili":-1.9,"wenke":-0.1,"like":-0.1,"yishu":-0.1,"yundong":0.9,"renyuan":0.1,"rongzi":-0.3,"yili":0.3,"yali":0.2}},{"id":"c-zuqiushe","name":"足球社","kind":"club","clubId":"zuqiushe","isRestCommand":false,"successRate":0.63,"clubExperienceGain":1,"effects":{"tili":-1.9,"wenke":-0.1,"like":-0.1,"yishu":-0.1,"yundong":0.9,"renyuan":0.1,"rongzi":-0.2,"yili":0.7,"yali":0.3}},{"id":"c-wangqiushe","name":"网球社","kind":"club","clubId":"wangqiushe","isRestCommand":false,"successRate":0.63,"clubExperienceGain":1,"effects":{"tili":-1.6,"wenke":-0.1,"like":-0.1,"yishu":0,"yundong":0.8,"renyuan":0.1,"rongzi":-0.1,"yili":0.6,"yali":0.5}},{"id":"c-youyongshe","name":"游泳社","kind":"club","clubId":"youyongshe","isRestCommand":false,"successRate":0.63,"clubExperienceGain":1,"effects":{"tili":-1.9,"wenke":-0.1,"like":-0.1,"yishu":0,"yundong":0.9,"renyuan":0,"rongzi":-0.1,"yili":0.7,"yali":0.2}},{"id":"c-lanqiushe","name":"篮球社","kind":"club","clubId":"lanqiushe","isRestCommand":false,"successRate":0.63,"clubExperienceGain":1,"effects":{"tili":-1.8,"wenke":-0.1,"like":-0.1,"yishu":-0.1,"yundong":0.9,"renyuan":-0.1,"rongzi":-0.2,"yili":0.6,"yali":0.4}}],"defaultStart":{"tili":100,"wenke":40,"like":40,"yishu":40,"yundong":40,"renyuan":32,"rongzi":60,"yili":5,"yali":0},"defaultGlobalConstraints":[{"attribute":"tili","op":">=","value":20},{"attribute":"renyuan","op":">=","value":100},{"attribute":"rongzi","op":">=","value":35},{"attribute":"yali","op":"<","value":70}],"defaultEndingGoals":[{"attribute":"tili","op":">=","value":50},{"attribute":"wenke","op":">=","value":130},{"attribute":"like","op":">=","value":130},{"attribute":"yishu","op":">=","value":130},{"attribute":"yundong","op":">=","value":130},{"attribute":"renyuan","op":">=","value":120},{"attribute":"rongzi","op":">=","value":100},{"attribute":"yili","op":">=","value":100},{"attribute":"yali","op":"<","value":50}],"defaultMiniGoals":[{"deadline":"1998-02-23","attributes":["wenke","like","yishu"],"op":">=","value":561},{"deadline":"1998-01-02","attributes":["clubExperience"],"op":">=","value":380}]};
+__ns["data/rules.json"] = {"timeline":{"start":"1995-04-04","end":"1998-03-01","lastSettlement":"1998-02-28"},"clubUnlockDate":"1995-04-09","fixedPointScale":1000000,"restDayBonus":{"daily":4,"club":6,"restCommandNegative":4},"clubExperienceGain":{"weekday":1,"restDay":6},"clubExperience":{"id":"clubExperience","name":"社团经验","min":0,"max":999},"attributes":[{"id":"stamina","name":"体力","direction":"up","min":0,"max":999},{"id":"literature","name":"文科","direction":"up","min":0,"max":999},{"id":"science","name":"理科","direction":"up","min":0,"max":999},{"id":"art","name":"艺术","direction":"up","min":0,"max":999},{"id":"sports","name":"运动","direction":"up","min":0,"max":999},{"id":"popularity","name":"人缘","direction":"up","min":0,"max":999},{"id":"appearance","name":"容姿","direction":"up","min":0,"max":999},{"id":"grit","name":"毅力","direction":"up","min":0,"max":999},{"id":"stress","name":"压力","direction":"down","min":0,"max":999}],"clubs":[{"id":"literature-club","name":"文艺社"},{"id":"drama-club","name":"演剧社"},{"id":"science-club","name":"科学社"},{"id":"computer-club","name":"电脑社"},{"id":"art-club","name":"美术社"},{"id":"brass-band-club","name":"管乐社"},{"id":"baseball-club","name":"棒球社"},{"id":"soccer-club","name":"足球社"},{"id":"tennis-club","name":"网球社"},{"id":"swimming-club","name":"游泳社"},{"id":"basketball-club","name":"篮球社"}],"commands":[{"id":"cmd-study-literature","name":"研读文科","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.9,"science":0.1,"art":0.1,"sports":-0.4,"popularity":0.3,"appearance":-0.3,"grit":-0.1,"stress":0.8}},{"id":"cmd-study-science","name":"研读理科","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.1,"science":0.9,"art":0.1,"sports":-0.8,"popularity":0.1,"appearance":-0.4,"grit":0.3,"stress":0.3}},{"id":"cmd-practice-art","name":"培养艺术气质","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.1,"science":0.1,"art":0.9,"sports":-0.4,"popularity":0.1,"appearance":-0.1,"grit":-0.1,"stress":-0.3}},{"id":"cmd-exercise","name":"运动","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-2.4,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":3.3,"popularity":0.1,"appearance":-0.4,"grit":1.4,"stress":0.1}},{"id":"cmd-chat","name":"和同学闲聊","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.2,"literature":-0.3,"science":-0.3,"art":-0.3,"sports":0.2,"popularity":1.5,"appearance":0.8,"grit":-0.4,"stress":-0.9}},{"id":"cmd-groom","name":"整理仪容","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.6,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":-0.1,"popularity":0.5,"appearance":2.1,"grit":-0.6,"stress":0.1}},{"id":"cmd-rest","name":"休息","kind":"daily","clubId":null,"isRestCommand":true,"successRate":1,"effects":{"stamina":3.1,"literature":0,"science":0,"art":0,"sports":0,"popularity":-0.6,"appearance":-0.8,"grit":-0.1,"stress":-2.9}},{"id":"cmd-club-literature","name":"文艺社","kind":"club","clubId":"literature-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.8,"science":0.3,"art":0.1,"sports":0,"popularity":0.1,"appearance":-0.3,"grit":-0.1,"stress":1.1}},{"id":"cmd-club-drama","name":"演剧社","kind":"club","clubId":"drama-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.9,"literature":0.9,"science":0,"art":0.4,"sports":0.1,"popularity":0.1,"appearance":-0.1,"grit":0.1,"stress":1.1}},{"id":"cmd-club-science","name":"科学社","kind":"club","clubId":"science-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.1,"science":0.9,"art":0.3,"sports":0,"popularity":0.1,"appearance":-0.3,"grit":0.3,"stress":1.4}},{"id":"cmd-club-computer","name":"电脑社","kind":"club","clubId":"computer-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.1,"science":0.7,"art":0.3,"sports":0,"popularity":0.2,"appearance":-0.4,"grit":0.2,"stress":1.8}},{"id":"cmd-club-art","name":"美术社","kind":"club","clubId":"art-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.9,"literature":0.1,"science":0,"art":0.9,"sports":0.1,"popularity":0.1,"appearance":-0.1,"grit":-0.1,"stress":0.9}},{"id":"cmd-club-brass-band","name":"管乐社","kind":"club","clubId":"brass-band-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.9,"literature":0.1,"science":0.1,"art":0.9,"sports":0.2,"popularity":0.1,"appearance":-0.2,"grit":0.1,"stress":0.9}},{"id":"cmd-club-baseball","name":"棒球社","kind":"club","clubId":"baseball-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.9,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":0.9,"popularity":0.1,"appearance":-0.3,"grit":0.3,"stress":0.2}},{"id":"cmd-club-soccer","name":"足球社","kind":"club","clubId":"soccer-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.9,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":0.9,"popularity":0.1,"appearance":-0.2,"grit":0.7,"stress":0.3}},{"id":"cmd-club-tennis","name":"网球社","kind":"club","clubId":"tennis-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.6,"literature":-0.1,"science":-0.1,"art":0,"sports":0.8,"popularity":0.1,"appearance":-0.1,"grit":0.6,"stress":0.5}},{"id":"cmd-club-swimming","name":"游泳社","kind":"club","clubId":"swimming-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.9,"literature":-0.1,"science":-0.1,"art":0,"sports":0.9,"popularity":0,"appearance":-0.1,"grit":0.7,"stress":0.2}},{"id":"cmd-club-basketball","name":"篮球社","kind":"club","clubId":"basketball-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.8,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":0.9,"popularity":-0.1,"appearance":-0.2,"grit":0.6,"stress":0.4}}],"defaultStart":{"stamina":100,"literature":40,"science":40,"art":40,"sports":40,"popularity":32,"appearance":60,"grit":5,"stress":0},"defaultGlobalConstraints":[{"attribute":"stamina","op":">=","value":20},{"attribute":"popularity","op":">=","value":100},{"attribute":"appearance","op":">=","value":35},{"attribute":"stress","op":"<","value":70}],"defaultEndingGoals":[{"attribute":"stamina","op":">=","value":50},{"attribute":"literature","op":">=","value":130},{"attribute":"science","op":">=","value":130},{"attribute":"art","op":">=","value":130},{"attribute":"sports","op":">=","value":130},{"attribute":"popularity","op":">=","value":120},{"attribute":"appearance","op":">=","value":100},{"attribute":"grit","op":">=","value":100},{"attribute":"stress","op":"<","value":50}],"defaultMiniGoals":[{"deadline":"1998-02-23","attributes":["literature","science","art"],"op":">=","value":561},{"deadline":"1998-01-02","attributes":["clubExperience"],"op":">=","value":380}]};
 __ns["src/dates.js"] = (() => {
 // 日期表示：全项目统一用 `YYYY-MM-DD` 字符串，字典序即时间序。
+//
+// 除了形状，还要校验真实日历——`1995-13-45` 形状合法但不是日期。
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 function isDate(value) {
-  return typeof value === 'string' && DATE_PATTERN.test(value);
+  if (typeof value !== 'string' || !DATE_PATTERN.test(value)) return false;
+
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+  );
 }
-return { isDate };
+
+/** 星期序号：0 = 周日，6 = 周六。 */
+function weekdayOf(value) {
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+}
+return { isDate, weekdayOf };
+})();
+__ns["src/goals.js"] = (() => {
+const { isDate } = __ns["src/dates.js"];
+// 目标与约束的形状校验。规则文件的默认目标与使用者输入的目标，
+// 判定规则完全相同，因此共用同一套实现。
+
+
+
+const OPS = new Set(['>=', '<']);
+
+function isKnownTarget(id, context) {
+  if (context.attributeIds.has(id)) return true;
+  return context.allowClubExperience && id === context.clubExperienceId;
+}
+
+/** 逐项的 `(属性, 方向, 阈值)` 目标：用于全局约束与结局目标。 */
+function goalProblems(list, label, context) {
+  if (!Array.isArray(list)) return [`${label} 必须是数组`];
+
+  const problems = [];
+  for (const goal of list) {
+    if (!isKnownTarget(goal?.attribute, context)) {
+      problems.push(`${label} 引用了未知属性 ${goal?.attribute}`);
+    }
+    if (!OPS.has(goal?.op)) problems.push(`${label} 的 op 非法：${goal?.op}`);
+    if (!Number.isInteger(goal?.value)) problems.push(`${label} 的 value 必须是整数`);
+  }
+  return problems;
+}
+
+/** 带截止日期、阈值作用于属性集合求和的小目标。 */
+function miniGoalProblems(list, label, context) {
+  if (!Array.isArray(list)) return [`${label} 必须是数组`];
+
+  const problems = [];
+  for (const goal of list) {
+    if (!isDate(goal?.deadline)) problems.push(`${label} 的截止日期格式错误：${goal?.deadline}`);
+
+    if (!Array.isArray(goal?.attributes) || goal.attributes.length === 0) {
+      problems.push(`${label} 的属性集合不能为空`);
+    } else {
+      for (const id of goal.attributes) {
+        if (!isKnownTarget(id, context)) problems.push(`${label} 引用了未知属性 ${id}`);
+      }
+    }
+
+    if (!OPS.has(goal?.op)) problems.push(`${label} 的 op 非法：${goal?.op}`);
+    if (!Number.isInteger(goal?.value)) problems.push(`${label} 的 value 必须是整数`);
+  }
+  return problems;
+}
+return { goalProblems, miniGoalProblems };
 })();
 __ns["src/rules.js"] = (() => {
 const { isDate } = __ns["src/dates.js"];
-// 领域规则的纯函数视图：校验与查询。
+const { goalProblems, miniGoalProblems } = __ns["src/goals.js"];
+// 规则文件（data/rules.json）的自校验。
 //
-// 数据只存在于 data/rules.json 一处权威来源；本模块不加载数据，只接收它，
-// 因此同一份代码既能在内联 Worker 中运行，也能在 Node 测试里直接 import。
+// 这是数据的唯一权威来源的看门人：字段之间的一致性（社团指令必属某社团、
+// 休息指令必不失手、每条指令的变动必覆盖全部属性）都在这里兜住。
+
 
 
 
 const DIRECTIONS = new Set(['up', 'down']);
 const KINDS = new Set(['daily', 'club']);
-const OPS = new Set(['>=', '<']);
 
 /** @returns {string[]} 问题列表，空数组表示通过 */
 function validateRules(rules) {
+  if (!rules || typeof rules !== 'object') return ['规则不是对象'];
+
   const problems = [];
   const note = (msg) => problems.push(msg);
-
-  if (!rules || typeof rules !== 'object') return ['规则不是对象'];
 
   checkAttributes(rules, note);
   checkClubs(rules, note);
   checkCommands(rules, note);
-  checkGoals(rules, note);
+  checkGoals(rules, problems);
   checkTimeline(rules, note);
   checkConstants(rules, note);
 
   return problems;
+}
+
+function goalContext(rules, allowClubExperience) {
+  return {
+    attributeIds: new Set((rules.attributes ?? []).map((a) => a.id)),
+    clubExperienceId: rules.clubExperience?.id,
+    allowClubExperience,
+  };
 }
 
 function checkAttributes(rules, note) {
@@ -237,9 +302,6 @@ function checkAttributes(rules, note) {
     if (!Number.isFinite(a.min) || !Number.isFinite(a.max) || a.min >= a.max) {
       note(`属性 ${a.id} 的上下限非法`);
     }
-    if (Number.isFinite(a.default) && (a.default < a.min || a.default > a.max)) {
-      note(`属性 ${a.id} 的默认值越界`);
-    }
   }
   if (attributes.filter((a) => a.direction === 'down').length !== 1) {
     note('必须恰好有一项负面指标');
@@ -252,15 +314,16 @@ function checkAttributes(rules, note) {
     note(`社团经验 id 与属性 id 冲突：${ce.id}`);
   }
 
+  // 默认起点是起始属性的唯一权威；属性表里不再重复存一份默认值。
   const start = rules.defaultStart;
   if (!start || typeof start !== 'object') {
     note('defaultStart 缺失');
     return;
   }
   for (const a of attributes) {
-    const v = start[a.id];
-    if (!Number.isFinite(v)) note(`defaultStart 缺少属性 ${a.id}`);
-    else if (v < a.min || v > a.max) note(`defaultStart 的 ${a.id} 越界`);
+    const value = start[a.id];
+    if (!Number.isFinite(value)) note(`defaultStart 缺少属性 ${a.id}`);
+    else if (value < a.min || value > a.max) note(`defaultStart 的 ${a.id} 越界`);
   }
   for (const key of Object.keys(start)) {
     if (!attributes.some((a) => a.id === key)) note(`defaultStart 含未知属性 ${key}`);
@@ -303,17 +366,15 @@ function checkCommands(rules, note) {
       note(`日常指令 ${c.id} 不应绑定社团`);
     }
 
+    // 社团经验的增量由 kind 与 clubExperienceGain 常量共同决定，指令表里不重复记录。
+    //
+    // isRestCommand 与 successRate 记录的是两件事——「这是那条特殊指令」与「它的
+    // 成功率是多少」——两条都保留，由下面这行校验锁死一致性，不允许只留一条。
     if (c.isRestCommand) {
       restCommands += 1;
       if (c.successRate !== 1) note(`休息指令 ${c.id} 的成功率必须为 1`);
     } else if (!(c.successRate > 0 && c.successRate < 1)) {
       note(`指令 ${c.id} 的成功率必须在 (0,1) 之间：${c.successRate}`);
-    }
-
-    if (!Number.isInteger(c.clubExperienceGain) || c.clubExperienceGain < 0) {
-      note(`指令 ${c.id} 的社团经验增量非法`);
-    } else if ((c.kind === 'club') !== (c.clubExperienceGain > 0)) {
-      note(`指令 ${c.id} 的社团经验增量与指令类型不符`);
     }
 
     if (!c.effects || typeof c.effects !== 'object') {
@@ -332,43 +393,13 @@ function checkCommands(rules, note) {
   if (restCommands !== 1) note(`必须恰好有一条休息指令，实际 ${restCommands} 条`);
 }
 
-function checkGoals(rules, note) {
-  const attributeIds = new Set((rules.attributes ?? []).map((a) => a.id));
-  const ceId = rules.clubExperience?.id;
-
-  const checkList = (list, label, allowClubExperience) => {
-    if (!Array.isArray(list)) {
-      note(`${label} 必须是数组`);
-      return;
-    }
-    for (const g of list) {
-      if (!attributeIds.has(g.attribute) && !(allowClubExperience && g.attribute === ceId)) {
-        note(`${label} 引用了未知属性 ${g.attribute}`);
-      }
-      if (!OPS.has(g.op)) note(`${label} 的 op 非法：${g.op}`);
-      if (!Number.isFinite(g.value)) note(`${label} 的 value 不是数字`);
-    }
-  };
-
-  checkList(rules.defaultGlobalConstraints, 'defaultGlobalConstraints', false);
-  checkList(rules.defaultEndingGoals, 'defaultEndingGoals', false);
-
-  if (!Array.isArray(rules.defaultMiniGoals)) {
-    note('defaultMiniGoals 必须是数组');
-    return;
-  }
-  for (const g of rules.defaultMiniGoals) {
-    if (!isDate(g.deadline)) note(`小目标截止日期格式错误：${g.deadline}`);
-    if (!Array.isArray(g.attributes) || g.attributes.length === 0) {
-      note(`小目标 ${g.deadline} 的属性集合为空`);
-      continue;
-    }
-    for (const id of g.attributes) {
-      if (!attributeIds.has(id) && id !== ceId) note(`小目标含未知属性 ${id}`);
-    }
-    if (!OPS.has(g.op)) note(`小目标的 op 非法：${g.op}`);
-    if (!Number.isFinite(g.value)) note('小目标的 value 不是数字');
-  }
+function checkGoals(rules, problems) {
+  const plain = goalContext(rules, false);
+  problems.push(...goalProblems(rules.defaultGlobalConstraints, 'defaultGlobalConstraints', plain));
+  problems.push(...goalProblems(rules.defaultEndingGoals, 'defaultEndingGoals', plain));
+  problems.push(
+    ...miniGoalProblems(rules.defaultMiniGoals, 'defaultMiniGoals', goalContext(rules, true)),
+  );
 }
 
 function checkTimeline(rules, note) {
@@ -411,85 +442,59 @@ function checkConstants(rules, note) {
     }
   }
 }
-
-function findOrThrow(list, id, label) {
-  const hit = list?.find((x) => x.id === id);
-  if (!hit) throw new Error(`未知${label}：${id}`);
-  return hit;
-}
-
-function attributeById(rules, id) {
-  return findOrThrow(rules.attributes, id, '属性');
-}
-
-function commandById(rules, id) {
-  return findOrThrow(rules.commands, id, '指令');
-}
-
-function clubById(rules, id) {
-  return findOrThrow(rules.clubs, id, '社团');
-}
-
-function attributeIds(rules) {
-  return rules.attributes.map((a) => a.id);
-}
-
-function allTrackedIds(rules) {
-  return [...attributeIds(rules), rules.clubExperience.id];
-}
-
-function commandsByKind(rules, kind) {
-  return rules.commands.filter((c) => c.kind === kind);
-}
-return { validateRules, attributeById, commandById, clubById, attributeIds, allTrackedIds, commandsByKind };
+return { validateRules };
 })();
 __ns["src/plan.js"] = (() => {
 const { validateRules } = __ns["src/rules.js"];
 // 规划入口。
 //
-// 这是预先商定的最高层接缝：plan(input) → PlanResult。
-// 本票只交付骨架，求解器在后续票中接入；因此这里诚实返回 status: 'skeleton'，
-// 而不是伪造一份日程。
+// 预先商定的接缝是 `plan(input) → PlanResult`：规则在**构造时**注入，所以调用方
+// 只传 input。本票只交付骨架——求解器在后续票中接入，因此现在诚实地返回
+// status: 'skeleton'，而不是伪造一份日程。
 
 
 
-function plan(input, rules) {
-  const problems = validateRules(rules);
-  if (problems.length > 0) {
-    return { ok: false, status: 'invalid-rules', problems };
-  }
+function createPlanner(rules) {
+  const ruleProblems = validateRules(rules);
 
-  return {
-    ok: true,
-    status: 'skeleton',
-    note: '骨架已就绪：数据、时间轴与内联 Worker 通道均已打通，求解器将在后续票中接入。',
-    startDate: input.startDate,
-    endDate: rules.timeline.end,
-    lastSettlement: rules.timeline.lastSettlement,
-    ruleSummary: {
-      attributes: rules.attributes.length,
-      commands: rules.commands.length,
-      clubs: rules.clubs.length,
-      fixedPointScale: rules.fixedPointScale,
-    },
+  return function plan(input) {
+    if (ruleProblems.length > 0) {
+      return { ok: false, status: 'invalid-rules', problems: ruleProblems };
+    }
+
+    return {
+      ok: true,
+      status: 'skeleton',
+      note: '骨架已就绪：数据、时间轴与内联 Worker 通道均已打通，求解器将在后续票中接入。',
+      startDate: input.startDate,
+      endDate: rules.timeline.end,
+      lastSettlement: rules.timeline.lastSettlement,
+      ruleSummary: {
+        attributes: rules.attributes.length,
+        commands: rules.commands.length,
+        clubs: rules.clubs.length,
+      },
+    };
   };
 }
-return { plan };
+return { createPlanner };
 })();
 __ns["web/worker.js"] = (() => {
 const rules = __ns["data/rules.json"];
-const { plan } = __ns["src/plan.js"];
+const { createPlanner } = __ns["src/plan.js"];
 // 内联 Web Worker：主线程只收输入、只渲染结果，规划在后台线程里跑。
 
 
 
+
+const plan = createPlanner(rules);
 
 self.onmessage = (event) => {
   const message = event.data || {};
   const id = message.id;
   try {
     if (message.type === 'plan') {
-      self.postMessage({ id, ok: true, result: plan(message.input, rules) });
+      self.postMessage({ id, ok: true, result: plan(message.input) });
       return;
     }
     self.postMessage({ id, ok: false, error: `未知消息类型：${message.type}` });
@@ -504,236 +509,9 @@ return {  };
 
     <script>
 const __ns = {};
-__ns["data/rules.json"] = {"timeline":{"start":"1995-04-04","end":"1998-03-01","lastSettlement":"1998-02-28"},"clubUnlockDate":"1995-04-09","fixedPointScale":1000000,"restDayBonus":{"daily":4,"club":6,"restCommandNegative":4},"clubExperienceGain":{"weekday":1,"restDay":6},"clubExperience":{"id":"clubExperience","name":"社团经验","min":0,"max":999},"attributes":[{"id":"tili","name":"体力","direction":"up","min":0,"max":999,"default":100},{"id":"wenke","name":"文科","direction":"up","min":0,"max":999,"default":40},{"id":"like","name":"理科","direction":"up","min":0,"max":999,"default":40},{"id":"yishu","name":"艺术","direction":"up","min":0,"max":999,"default":40},{"id":"yundong","name":"运动","direction":"up","min":0,"max":999,"default":40},{"id":"renyuan","name":"人缘","direction":"up","min":0,"max":999,"default":32},{"id":"rongzi","name":"容姿","direction":"up","min":0,"max":999,"default":60},{"id":"yili","name":"毅力","direction":"up","min":0,"max":999,"default":5},{"id":"yali","name":"压力","direction":"down","min":0,"max":999,"default":0}],"clubs":[{"id":"wenyishe","name":"文艺社"},{"id":"yanjushe","name":"演剧社"},{"id":"kexueshe","name":"科学社"},{"id":"diannaoshe","name":"电脑社"},{"id":"meishushe","name":"美术社"},{"id":"guanyueshe","name":"管乐社"},{"id":"bangqiushe","name":"棒球社"},{"id":"zuqiushe","name":"足球社"},{"id":"wangqiushe","name":"网球社"},{"id":"youyongshe","name":"游泳社"},{"id":"lanqiushe","name":"篮球社"}],"commands":[{"id":"c-yandu-wenke","name":"研读文科","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"clubExperienceGain":0,"effects":{"tili":-0.8,"wenke":0.9,"like":0.1,"yishu":0.1,"yundong":-0.4,"renyuan":0.3,"rongzi":-0.3,"yili":-0.1,"yali":0.8}},{"id":"c-yandu-like","name":"研读理科","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"clubExperienceGain":0,"effects":{"tili":-0.8,"wenke":0.1,"like":0.9,"yishu":0.1,"yundong":-0.8,"renyuan":0.1,"rongzi":-0.4,"yili":0.3,"yali":0.3}},{"id":"c-peiyang-yishu","name":"培养艺术气质","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"clubExperienceGain":0,"effects":{"tili":-0.8,"wenke":0.1,"like":0.1,"yishu":0.9,"yundong":-0.4,"renyuan":0.1,"rongzi":-0.1,"yili":-0.1,"yali":-0.3}},{"id":"c-yundong","name":"运动","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"clubExperienceGain":0,"effects":{"tili":-2.4,"wenke":-0.1,"like":-0.1,"yishu":-0.1,"yundong":3.3,"renyuan":0.1,"rongzi":-0.4,"yili":1.4,"yali":0.1}},{"id":"c-xianliao","name":"和同学闲聊","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"clubExperienceGain":0,"effects":{"tili":-1.2,"wenke":-0.3,"like":-0.3,"yishu":-0.3,"yundong":0.2,"renyuan":1.5,"rongzi":0.8,"yili":-0.4,"yali":-0.9}},{"id":"c-zhengli-yirong","name":"整理仪容","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"clubExperienceGain":0,"effects":{"tili":-0.6,"wenke":-0.1,"like":-0.1,"yishu":-0.1,"yundong":-0.1,"renyuan":0.5,"rongzi":2.1,"yili":-0.6,"yali":0.1}},{"id":"c-xiuxi","name":"休息","kind":"daily","clubId":null,"isRestCommand":true,"successRate":1,"clubExperienceGain":0,"effects":{"tili":3.1,"wenke":0,"like":0,"yishu":0,"yundong":0,"renyuan":-0.6,"rongzi":-0.8,"yili":-0.1,"yali":-2.9}},{"id":"c-wenyishe","name":"文艺社","kind":"club","clubId":"wenyishe","isRestCommand":false,"successRate":0.63,"clubExperienceGain":1,"effects":{"tili":-0.8,"wenke":0.8,"like":0.3,"yishu":0.1,"yundong":0,"renyuan":0.1,"rongzi":-0.3,"yili":-0.1,"yali":1.1}},{"id":"c-yanjushe","name":"演剧社","kind":"club","clubId":"yanjushe","isRestCommand":false,"successRate":0.63,"clubExperienceGain":1,"effects":{"tili":-0.9,"wenke":0.9,"like":0,"yishu":0.4,"yundong":0.1,"renyuan":0.1,"rongzi":-0.1,"yili":0.1,"yali":1.1}},{"id":"c-kexueshe","name":"科学社","kind":"club","clubId":"kexueshe","isRestCommand":false,"successRate":0.63,"clubExperienceGain":1,"effects":{"tili":-0.8,"wenke":0.1,"like":0.9,"yishu":0.3,"yundong":0,"renyuan":0.1,"rongzi":-0.3,"yili":0.3,"yali":1.4}},{"id":"c-diannaoshe","name":"电脑社","kind":"club","clubId":"diannaoshe","isRestCommand":false,"successRate":0.63,"clubExperienceGain":1,"effects":{"tili":-0.8,"wenke":0.1,"like":0.7,"yishu":0.3,"yundong":0,"renyuan":0.2,"rongzi":-0.4,"yili":0.2,"yali":1.8}},{"id":"c-meishushe","name":"美术社","kind":"club","clubId":"meishushe","isRestCommand":false,"successRate":0.63,"clubExperienceGain":1,"effects":{"tili":-0.9,"wenke":0.1,"like":0,"yishu":0.9,"yundong":0.1,"renyuan":0.1,"rongzi":-0.1,"yili":-0.1,"yali":0.9}},{"id":"c-guanyueshe","name":"管乐社","kind":"club","clubId":"guanyueshe","isRestCommand":false,"successRate":0.63,"clubExperienceGain":1,"effects":{"tili":-0.9,"wenke":0.1,"like":0.1,"yishu":0.9,"yundong":0.2,"renyuan":0.1,"rongzi":-0.2,"yili":0.1,"yali":0.9}},{"id":"c-bangqiushe","name":"棒球社","kind":"club","clubId":"bangqiushe","isRestCommand":false,"successRate":0.63,"clubExperienceGain":1,"effects":{"tili":-1.9,"wenke":-0.1,"like":-0.1,"yishu":-0.1,"yundong":0.9,"renyuan":0.1,"rongzi":-0.3,"yili":0.3,"yali":0.2}},{"id":"c-zuqiushe","name":"足球社","kind":"club","clubId":"zuqiushe","isRestCommand":false,"successRate":0.63,"clubExperienceGain":1,"effects":{"tili":-1.9,"wenke":-0.1,"like":-0.1,"yishu":-0.1,"yundong":0.9,"renyuan":0.1,"rongzi":-0.2,"yili":0.7,"yali":0.3}},{"id":"c-wangqiushe","name":"网球社","kind":"club","clubId":"wangqiushe","isRestCommand":false,"successRate":0.63,"clubExperienceGain":1,"effects":{"tili":-1.6,"wenke":-0.1,"like":-0.1,"yishu":0,"yundong":0.8,"renyuan":0.1,"rongzi":-0.1,"yili":0.6,"yali":0.5}},{"id":"c-youyongshe","name":"游泳社","kind":"club","clubId":"youyongshe","isRestCommand":false,"successRate":0.63,"clubExperienceGain":1,"effects":{"tili":-1.9,"wenke":-0.1,"like":-0.1,"yishu":0,"yundong":0.9,"renyuan":0,"rongzi":-0.1,"yili":0.7,"yali":0.2}},{"id":"c-lanqiushe","name":"篮球社","kind":"club","clubId":"lanqiushe","isRestCommand":false,"successRate":0.63,"clubExperienceGain":1,"effects":{"tili":-1.8,"wenke":-0.1,"like":-0.1,"yishu":-0.1,"yundong":0.9,"renyuan":-0.1,"rongzi":-0.2,"yili":0.6,"yali":0.4}}],"defaultStart":{"tili":100,"wenke":40,"like":40,"yishu":40,"yundong":40,"renyuan":32,"rongzi":60,"yili":5,"yali":0},"defaultGlobalConstraints":[{"attribute":"tili","op":">=","value":20},{"attribute":"renyuan","op":">=","value":100},{"attribute":"rongzi","op":">=","value":35},{"attribute":"yali","op":"<","value":70}],"defaultEndingGoals":[{"attribute":"tili","op":">=","value":50},{"attribute":"wenke","op":">=","value":130},{"attribute":"like","op":">=","value":130},{"attribute":"yishu","op":">=","value":130},{"attribute":"yundong","op":">=","value":130},{"attribute":"renyuan","op":">=","value":120},{"attribute":"rongzi","op":">=","value":100},{"attribute":"yili","op":">=","value":100},{"attribute":"yali","op":"<","value":50}],"defaultMiniGoals":[{"deadline":"1998-02-23","attributes":["wenke","like","yishu"],"op":">=","value":561},{"deadline":"1998-01-02","attributes":["clubExperience"],"op":">=","value":380}]};
-__ns["src/dates.js"] = (() => {
-// 日期表示：全项目统一用 `YYYY-MM-DD` 字符串，字典序即时间序。
-
-const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-
-function isDate(value) {
-  return typeof value === 'string' && DATE_PATTERN.test(value);
-}
-return { isDate };
-})();
-__ns["src/rules.js"] = (() => {
-const { isDate } = __ns["src/dates.js"];
-// 领域规则的纯函数视图：校验与查询。
-//
-// 数据只存在于 data/rules.json 一处权威来源；本模块不加载数据，只接收它，
-// 因此同一份代码既能在内联 Worker 中运行，也能在 Node 测试里直接 import。
-
-
-
-const DIRECTIONS = new Set(['up', 'down']);
-const KINDS = new Set(['daily', 'club']);
-const OPS = new Set(['>=', '<']);
-
-/** @returns {string[]} 问题列表，空数组表示通过 */
-function validateRules(rules) {
-  const problems = [];
-  const note = (msg) => problems.push(msg);
-
-  if (!rules || typeof rules !== 'object') return ['规则不是对象'];
-
-  checkAttributes(rules, note);
-  checkClubs(rules, note);
-  checkCommands(rules, note);
-  checkGoals(rules, note);
-  checkTimeline(rules, note);
-  checkConstants(rules, note);
-
-  return problems;
-}
-
-function checkAttributes(rules, note) {
-  const attributes = rules.attributes;
-  if (!Array.isArray(attributes) || attributes.length === 0) {
-    note('attributes 必须是非空数组');
-    return;
-  }
-  const seen = new Set();
-  for (const a of attributes) {
-    if (seen.has(a.id)) note(`属性 id 重复：${a.id}`);
-    seen.add(a.id);
-    if (typeof a.name !== 'string' || a.name === '') note(`属性 ${a.id} 缺少名称`);
-    if (!DIRECTIONS.has(a.direction)) note(`属性 ${a.id} 的 direction 非法：${a.direction}`);
-    if (!Number.isFinite(a.min) || !Number.isFinite(a.max) || a.min >= a.max) {
-      note(`属性 ${a.id} 的上下限非法`);
-    }
-    if (Number.isFinite(a.default) && (a.default < a.min || a.default > a.max)) {
-      note(`属性 ${a.id} 的默认值越界`);
-    }
-  }
-  if (attributes.filter((a) => a.direction === 'down').length !== 1) {
-    note('必须恰好有一项负面指标');
-  }
-
-  const ce = rules.clubExperience;
-  if (!ce || typeof ce.id !== 'string') {
-    note('clubExperience 元数据缺失');
-  } else if (attributes.some((a) => a.id === ce.id)) {
-    note(`社团经验 id 与属性 id 冲突：${ce.id}`);
-  }
-
-  const start = rules.defaultStart;
-  if (!start || typeof start !== 'object') {
-    note('defaultStart 缺失');
-    return;
-  }
-  for (const a of attributes) {
-    const v = start[a.id];
-    if (!Number.isFinite(v)) note(`defaultStart 缺少属性 ${a.id}`);
-    else if (v < a.min || v > a.max) note(`defaultStart 的 ${a.id} 越界`);
-  }
-  for (const key of Object.keys(start)) {
-    if (!attributes.some((a) => a.id === key)) note(`defaultStart 含未知属性 ${key}`);
-  }
-}
-
-function checkClubs(rules, note) {
-  if (!Array.isArray(rules.clubs) || rules.clubs.length === 0) {
-    note('clubs 必须是非空数组');
-    return;
-  }
-  const seen = new Set();
-  for (const c of rules.clubs) {
-    if (seen.has(c.id)) note(`社团 id 重复：${c.id}`);
-    seen.add(c.id);
-    if (typeof c.name !== 'string' || c.name === '') note(`社团 ${c.id} 缺少名称`);
-  }
-}
-
-function checkCommands(rules, note) {
-  const commands = rules.commands;
-  if (!Array.isArray(commands) || commands.length === 0) {
-    note('commands 必须是非空数组');
-    return;
-  }
-  const attributeIds = new Set((rules.attributes ?? []).map((a) => a.id));
-  const clubIds = new Set(rules.clubs.map((c) => c.id));
-  const seen = new Set();
-  let restCommands = 0;
-
-  for (const c of commands) {
-    if (seen.has(c.id)) note(`指令 id 重复：${c.id}`);
-    seen.add(c.id);
-    if (typeof c.name !== 'string' || c.name === '') note(`指令 ${c.id} 缺少名称`);
-    if (!KINDS.has(c.kind)) note(`指令 ${c.id} 的 kind 非法：${c.kind}`);
-
-    if (c.kind === 'club') {
-      if (!clubIds.has(c.clubId)) note(`指令 ${c.id} 的社团未知：${c.clubId}`);
-    } else if (c.clubId != null) {
-      note(`日常指令 ${c.id} 不应绑定社团`);
-    }
-
-    if (c.isRestCommand) {
-      restCommands += 1;
-      if (c.successRate !== 1) note(`休息指令 ${c.id} 的成功率必须为 1`);
-    } else if (!(c.successRate > 0 && c.successRate < 1)) {
-      note(`指令 ${c.id} 的成功率必须在 (0,1) 之间：${c.successRate}`);
-    }
-
-    if (!Number.isInteger(c.clubExperienceGain) || c.clubExperienceGain < 0) {
-      note(`指令 ${c.id} 的社团经验增量非法`);
-    } else if ((c.kind === 'club') !== (c.clubExperienceGain > 0)) {
-      note(`指令 ${c.id} 的社团经验增量与指令类型不符`);
-    }
-
-    if (!c.effects || typeof c.effects !== 'object') {
-      note(`指令 ${c.id} 缺少 effects`);
-      continue;
-    }
-    for (const key of Object.keys(c.effects)) {
-      if (!attributeIds.has(key)) note(`指令 ${c.id} 含未知属性 ${key}`);
-      if (!Number.isFinite(c.effects[key])) note(`指令 ${c.id} 的 ${key} 变动不是数字`);
-    }
-    for (const id of attributeIds) {
-      if (!(id in c.effects)) note(`指令 ${c.id} 缺少属性 ${id} 的变动`);
-    }
-  }
-
-  if (restCommands !== 1) note(`必须恰好有一条休息指令，实际 ${restCommands} 条`);
-}
-
-function checkGoals(rules, note) {
-  const attributeIds = new Set((rules.attributes ?? []).map((a) => a.id));
-  const ceId = rules.clubExperience?.id;
-
-  const checkList = (list, label, allowClubExperience) => {
-    if (!Array.isArray(list)) {
-      note(`${label} 必须是数组`);
-      return;
-    }
-    for (const g of list) {
-      if (!attributeIds.has(g.attribute) && !(allowClubExperience && g.attribute === ceId)) {
-        note(`${label} 引用了未知属性 ${g.attribute}`);
-      }
-      if (!OPS.has(g.op)) note(`${label} 的 op 非法：${g.op}`);
-      if (!Number.isFinite(g.value)) note(`${label} 的 value 不是数字`);
-    }
-  };
-
-  checkList(rules.defaultGlobalConstraints, 'defaultGlobalConstraints', false);
-  checkList(rules.defaultEndingGoals, 'defaultEndingGoals', false);
-
-  if (!Array.isArray(rules.defaultMiniGoals)) {
-    note('defaultMiniGoals 必须是数组');
-    return;
-  }
-  for (const g of rules.defaultMiniGoals) {
-    if (!isDate(g.deadline)) note(`小目标截止日期格式错误：${g.deadline}`);
-    if (!Array.isArray(g.attributes) || g.attributes.length === 0) {
-      note(`小目标 ${g.deadline} 的属性集合为空`);
-      continue;
-    }
-    for (const id of g.attributes) {
-      if (!attributeIds.has(id) && id !== ceId) note(`小目标含未知属性 ${id}`);
-    }
-    if (!OPS.has(g.op)) note(`小目标的 op 非法：${g.op}`);
-    if (!Number.isFinite(g.value)) note('小目标的 value 不是数字');
-  }
-}
-
-function checkTimeline(rules, note) {
-  const t = rules.timeline;
-  if (!t) {
-    note('timeline 缺失');
-    return;
-  }
-  for (const key of ['start', 'end', 'lastSettlement']) {
-    if (!isDate(t[key])) note(`timeline.${key} 格式错误：${t[key]}`);
-  }
-  if (isDate(t.start) && isDate(t.lastSettlement) && t.start >= t.lastSettlement) {
-    note('timeline.start 必须早于 lastSettlement');
-  }
-  if (isDate(t.lastSettlement) && isDate(t.end) && t.lastSettlement >= t.end) {
-    note('timeline.lastSettlement 必须早于 end');
-  }
-  if (!isDate(rules.clubUnlockDate)) {
-    note(`clubUnlockDate 格式错误：${rules.clubUnlockDate}`);
-  }
-}
-
-function checkConstants(rules, note) {
-  if (!Number.isInteger(rules.fixedPointScale) || rules.fixedPointScale <= 0) {
-    note('fixedPointScale 必须是正整数');
-  }
-  const bonus = rules.restDayBonus;
-  if (!bonus) {
-    note('restDayBonus 缺失');
-  } else {
-    for (const key of ['daily', 'club', 'restCommandNegative']) {
-      if (!Number.isFinite(bonus[key]) || bonus[key] < 1) note(`restDayBonus.${key} 非法`);
-    }
-  }
-  const gain = rules.clubExperienceGain;
-  if (!gain) note('clubExperienceGain 缺失');
-  else {
-    for (const key of ['weekday', 'restDay']) {
-      if (!Number.isInteger(gain[key]) || gain[key] < 0) note(`clubExperienceGain.${key} 非法`);
-    }
-  }
-}
+__ns["data/rules.json"] = {"timeline":{"start":"1995-04-04","end":"1998-03-01","lastSettlement":"1998-02-28"},"clubUnlockDate":"1995-04-09","fixedPointScale":1000000,"restDayBonus":{"daily":4,"club":6,"restCommandNegative":4},"clubExperienceGain":{"weekday":1,"restDay":6},"clubExperience":{"id":"clubExperience","name":"社团经验","min":0,"max":999},"attributes":[{"id":"stamina","name":"体力","direction":"up","min":0,"max":999},{"id":"literature","name":"文科","direction":"up","min":0,"max":999},{"id":"science","name":"理科","direction":"up","min":0,"max":999},{"id":"art","name":"艺术","direction":"up","min":0,"max":999},{"id":"sports","name":"运动","direction":"up","min":0,"max":999},{"id":"popularity","name":"人缘","direction":"up","min":0,"max":999},{"id":"appearance","name":"容姿","direction":"up","min":0,"max":999},{"id":"grit","name":"毅力","direction":"up","min":0,"max":999},{"id":"stress","name":"压力","direction":"down","min":0,"max":999}],"clubs":[{"id":"literature-club","name":"文艺社"},{"id":"drama-club","name":"演剧社"},{"id":"science-club","name":"科学社"},{"id":"computer-club","name":"电脑社"},{"id":"art-club","name":"美术社"},{"id":"brass-band-club","name":"管乐社"},{"id":"baseball-club","name":"棒球社"},{"id":"soccer-club","name":"足球社"},{"id":"tennis-club","name":"网球社"},{"id":"swimming-club","name":"游泳社"},{"id":"basketball-club","name":"篮球社"}],"commands":[{"id":"cmd-study-literature","name":"研读文科","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.9,"science":0.1,"art":0.1,"sports":-0.4,"popularity":0.3,"appearance":-0.3,"grit":-0.1,"stress":0.8}},{"id":"cmd-study-science","name":"研读理科","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.1,"science":0.9,"art":0.1,"sports":-0.8,"popularity":0.1,"appearance":-0.4,"grit":0.3,"stress":0.3}},{"id":"cmd-practice-art","name":"培养艺术气质","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.1,"science":0.1,"art":0.9,"sports":-0.4,"popularity":0.1,"appearance":-0.1,"grit":-0.1,"stress":-0.3}},{"id":"cmd-exercise","name":"运动","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-2.4,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":3.3,"popularity":0.1,"appearance":-0.4,"grit":1.4,"stress":0.1}},{"id":"cmd-chat","name":"和同学闲聊","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.2,"literature":-0.3,"science":-0.3,"art":-0.3,"sports":0.2,"popularity":1.5,"appearance":0.8,"grit":-0.4,"stress":-0.9}},{"id":"cmd-groom","name":"整理仪容","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.6,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":-0.1,"popularity":0.5,"appearance":2.1,"grit":-0.6,"stress":0.1}},{"id":"cmd-rest","name":"休息","kind":"daily","clubId":null,"isRestCommand":true,"successRate":1,"effects":{"stamina":3.1,"literature":0,"science":0,"art":0,"sports":0,"popularity":-0.6,"appearance":-0.8,"grit":-0.1,"stress":-2.9}},{"id":"cmd-club-literature","name":"文艺社","kind":"club","clubId":"literature-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.8,"science":0.3,"art":0.1,"sports":0,"popularity":0.1,"appearance":-0.3,"grit":-0.1,"stress":1.1}},{"id":"cmd-club-drama","name":"演剧社","kind":"club","clubId":"drama-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.9,"literature":0.9,"science":0,"art":0.4,"sports":0.1,"popularity":0.1,"appearance":-0.1,"grit":0.1,"stress":1.1}},{"id":"cmd-club-science","name":"科学社","kind":"club","clubId":"science-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.1,"science":0.9,"art":0.3,"sports":0,"popularity":0.1,"appearance":-0.3,"grit":0.3,"stress":1.4}},{"id":"cmd-club-computer","name":"电脑社","kind":"club","clubId":"computer-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.1,"science":0.7,"art":0.3,"sports":0,"popularity":0.2,"appearance":-0.4,"grit":0.2,"stress":1.8}},{"id":"cmd-club-art","name":"美术社","kind":"club","clubId":"art-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.9,"literature":0.1,"science":0,"art":0.9,"sports":0.1,"popularity":0.1,"appearance":-0.1,"grit":-0.1,"stress":0.9}},{"id":"cmd-club-brass-band","name":"管乐社","kind":"club","clubId":"brass-band-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.9,"literature":0.1,"science":0.1,"art":0.9,"sports":0.2,"popularity":0.1,"appearance":-0.2,"grit":0.1,"stress":0.9}},{"id":"cmd-club-baseball","name":"棒球社","kind":"club","clubId":"baseball-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.9,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":0.9,"popularity":0.1,"appearance":-0.3,"grit":0.3,"stress":0.2}},{"id":"cmd-club-soccer","name":"足球社","kind":"club","clubId":"soccer-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.9,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":0.9,"popularity":0.1,"appearance":-0.2,"grit":0.7,"stress":0.3}},{"id":"cmd-club-tennis","name":"网球社","kind":"club","clubId":"tennis-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.6,"literature":-0.1,"science":-0.1,"art":0,"sports":0.8,"popularity":0.1,"appearance":-0.1,"grit":0.6,"stress":0.5}},{"id":"cmd-club-swimming","name":"游泳社","kind":"club","clubId":"swimming-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.9,"literature":-0.1,"science":-0.1,"art":0,"sports":0.9,"popularity":0,"appearance":-0.1,"grit":0.7,"stress":0.2}},{"id":"cmd-club-basketball","name":"篮球社","kind":"club","clubId":"basketball-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.8,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":0.9,"popularity":-0.1,"appearance":-0.2,"grit":0.6,"stress":0.4}}],"defaultStart":{"stamina":100,"literature":40,"science":40,"art":40,"sports":40,"popularity":32,"appearance":60,"grit":5,"stress":0},"defaultGlobalConstraints":[{"attribute":"stamina","op":">=","value":20},{"attribute":"popularity","op":">=","value":100},{"attribute":"appearance","op":">=","value":35},{"attribute":"stress","op":"<","value":70}],"defaultEndingGoals":[{"attribute":"stamina","op":">=","value":50},{"attribute":"literature","op":">=","value":130},{"attribute":"science","op":">=","value":130},{"attribute":"art","op":">=","value":130},{"attribute":"sports","op":">=","value":130},{"attribute":"popularity","op":">=","value":120},{"attribute":"appearance","op":">=","value":100},{"attribute":"grit","op":">=","value":100},{"attribute":"stress","op":"<","value":50}],"defaultMiniGoals":[{"deadline":"1998-02-23","attributes":["literature","science","art"],"op":">=","value":561},{"deadline":"1998-01-02","attributes":["clubExperience"],"op":">=","value":380}]};
+__ns["src/lookup.js"] = (() => {
+// 领域对象的查询视图。校验在 rules.js，这里只负责按 id 取用。
 
 function findOrThrow(list, id, label) {
   const hit = list?.find((x) => x.id === id);
@@ -749,30 +527,100 @@ function commandById(rules, id) {
   return findOrThrow(rules.commands, id, '指令');
 }
 
-function clubById(rules, id) {
-  return findOrThrow(rules.clubs, id, '社团');
-}
-
 function attributeIds(rules) {
   return rules.attributes.map((a) => a.id);
 }
+return { attributeById, commandById, attributeIds };
+})();
+__ns["src/dates.js"] = (() => {
+// 日期表示：全项目统一用 `YYYY-MM-DD` 字符串，字典序即时间序。
+//
+// 除了形状，还要校验真实日历——`1995-13-45` 形状合法但不是日期。
 
-function allTrackedIds(rules) {
-  return [...attributeIds(rules), rules.clubExperience.id];
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+function isDate(value) {
+  if (typeof value !== 'string' || !DATE_PATTERN.test(value)) return false;
+
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+  );
 }
 
-function commandsByKind(rules, kind) {
-  return rules.commands.filter((c) => c.kind === kind);
+/** 星期序号：0 = 周日，6 = 周六。 */
+function weekdayOf(value) {
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
 }
-return { validateRules, attributeById, commandById, clubById, attributeIds, allTrackedIds, commandsByKind };
+return { isDate, weekdayOf };
+})();
+__ns["src/goals.js"] = (() => {
+const { isDate } = __ns["src/dates.js"];
+// 目标与约束的形状校验。规则文件的默认目标与使用者输入的目标，
+// 判定规则完全相同，因此共用同一套实现。
+
+
+
+const OPS = new Set(['>=', '<']);
+
+function isKnownTarget(id, context) {
+  if (context.attributeIds.has(id)) return true;
+  return context.allowClubExperience && id === context.clubExperienceId;
+}
+
+/** 逐项的 `(属性, 方向, 阈值)` 目标：用于全局约束与结局目标。 */
+function goalProblems(list, label, context) {
+  if (!Array.isArray(list)) return [`${label} 必须是数组`];
+
+  const problems = [];
+  for (const goal of list) {
+    if (!isKnownTarget(goal?.attribute, context)) {
+      problems.push(`${label} 引用了未知属性 ${goal?.attribute}`);
+    }
+    if (!OPS.has(goal?.op)) problems.push(`${label} 的 op 非法：${goal?.op}`);
+    if (!Number.isInteger(goal?.value)) problems.push(`${label} 的 value 必须是整数`);
+  }
+  return problems;
+}
+
+/** 带截止日期、阈值作用于属性集合求和的小目标。 */
+function miniGoalProblems(list, label, context) {
+  if (!Array.isArray(list)) return [`${label} 必须是数组`];
+
+  const problems = [];
+  for (const goal of list) {
+    if (!isDate(goal?.deadline)) problems.push(`${label} 的截止日期格式错误：${goal?.deadline}`);
+
+    if (!Array.isArray(goal?.attributes) || goal.attributes.length === 0) {
+      problems.push(`${label} 的属性集合不能为空`);
+    } else {
+      for (const id of goal.attributes) {
+        if (!isKnownTarget(id, context)) problems.push(`${label} 引用了未知属性 ${id}`);
+      }
+    }
+
+    if (!OPS.has(goal?.op)) problems.push(`${label} 的 op 非法：${goal?.op}`);
+    if (!Number.isInteger(goal?.value)) problems.push(`${label} 的 value 必须是整数`);
+  }
+  return problems;
+}
+return { goalProblems, miniGoalProblems };
 })();
 __ns["src/input.js"] = (() => {
-const { attributeIds } = __ns["src/rules.js"];
-const { isDate } = __ns["src/dates.js"];
+const { isDate, weekdayOf } = __ns["src/dates.js"];
+const { goalProblems, miniGoalProblems } = __ns["src/goals.js"];
+const { attributeIds } = __ns["src/lookup.js"];
 // 使用者输入的形状与校验。JSON 只承载输入，不承载结果。
 //
-// weekCommands / dayCommands 用「显式的 null」表示空过，用「键不存在」表示
-// 尚未指定（交由求解器决定）。这两种状态必须能穿过 JSON 往返而不被混淆。
+// 约定：`weekCommands` 的键是**周锚点**，即该自然周的周日；`dayCommands` 的键是
+// 某个休息日的日期。同一个周日可以既是一个周锚点、又拥有自己的日指令——这两者
+// 并存是正确模型，不是冲突。
+//
+// 用「显式的 null」表示空过，用「键不存在」表示尚未指定（交由求解器决定）。
+// 这两种状态必须能穿过 JSON 往返而不被混淆。
+
 
 
 
@@ -823,25 +671,39 @@ function validateInput(input, rules) {
   const clubIds = new Set(rules.clubs.map((c) => c.id));
   const ceId = rules.clubExperience.id;
 
+  // version 不在票 01 列举的输入字段里，是刻意加的：这份 JSON 会随后续票继续长大，
+  // 没有版本号就无法在格式变化时给出可读的拒绝理由，只能报一堆形状错误。
   if (input.version !== CURRENT_VERSION) {
     problems.push(`版本号不受支持：${input.version}`);
   }
 
+  const { start, lastSettlement } = rules.timeline;
+  const inTimeline = (date) => isDate(date) && date >= start && date <= lastSettlement;
+
   if (!isDate(input.startDate)) {
     problems.push(`startDate 格式错误：${input.startDate}`);
-  } else if (input.startDate < rules.timeline.start || input.startDate > rules.timeline.lastSettlement) {
+  } else if (!inTimeline(input.startDate)) {
     problems.push(`startDate 超出时间轴：${input.startDate}`);
   }
 
   checkAttributes(input, rules, problems);
-  checkGoals(input.globalConstraints, 'globalConstraints', attributeIdSet, false, ceId, problems);
-  checkGoals(input.endingGoals, 'endingGoals', attributeIdSet, false, ceId, problems);
-  checkMiniGoals(input.miniGoals, attributeIdSet, ceId, problems);
-  checkClub(input, clubIds, problems);
-  checkCommandMap('weekCommands', input.weekCommands, commandIds, problems);
-  checkCommandMap('dayCommands', input.dayCommands, commandIds, problems);
-  checkDates('restDays', input.restDays, problems);
-  checkDates('skippedDays', input.skippedDays, problems);
+
+  const goalContext = {
+    attributeIds: attributeIdSet,
+    clubExperienceId: ceId,
+    allowClubExperience: false,
+  };
+  problems.push(...goalProblems(input.globalConstraints, 'globalConstraints', goalContext));
+  problems.push(...goalProblems(input.endingGoals, 'endingGoals', goalContext));
+  problems.push(
+    ...miniGoalProblems(input.miniGoals, 'miniGoals', { ...goalContext, allowClubExperience: true }),
+  );
+
+  checkClub(input, clubIds, inTimeline, problems);
+  checkWeekCommands(input.weekCommands, commandIds, inTimeline, problems);
+  checkDayCommands(input.dayCommands, commandIds, inTimeline, problems);
+  checkDayList('restDays', input.restDays, inTimeline, problems);
+  checkDayList('skippedDays', input.skippedDays, inTimeline, problems);
 
   return problems;
 }
@@ -867,40 +729,7 @@ function checkAttributes(input, rules, problems) {
   }
 }
 
-function checkGoals(list, label, attributeIdSet, allowClubExperience, ceId, problems) {
-  if (!Array.isArray(list)) {
-    problems.push(`${label} 必须是数组`);
-    return;
-  }
-  for (const goal of list) {
-    if (!attributeIdSet.has(goal?.attribute) && !(allowClubExperience && goal?.attribute === ceId)) {
-      problems.push(`${label} 引用了未知属性 ${goal?.attribute}`);
-    }
-    if (goal?.op !== '>=' && goal?.op !== '<') problems.push(`${label} 的 op 非法：${goal?.op}`);
-    if (!Number.isInteger(goal?.value)) problems.push(`${label} 的 value 必须是整数`);
-  }
-}
-
-function checkMiniGoals(list, attributeIdSet, ceId, problems) {
-  if (!Array.isArray(list)) {
-    problems.push('miniGoals 必须是数组');
-    return;
-  }
-  for (const goal of list) {
-    if (!isDate(goal?.deadline)) problems.push(`miniGoals 的截止日期格式错误：${goal?.deadline}`);
-    if (!Array.isArray(goal?.attributes) || goal.attributes.length === 0) {
-      problems.push('miniGoals 的属性集合不能为空');
-    } else {
-      for (const id of goal.attributes) {
-        if (!attributeIdSet.has(id) && id !== ceId) problems.push(`miniGoals 引用了未知属性 ${id}`);
-      }
-    }
-    if (goal?.op !== '>=' && goal?.op !== '<') problems.push(`miniGoals 的 op 非法：${goal?.op}`);
-    if (!Number.isInteger(goal?.value)) problems.push('miniGoals 的 value 必须是整数');
-  }
-}
-
-function checkClub(input, clubIds, problems) {
+function checkClub(input, clubIds, inTimeline, problems) {
   if (input.initialClub !== null && !clubIds.has(input.initialClub)) {
     problems.push(`initialClub 引用了未知社团 ${input.initialClub}`);
   }
@@ -910,40 +739,298 @@ function checkClub(input, clubIds, problems) {
   }
   for (const change of input.clubChanges) {
     if (!isDate(change?.date)) problems.push(`clubChanges 的日期格式错误：${change?.date}`);
+    else if (!inTimeline(change.date)) problems.push(`clubChanges 的日期超出时间轴：${change.date}`);
     if (change?.clubId !== null && !clubIds.has(change?.clubId)) {
       problems.push(`clubChanges 引用了未知社团 ${change?.clubId}`);
     }
   }
 }
 
-function checkCommandMap(label, map, commandIds, problems) {
+function checkWeekCommands(map, commandIds, inTimeline, problems) {
   if (!map || typeof map !== 'object' || Array.isArray(map)) {
-    problems.push(`缺少 ${label}`);
+    problems.push('缺少 weekCommands');
     return;
   }
   for (const [date, commandId] of Object.entries(map)) {
-    if (!isDate(date)) problems.push(`${label} 的键不是日期：${date}`);
+    if (!isDate(date)) {
+      problems.push(`weekCommands 的键不是日期：${date}`);
+    } else if (!inTimeline(date)) {
+      problems.push(`weekCommands 的日期超出时间轴：${date}`);
+    } else if (weekdayOf(date) !== 0) {
+      problems.push(`weekCommands 的键必须是周日（周锚点）：${date}`);
+    }
     if (commandId === null) continue;
-    if (!commandIds.has(commandId)) problems.push(`${label} 引用了未知指令 ${commandId}`);
+    if (!commandIds.has(commandId)) problems.push(`weekCommands 引用了未知指令 ${commandId}`);
   }
 }
 
-function checkDates(label, list, problems) {
+function checkDayCommands(map, commandIds, inTimeline, problems) {
+  if (!map || typeof map !== 'object' || Array.isArray(map)) {
+    problems.push('缺少 dayCommands');
+    return;
+  }
+  for (const [date, commandId] of Object.entries(map)) {
+    if (!isDate(date)) problems.push(`dayCommands 的键不是日期：${date}`);
+    else if (!inTimeline(date)) problems.push(`dayCommands 的日期超出时间轴：${date}`);
+    if (commandId === null) continue;
+    if (!commandIds.has(commandId)) problems.push(`dayCommands 引用了未知指令 ${commandId}`);
+  }
+}
+
+function checkDayList(label, list, inTimeline, problems) {
   if (!Array.isArray(list)) {
     problems.push(`${label} 必须是数组`);
     return;
   }
   for (const date of list) {
     if (!isDate(date)) problems.push(`${label} 含非法日期：${date}`);
+    else if (!inTimeline(date)) problems.push(`${label} 的日期超出时间轴：${date}`);
   }
 }
 return { CURRENT_VERSION, defaultInput, toJson, fromJson, validateInput };
 })();
+__ns["src/rules.js"] = (() => {
+const { isDate } = __ns["src/dates.js"];
+const { goalProblems, miniGoalProblems } = __ns["src/goals.js"];
+// 规则文件（data/rules.json）的自校验。
+//
+// 这是数据的唯一权威来源的看门人：字段之间的一致性（社团指令必属某社团、
+// 休息指令必不失手、每条指令的变动必覆盖全部属性）都在这里兜住。
+
+
+
+
+const DIRECTIONS = new Set(['up', 'down']);
+const KINDS = new Set(['daily', 'club']);
+
+/** @returns {string[]} 问题列表，空数组表示通过 */
+function validateRules(rules) {
+  if (!rules || typeof rules !== 'object') return ['规则不是对象'];
+
+  const problems = [];
+  const note = (msg) => problems.push(msg);
+
+  checkAttributes(rules, note);
+  checkClubs(rules, note);
+  checkCommands(rules, note);
+  checkGoals(rules, problems);
+  checkTimeline(rules, note);
+  checkConstants(rules, note);
+
+  return problems;
+}
+
+function goalContext(rules, allowClubExperience) {
+  return {
+    attributeIds: new Set((rules.attributes ?? []).map((a) => a.id)),
+    clubExperienceId: rules.clubExperience?.id,
+    allowClubExperience,
+  };
+}
+
+function checkAttributes(rules, note) {
+  const attributes = rules.attributes;
+  if (!Array.isArray(attributes) || attributes.length === 0) {
+    note('attributes 必须是非空数组');
+    return;
+  }
+  const seen = new Set();
+  for (const a of attributes) {
+    if (seen.has(a.id)) note(`属性 id 重复：${a.id}`);
+    seen.add(a.id);
+    if (typeof a.name !== 'string' || a.name === '') note(`属性 ${a.id} 缺少名称`);
+    if (!DIRECTIONS.has(a.direction)) note(`属性 ${a.id} 的 direction 非法：${a.direction}`);
+    if (!Number.isFinite(a.min) || !Number.isFinite(a.max) || a.min >= a.max) {
+      note(`属性 ${a.id} 的上下限非法`);
+    }
+  }
+  if (attributes.filter((a) => a.direction === 'down').length !== 1) {
+    note('必须恰好有一项负面指标');
+  }
+
+  const ce = rules.clubExperience;
+  if (!ce || typeof ce.id !== 'string') {
+    note('clubExperience 元数据缺失');
+  } else if (attributes.some((a) => a.id === ce.id)) {
+    note(`社团经验 id 与属性 id 冲突：${ce.id}`);
+  }
+
+  // 默认起点是起始属性的唯一权威；属性表里不再重复存一份默认值。
+  const start = rules.defaultStart;
+  if (!start || typeof start !== 'object') {
+    note('defaultStart 缺失');
+    return;
+  }
+  for (const a of attributes) {
+    const value = start[a.id];
+    if (!Number.isFinite(value)) note(`defaultStart 缺少属性 ${a.id}`);
+    else if (value < a.min || value > a.max) note(`defaultStart 的 ${a.id} 越界`);
+  }
+  for (const key of Object.keys(start)) {
+    if (!attributes.some((a) => a.id === key)) note(`defaultStart 含未知属性 ${key}`);
+  }
+}
+
+function checkClubs(rules, note) {
+  if (!Array.isArray(rules.clubs) || rules.clubs.length === 0) {
+    note('clubs 必须是非空数组');
+    return;
+  }
+  const seen = new Set();
+  for (const c of rules.clubs) {
+    if (seen.has(c.id)) note(`社团 id 重复：${c.id}`);
+    seen.add(c.id);
+    if (typeof c.name !== 'string' || c.name === '') note(`社团 ${c.id} 缺少名称`);
+  }
+}
+
+function checkCommands(rules, note) {
+  const commands = rules.commands;
+  if (!Array.isArray(commands) || commands.length === 0) {
+    note('commands 必须是非空数组');
+    return;
+  }
+  const attributeIds = new Set((rules.attributes ?? []).map((a) => a.id));
+  const clubIds = new Set(rules.clubs.map((c) => c.id));
+  const seen = new Set();
+  let restCommands = 0;
+
+  for (const c of commands) {
+    if (seen.has(c.id)) note(`指令 id 重复：${c.id}`);
+    seen.add(c.id);
+    if (typeof c.name !== 'string' || c.name === '') note(`指令 ${c.id} 缺少名称`);
+    if (!KINDS.has(c.kind)) note(`指令 ${c.id} 的 kind 非法：${c.kind}`);
+
+    if (c.kind === 'club') {
+      if (!clubIds.has(c.clubId)) note(`指令 ${c.id} 的社团未知：${c.clubId}`);
+    } else if (c.clubId != null) {
+      note(`日常指令 ${c.id} 不应绑定社团`);
+    }
+
+    // 社团经验的增量由 kind 与 clubExperienceGain 常量共同决定，指令表里不重复记录。
+    //
+    // isRestCommand 与 successRate 记录的是两件事——「这是那条特殊指令」与「它的
+    // 成功率是多少」——两条都保留，由下面这行校验锁死一致性，不允许只留一条。
+    if (c.isRestCommand) {
+      restCommands += 1;
+      if (c.successRate !== 1) note(`休息指令 ${c.id} 的成功率必须为 1`);
+    } else if (!(c.successRate > 0 && c.successRate < 1)) {
+      note(`指令 ${c.id} 的成功率必须在 (0,1) 之间：${c.successRate}`);
+    }
+
+    if (!c.effects || typeof c.effects !== 'object') {
+      note(`指令 ${c.id} 缺少 effects`);
+      continue;
+    }
+    for (const key of Object.keys(c.effects)) {
+      if (!attributeIds.has(key)) note(`指令 ${c.id} 含未知属性 ${key}`);
+      if (!Number.isFinite(c.effects[key])) note(`指令 ${c.id} 的 ${key} 变动不是数字`);
+    }
+    for (const id of attributeIds) {
+      if (!(id in c.effects)) note(`指令 ${c.id} 缺少属性 ${id} 的变动`);
+    }
+  }
+
+  if (restCommands !== 1) note(`必须恰好有一条休息指令，实际 ${restCommands} 条`);
+}
+
+function checkGoals(rules, problems) {
+  const plain = goalContext(rules, false);
+  problems.push(...goalProblems(rules.defaultGlobalConstraints, 'defaultGlobalConstraints', plain));
+  problems.push(...goalProblems(rules.defaultEndingGoals, 'defaultEndingGoals', plain));
+  problems.push(
+    ...miniGoalProblems(rules.defaultMiniGoals, 'defaultMiniGoals', goalContext(rules, true)),
+  );
+}
+
+function checkTimeline(rules, note) {
+  const t = rules.timeline;
+  if (!t) {
+    note('timeline 缺失');
+    return;
+  }
+  for (const key of ['start', 'end', 'lastSettlement']) {
+    if (!isDate(t[key])) note(`timeline.${key} 格式错误：${t[key]}`);
+  }
+  if (isDate(t.start) && isDate(t.lastSettlement) && t.start >= t.lastSettlement) {
+    note('timeline.start 必须早于 lastSettlement');
+  }
+  if (isDate(t.lastSettlement) && isDate(t.end) && t.lastSettlement >= t.end) {
+    note('timeline.lastSettlement 必须早于 end');
+  }
+  if (!isDate(rules.clubUnlockDate)) {
+    note(`clubUnlockDate 格式错误：${rules.clubUnlockDate}`);
+  }
+}
+
+function checkConstants(rules, note) {
+  if (!Number.isInteger(rules.fixedPointScale) || rules.fixedPointScale <= 0) {
+    note('fixedPointScale 必须是正整数');
+  }
+  const bonus = rules.restDayBonus;
+  if (!bonus) {
+    note('restDayBonus 缺失');
+  } else {
+    for (const key of ['daily', 'club', 'restCommandNegative']) {
+      if (!Number.isFinite(bonus[key]) || bonus[key] < 1) note(`restDayBonus.${key} 非法`);
+    }
+  }
+  const gain = rules.clubExperienceGain;
+  if (!gain) note('clubExperienceGain 缺失');
+  else {
+    for (const key of ['weekday', 'restDay']) {
+      if (!Number.isInteger(gain[key]) || gain[key] < 0) note(`clubExperienceGain.${key} 非法`);
+    }
+  }
+}
+return { validateRules };
+})();
+__ns["src/plan.js"] = (() => {
+const { validateRules } = __ns["src/rules.js"];
+// 规划入口。
+//
+// 预先商定的接缝是 `plan(input) → PlanResult`：规则在**构造时**注入，所以调用方
+// 只传 input。本票只交付骨架——求解器在后续票中接入，因此现在诚实地返回
+// status: 'skeleton'，而不是伪造一份日程。
+
+
+
+function createPlanner(rules) {
+  const ruleProblems = validateRules(rules);
+
+  return function plan(input) {
+    if (ruleProblems.length > 0) {
+      return { ok: false, status: 'invalid-rules', problems: ruleProblems };
+    }
+
+    return {
+      ok: true,
+      status: 'skeleton',
+      note: '骨架已就绪：数据、时间轴与内联 Worker 通道均已打通，求解器将在后续票中接入。',
+      startDate: input.startDate,
+      endDate: rules.timeline.end,
+      lastSettlement: rules.timeline.lastSettlement,
+      ruleSummary: {
+        attributes: rules.attributes.length,
+        commands: rules.commands.length,
+        clubs: rules.clubs.length,
+      },
+    };
+  };
+}
+return { createPlanner };
+})();
 __ns["web/app.js"] = (() => {
 const rules = __ns["data/rules.json"];
-const { attributeById, attributeIds } = __ns["src/rules.js"];
+const { attributeById, attributeIds } = __ns["src/lookup.js"];
 const { defaultInput, fromJson, toJson } = __ns["src/input.js"];
+const { createPlanner } = __ns["src/plan.js"];
 // 主线程：表单、JSON 导入导出，以及一次 Worker 往返。
+//
+// 页面是从 file:// 双击打开的，而有些浏览器在 file:// 下拒绝构造 blob Worker。
+// 因此这里对 Worker 做降级：能建就用 Worker，建不了或中途报错就回退到主线程，
+// 保证"双击即用"这件事在任何浏览器里都成立。
+
 
 
 
@@ -951,7 +1038,9 @@ const { defaultInput, fromJson, toJson } = __ns["src/input.js"];
 
 const state = { input: defaultInput(rules), requestId: 0 };
 const pending = new Map();
-let worker;
+const inlinePlan = createPlanner(rules);
+let worker = null;
+let workerUnavailable = false;
 
 const $ = (id) => document.getElementById(id);
 
@@ -962,31 +1051,55 @@ function setStatus(text, isError = false) {
 }
 
 function startWorker() {
-  const source = $('worker-source').textContent;
-  const url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
-  worker = new Worker(url);
-  worker.onmessage = (event) => {
-    const settle = pending.get(event.data && event.data.id);
-    if (!settle) return;
-    pending.delete(event.data.id);
-    settle(event.data);
-  };
-  worker.onerror = (event) => {
-    pending.clear();
-    setStatus(`Worker 出错：${event.message || '未知错误'}`, true);
-  };
+  try {
+    const source = $('worker-source').textContent;
+    const url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+    worker = new Worker(url);
+    worker.onmessage = (event) => {
+      const reply = event.data;
+      const settle = pending.get(reply && reply.id);
+      if (!settle) return;
+      pending.delete(reply.id);
+      settle(reply);
+    };
+    worker.onerror = () => {
+      workerUnavailable = true;
+      const inflight = [...pending.values()];
+      pending.clear();
+      for (const settle of inflight) settle({ fallback: true });
+    };
+  } catch (error) {
+    worker = null;
+    workerUnavailable = true;
+  }
 }
 
-function ask(type, payload) {
+function runOnMainThread(input) {
+  try {
+    return { ok: true, result: inlinePlan(input) };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
+function requestPlan(input) {
+  if (workerUnavailable || !worker) return Promise.resolve(runOnMainThread(input));
+
   const id = ++state.requestId;
   return new Promise((resolve) => {
     pending.set(id, resolve);
-    worker.postMessage({ id, type, ...payload });
+    worker.postMessage({ id, type: 'plan', input });
+  }).then((reply) => {
+    if (!reply.fallback) return reply;
+    setStatus('当前浏览器不允许内联 Worker，已回退到主线程计算。');
+    return runOnMainThread(input);
   });
 }
 
 function renderForm() {
   const startDate = $('start-date');
+  startDate.min = rules.timeline.start;
+  startDate.max = rules.timeline.lastSettlement;
   startDate.value = state.input.startDate;
 
   const container = $('attributes');
@@ -1025,7 +1138,6 @@ function renderResult(result) {
 
   setStatus(result.note);
 
-  const list = document.createElement('dl');
   const rows = [
     ['起点', result.startDate],
     ['终点', result.endDate],
@@ -1033,8 +1145,9 @@ function renderResult(result) {
     ['属性', `${result.ruleSummary.attributes} 项`],
     ['指令', `${result.ruleSummary.commands} 条`],
     ['社团', `${result.ruleSummary.clubs} 个`],
-    ['定点缩放因子', String(result.ruleSummary.fixedPointScale)],
   ];
+
+  const list = document.createElement('dl');
   for (const [key, value] of rows) {
     const dt = document.createElement('dt');
     dt.textContent = key;
@@ -1047,7 +1160,7 @@ function renderResult(result) {
 
 async function runPlan() {
   setStatus('计算中…');
-  const reply = await ask('plan', { input: state.input });
+  const reply = await requestPlan(state.input);
   if (!reply.ok) {
     setStatus(`计算失败：${reply.error}`, true);
     return;
@@ -1061,8 +1174,11 @@ function exportJson() {
   const link = document.createElement('a');
   link.href = url;
   link.download = 'tokimeki-planner-input.json';
+  // 必须真的进 DOM，且撤销要等到下载启动之后，否则部分浏览器下载会失败。
+  document.body.append(link);
   link.click();
-  URL.revokeObjectURL(url);
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 async function importJson(file) {

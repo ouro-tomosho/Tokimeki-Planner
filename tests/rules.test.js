@@ -4,16 +4,10 @@
 // 不从数据文件自身重算——这样断言才有可能与实现不一致。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 
-import { validateRules, attributeById, commandById } from '../src/rules.js';
-
-const RULES_URL = new URL('../data/rules.json', import.meta.url);
-
-function loadRules() {
-  return JSON.parse(readFileSync(fileURLToPath(RULES_URL), 'utf8'));
-}
+import { validateRules } from '../src/rules.js';
+import { attributeById, commandById } from '../src/lookup.js';
+import { loadRules } from './support/rules.js';
 
 test('数据文件通过自校验', () => {
   assert.deepEqual(validateRules(loadRules()), []);
@@ -24,15 +18,15 @@ test('九项属性齐全，名称、方向、上下限正确', () => {
   assert.deepEqual(
     rules.attributes.map((a) => [a.id, a.name, a.direction]),
     [
-      ['tili', '体力', 'up'],
-      ['wenke', '文科', 'up'],
-      ['like', '理科', 'up'],
-      ['yishu', '艺术', 'up'],
-      ['yundong', '运动', 'up'],
-      ['renyuan', '人缘', 'up'],
-      ['rongzi', '容姿', 'up'],
-      ['yili', '毅力', 'up'],
-      ['yali', '压力', 'down'],
+      ['stamina', '体力', 'up'],
+      ['literature', '文科', 'up'],
+      ['science', '理科', 'up'],
+      ['art', '艺术', 'up'],
+      ['sports', '运动', 'up'],
+      ['popularity', '人缘', 'up'],
+      ['appearance', '容姿', 'up'],
+      ['grit', '毅力', 'up'],
+      ['stress', '压力', 'down'],
     ],
   );
   for (const a of rules.attributes) {
@@ -58,38 +52,38 @@ test('每条指令的变动项恰好覆盖九项属性', () => {
 });
 
 test('指令「研读文科」的成功变动逐项等于数值表', () => {
-  const c = commandById(loadRules(), 'c-yandu-wenke');
+  const c = commandById(loadRules(), 'cmd-study-literature');
   assert.equal(c.name, '研读文科');
   assert.equal(c.kind, 'daily');
   assert.deepEqual(c.effects, {
-    tili: -0.8,
-    wenke: 0.9,
-    like: 0.1,
-    yishu: 0.1,
-    yundong: -0.4,
-    renyuan: 0.3,
-    rongzi: -0.3,
-    yili: -0.1,
-    yali: 0.8,
+    stamina: -0.8,
+    literature: 0.9,
+    science: 0.1,
+    art: 0.1,
+    sports: -0.4,
+    popularity: 0.3,
+    appearance: -0.3,
+    grit: -0.1,
+    stress: 0.8,
   });
 });
 
 test('指令「休息」的成功变动逐项等于数值表，并且是唯一不会失败的一条', () => {
   const rules = loadRules();
-  const c = commandById(rules, 'c-xiuxi');
+  const c = commandById(rules, 'cmd-rest');
   assert.equal(c.name, '休息');
   assert.equal(c.isRestCommand, true);
   assert.equal(c.successRate, 1);
   assert.deepEqual(c.effects, {
-    tili: 3.1,
-    wenke: 0,
-    like: 0,
-    yishu: 0,
-    yundong: 0,
-    renyuan: -0.6,
-    rongzi: -0.8,
-    yili: -0.1,
-    yali: -2.9,
+    stamina: 3.1,
+    literature: 0,
+    science: 0,
+    art: 0,
+    sports: 0,
+    popularity: -0.6,
+    appearance: -0.8,
+    grit: -0.1,
+    stress: -2.9,
   });
   const rest = rules.commands.filter((x) => x.isRestCommand);
   assert.equal(rest.length, 1);
@@ -102,47 +96,47 @@ test('指令「休息」的成功变动逐项等于数值表，并且是唯一�
 test('默认起点与数值表逐项一致', () => {
   const rules = loadRules();
   assert.deepEqual(rules.defaultStart, {
-    tili: 100,
-    wenke: 40,
-    like: 40,
-    yishu: 40,
-    yundong: 40,
-    renyuan: 32,
-    rongzi: 60,
-    yili: 5,
-    yali: 0,
+    stamina: 100,
+    literature: 40,
+    science: 40,
+    art: 40,
+    sports: 40,
+    popularity: 32,
+    appearance: 60,
+    grit: 5,
+    stress: 0,
   });
 });
 
 test('默认全局约束逐项一致', () => {
   const rules = loadRules();
   assert.deepEqual(rules.defaultGlobalConstraints, [
-    { attribute: 'tili', op: '>=', value: 20 },
-    { attribute: 'renyuan', op: '>=', value: 100 },
-    { attribute: 'rongzi', op: '>=', value: 35 },
-    { attribute: 'yali', op: '<', value: 70 },
+    { attribute: 'stamina', op: '>=', value: 20 },
+    { attribute: 'popularity', op: '>=', value: 100 },
+    { attribute: 'appearance', op: '>=', value: 35 },
+    { attribute: 'stress', op: '<', value: 70 },
   ]);
 });
 
 test('默认结局目标逐项一致，体力为 50', () => {
   const rules = loadRules();
   assert.deepEqual(rules.defaultEndingGoals, [
-    { attribute: 'tili', op: '>=', value: 50 },
-    { attribute: 'wenke', op: '>=', value: 130 },
-    { attribute: 'like', op: '>=', value: 130 },
-    { attribute: 'yishu', op: '>=', value: 130 },
-    { attribute: 'yundong', op: '>=', value: 130 },
-    { attribute: 'renyuan', op: '>=', value: 120 },
-    { attribute: 'rongzi', op: '>=', value: 100 },
-    { attribute: 'yili', op: '>=', value: 100 },
-    { attribute: 'yali', op: '<', value: 50 },
+    { attribute: 'stamina', op: '>=', value: 50 },
+    { attribute: 'literature', op: '>=', value: 130 },
+    { attribute: 'science', op: '>=', value: 130 },
+    { attribute: 'art', op: '>=', value: 130 },
+    { attribute: 'sports', op: '>=', value: 130 },
+    { attribute: 'popularity', op: '>=', value: 120 },
+    { attribute: 'appearance', op: '>=', value: 100 },
+    { attribute: 'grit', op: '>=', value: 100 },
+    { attribute: 'stress', op: '<', value: 50 },
   ]);
 });
 
 test('默认小目标：一条是三项求和，一条是社团经验', () => {
   const rules = loadRules();
   assert.deepEqual(rules.defaultMiniGoals, [
-    { deadline: '1998-02-23', attributes: ['wenke', 'like', 'yishu'], op: '>=', value: 561 },
+    { deadline: '1998-02-23', attributes: ['literature', 'science', 'art'], op: '>=', value: 561 },
     { deadline: '1998-01-02', attributes: ['clubExperience'], op: '>=', value: 380 },
   ]);
   assert.deepEqual(rules.clubExperience, { id: 'clubExperience', name: '社团经验', min: 0, max: 999 });
@@ -171,6 +165,6 @@ test('十一个社团各有 id 与名称，且每条社团指令绑定其中之�
 
 test('属性查询按 id 命中，未知 id 抛错', () => {
   const rules = loadRules();
-  assert.equal(attributeById(rules, 'yali').name, '压力');
+  assert.equal(attributeById(rules, 'stress').name, '压力');
   assert.throws(() => attributeById(rules, 'nope'), /nope/);
 });

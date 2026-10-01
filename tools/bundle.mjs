@@ -3,7 +3,7 @@
 // 只支持本项目自己使用的两种导入形态：
 //   import { a, b } from './x.js';
 //   import name from './x.json';
-// 以及行首的 export 前缀。
+// 以及行首 function/const/let/var/class 的 export 前缀。
 //
 // 每个模块被包进一个 IIFE，导出收集成命名空间对象，因此各模块的私有名字
 // 互不干扰。产物是一段无导入、无导出的普通脚本，可以直接塞进经典 Web Worker。
@@ -13,8 +13,22 @@ import path from 'node:path';
 
 const IMPORT_RE =
   /^[ \t]*import[ \t]+(?:\{([^}]*)\}|([A-Za-z0-9_$]+))[ \t]+from[ \t]+['"]([^'"]+)['"][ \t]*;?[ \t]*$/gm;
-const EXPORT_RE = /^[ \t]*export[ \t]+/gm;
-const EXPORT_DECL_RE = /^export[ \t]+(?:function|const|let|var|class)[ \t]+([A-Za-z0-9_$]+)/gm;
+const SUPPORTED_EXPORT_RE =
+  /^[ \t]*export[ \t]+(?:function|const|let|var|class)[ \t]+([A-Za-z0-9_$]+)/gm;
+
+/** 剥离 import / export 语法，同时收集导出名；遇到不支持的导出形态直接失败。 */
+function stripModuleSyntax(source, file) {
+  const names = [];
+  const withoutImports = source.replace(IMPORT_RE, '');
+  const body = withoutImports.replace(SUPPORTED_EXPORT_RE, (match, name) => {
+    names.push(name);
+    return match.replace(/^[ \t]*export[ \t]+/, '');
+  });
+  if (/^[ \t]*export[ \t]/m.test(body)) {
+    throw new Error(`${file}: 存在未支持的 export 形态，只支持 function/const/let/var/class`);
+  }
+  return { body, names };
+}
 
 function parseImports(source, file) {
   const imports = [];
@@ -48,12 +62,8 @@ function parseImports(source, file) {
   return imports;
 }
 
-function parseExports(source) {
-  return [...source.matchAll(EXPORT_DECL_RE)].map((m) => m[1]);
-}
-
 export function bundle(entryPath, { root }) {
-  const key = (file) => path.relative(root, file).split(path.sep).join('/');
+  const moduleSlot = (file) => path.relative(root, file).split(path.sep).join('/');
   const records = new Map();
   const order = [];
   const state = new Map();
@@ -70,17 +80,21 @@ export function bundle(entryPath, { root }) {
       const source = readFileSync(file, 'utf8');
       const imports = parseImports(source, file);
       for (const imp of imports) visit(imp.resolved);
-      const exports = parseExports(source);
+
+      const { body, names } = stripModuleSyntax(source, file);
+      const exported = new Set(names);
       for (const imp of imports) {
         if (!imp.names) continue;
         const target = records.get(imp.resolved);
         for (const name of imp.names) {
           if (!target.exports.has(name)) {
-            throw new Error(`${key(file)}: 从 ${key(imp.resolved)} 导入了未导出的 ${name}`);
+            throw new Error(
+              `${moduleSlot(file)}: 从 ${moduleSlot(imp.resolved)} 导入了未导出的 ${name}`,
+            );
           }
         }
       }
-      records.set(file, { json: false, source, imports, exports: new Set(exports), exportNames: exports });
+      records.set(file, { json: false, body, imports, exports: exported, exportNames: names });
     }
 
     state.set(file, 'done');
@@ -88,15 +102,15 @@ export function bundle(entryPath, { root }) {
   }
 
   visit(entryPath);
-  return emit(order, records, key);
+  return emit(order, records, moduleSlot);
 }
 
-function emit(order, records, key) {
+function emit(order, records, moduleSlot) {
   const parts = ['const __ns = {};'];
 
   for (const file of order) {
     const record = records.get(file);
-    const slot = JSON.stringify(key(file));
+    const slot = JSON.stringify(moduleSlot(file));
 
     if (record.json) {
       parts.push(`__ns[${slot}] = ${JSON.stringify(record.value)};`);
@@ -104,17 +118,16 @@ function emit(order, records, key) {
     }
 
     const bindings = record.imports.map((imp) => {
-      const targetSlot = JSON.stringify(key(imp.resolved));
+      const targetSlot = JSON.stringify(moduleSlot(imp.resolved));
       if (imp.defaultName) return `const ${imp.defaultName} = __ns[${targetSlot}];`;
       return `const { ${imp.names.join(', ')} } = __ns[${targetSlot}];`;
     });
 
-    const body = record.source.replace(IMPORT_RE, '').replace(EXPORT_RE, '').trim();
     parts.push(
       [
         `__ns[${slot}] = (() => {`,
         ...bindings,
-        body,
+        record.body.trim(),
         `return { ${record.exportNames.join(', ')} };`,
         '})();',
       ]

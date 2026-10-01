@@ -1,29 +1,37 @@
-// 领域规则的纯函数视图：校验与查询。
+// 规则文件（data/rules.json）的自校验。
 //
-// 数据只存在于 data/rules.json 一处权威来源；本模块不加载数据，只接收它，
-// 因此同一份代码既能在内联 Worker 中运行，也能在 Node 测试里直接 import。
+// 这是数据的唯一权威来源的看门人：字段之间的一致性（社团指令必属某社团、
+// 休息指令必不失手、每条指令的变动必覆盖全部属性）都在这里兜住。
 
 import { isDate } from './dates.js';
+import { goalProblems, miniGoalProblems } from './goals.js';
 
 const DIRECTIONS = new Set(['up', 'down']);
 const KINDS = new Set(['daily', 'club']);
-const OPS = new Set(['>=', '<']);
 
 /** @returns {string[]} 问题列表，空数组表示通过 */
 export function validateRules(rules) {
+  if (!rules || typeof rules !== 'object') return ['规则不是对象'];
+
   const problems = [];
   const note = (msg) => problems.push(msg);
-
-  if (!rules || typeof rules !== 'object') return ['规则不是对象'];
 
   checkAttributes(rules, note);
   checkClubs(rules, note);
   checkCommands(rules, note);
-  checkGoals(rules, note);
+  checkGoals(rules, problems);
   checkTimeline(rules, note);
   checkConstants(rules, note);
 
   return problems;
+}
+
+function goalContext(rules, allowClubExperience) {
+  return {
+    attributeIds: new Set((rules.attributes ?? []).map((a) => a.id)),
+    clubExperienceId: rules.clubExperience?.id,
+    allowClubExperience,
+  };
 }
 
 function checkAttributes(rules, note) {
@@ -41,9 +49,6 @@ function checkAttributes(rules, note) {
     if (!Number.isFinite(a.min) || !Number.isFinite(a.max) || a.min >= a.max) {
       note(`属性 ${a.id} 的上下限非法`);
     }
-    if (Number.isFinite(a.default) && (a.default < a.min || a.default > a.max)) {
-      note(`属性 ${a.id} 的默认值越界`);
-    }
   }
   if (attributes.filter((a) => a.direction === 'down').length !== 1) {
     note('必须恰好有一项负面指标');
@@ -56,15 +61,16 @@ function checkAttributes(rules, note) {
     note(`社团经验 id 与属性 id 冲突：${ce.id}`);
   }
 
+  // 默认起点是起始属性的唯一权威；属性表里不再重复存一份默认值。
   const start = rules.defaultStart;
   if (!start || typeof start !== 'object') {
     note('defaultStart 缺失');
     return;
   }
   for (const a of attributes) {
-    const v = start[a.id];
-    if (!Number.isFinite(v)) note(`defaultStart 缺少属性 ${a.id}`);
-    else if (v < a.min || v > a.max) note(`defaultStart 的 ${a.id} 越界`);
+    const value = start[a.id];
+    if (!Number.isFinite(value)) note(`defaultStart 缺少属性 ${a.id}`);
+    else if (value < a.min || value > a.max) note(`defaultStart 的 ${a.id} 越界`);
   }
   for (const key of Object.keys(start)) {
     if (!attributes.some((a) => a.id === key)) note(`defaultStart 含未知属性 ${key}`);
@@ -107,17 +113,15 @@ function checkCommands(rules, note) {
       note(`日常指令 ${c.id} 不应绑定社团`);
     }
 
+    // 社团经验的增量由 kind 与 clubExperienceGain 常量共同决定，指令表里不重复记录。
+    //
+    // isRestCommand 与 successRate 记录的是两件事——「这是那条特殊指令」与「它的
+    // 成功率是多少」——两条都保留，由下面这行校验锁死一致性，不允许只留一条。
     if (c.isRestCommand) {
       restCommands += 1;
       if (c.successRate !== 1) note(`休息指令 ${c.id} 的成功率必须为 1`);
     } else if (!(c.successRate > 0 && c.successRate < 1)) {
       note(`指令 ${c.id} 的成功率必须在 (0,1) 之间：${c.successRate}`);
-    }
-
-    if (!Number.isInteger(c.clubExperienceGain) || c.clubExperienceGain < 0) {
-      note(`指令 ${c.id} 的社团经验增量非法`);
-    } else if ((c.kind === 'club') !== (c.clubExperienceGain > 0)) {
-      note(`指令 ${c.id} 的社团经验增量与指令类型不符`);
     }
 
     if (!c.effects || typeof c.effects !== 'object') {
@@ -136,43 +140,13 @@ function checkCommands(rules, note) {
   if (restCommands !== 1) note(`必须恰好有一条休息指令，实际 ${restCommands} 条`);
 }
 
-function checkGoals(rules, note) {
-  const attributeIds = new Set((rules.attributes ?? []).map((a) => a.id));
-  const ceId = rules.clubExperience?.id;
-
-  const checkList = (list, label, allowClubExperience) => {
-    if (!Array.isArray(list)) {
-      note(`${label} 必须是数组`);
-      return;
-    }
-    for (const g of list) {
-      if (!attributeIds.has(g.attribute) && !(allowClubExperience && g.attribute === ceId)) {
-        note(`${label} 引用了未知属性 ${g.attribute}`);
-      }
-      if (!OPS.has(g.op)) note(`${label} 的 op 非法：${g.op}`);
-      if (!Number.isFinite(g.value)) note(`${label} 的 value 不是数字`);
-    }
-  };
-
-  checkList(rules.defaultGlobalConstraints, 'defaultGlobalConstraints', false);
-  checkList(rules.defaultEndingGoals, 'defaultEndingGoals', false);
-
-  if (!Array.isArray(rules.defaultMiniGoals)) {
-    note('defaultMiniGoals 必须是数组');
-    return;
-  }
-  for (const g of rules.defaultMiniGoals) {
-    if (!isDate(g.deadline)) note(`小目标截止日期格式错误：${g.deadline}`);
-    if (!Array.isArray(g.attributes) || g.attributes.length === 0) {
-      note(`小目标 ${g.deadline} 的属性集合为空`);
-      continue;
-    }
-    for (const id of g.attributes) {
-      if (!attributeIds.has(id) && id !== ceId) note(`小目标含未知属性 ${id}`);
-    }
-    if (!OPS.has(g.op)) note(`小目标的 op 非法：${g.op}`);
-    if (!Number.isFinite(g.value)) note('小目标的 value 不是数字');
-  }
+function checkGoals(rules, problems) {
+  const plain = goalContext(rules, false);
+  problems.push(...goalProblems(rules.defaultGlobalConstraints, 'defaultGlobalConstraints', plain));
+  problems.push(...goalProblems(rules.defaultEndingGoals, 'defaultEndingGoals', plain));
+  problems.push(
+    ...miniGoalProblems(rules.defaultMiniGoals, 'defaultMiniGoals', goalContext(rules, true)),
+  );
 }
 
 function checkTimeline(rules, note) {
@@ -214,34 +188,4 @@ function checkConstants(rules, note) {
       if (!Number.isInteger(gain[key]) || gain[key] < 0) note(`clubExperienceGain.${key} 非法`);
     }
   }
-}
-
-function findOrThrow(list, id, label) {
-  const hit = list?.find((x) => x.id === id);
-  if (!hit) throw new Error(`未知${label}：${id}`);
-  return hit;
-}
-
-export function attributeById(rules, id) {
-  return findOrThrow(rules.attributes, id, '属性');
-}
-
-export function commandById(rules, id) {
-  return findOrThrow(rules.commands, id, '指令');
-}
-
-export function clubById(rules, id) {
-  return findOrThrow(rules.clubs, id, '社团');
-}
-
-export function attributeIds(rules) {
-  return rules.attributes.map((a) => a.id);
-}
-
-export function allTrackedIds(rules) {
-  return [...attributeIds(rules), rules.clubExperience.id];
-}
-
-export function commandsByKind(rules, kind) {
-  return rules.commands.filter((c) => c.kind === kind);
 }

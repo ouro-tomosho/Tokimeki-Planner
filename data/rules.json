@@ -22,241 +22,223 @@
     "max": 999
   },
   "attributes": [
-    { "id": "tili", "name": "体力", "direction": "up", "min": 0, "max": 999, "default": 100 },
-    { "id": "wenke", "name": "文科", "direction": "up", "min": 0, "max": 999, "default": 40 },
-    { "id": "like", "name": "理科", "direction": "up", "min": 0, "max": 999, "default": 40 },
-    { "id": "yishu", "name": "艺术", "direction": "up", "min": 0, "max": 999, "default": 40 },
-    { "id": "yundong", "name": "运动", "direction": "up", "min": 0, "max": 999, "default": 40 },
-    { "id": "renyuan", "name": "人缘", "direction": "up", "min": 0, "max": 999, "default": 32 },
-    { "id": "rongzi", "name": "容姿", "direction": "up", "min": 0, "max": 999, "default": 60 },
-    { "id": "yili", "name": "毅力", "direction": "up", "min": 0, "max": 999, "default": 5 },
-    { "id": "yali", "name": "压力", "direction": "down", "min": 0, "max": 999, "default": 0 }
+    { "id": "stamina", "name": "体力", "direction": "up", "min": 0, "max": 999 },
+    { "id": "literature", "name": "文科", "direction": "up", "min": 0, "max": 999 },
+    { "id": "science", "name": "理科", "direction": "up", "min": 0, "max": 999 },
+    { "id": "art", "name": "艺术", "direction": "up", "min": 0, "max": 999 },
+    { "id": "sports", "name": "运动", "direction": "up", "min": 0, "max": 999 },
+    { "id": "popularity", "name": "人缘", "direction": "up", "min": 0, "max": 999 },
+    { "id": "appearance", "name": "容姿", "direction": "up", "min": 0, "max": 999 },
+    { "id": "grit", "name": "毅力", "direction": "up", "min": 0, "max": 999 },
+    { "id": "stress", "name": "压力", "direction": "down", "min": 0, "max": 999 }
   ],
   "clubs": [
-    { "id": "wenyishe", "name": "文艺社" },
-    { "id": "yanjushe", "name": "演剧社" },
-    { "id": "kexueshe", "name": "科学社" },
-    { "id": "diannaoshe", "name": "电脑社" },
-    { "id": "meishushe", "name": "美术社" },
-    { "id": "guanyueshe", "name": "管乐社" },
-    { "id": "bangqiushe", "name": "棒球社" },
-    { "id": "zuqiushe", "name": "足球社" },
-    { "id": "wangqiushe", "name": "网球社" },
-    { "id": "youyongshe", "name": "游泳社" },
-    { "id": "lanqiushe", "name": "篮球社" }
+    { "id": "literature-club", "name": "文艺社" },
+    { "id": "drama-club", "name": "演剧社" },
+    { "id": "science-club", "name": "科学社" },
+    { "id": "computer-club", "name": "电脑社" },
+    { "id": "art-club", "name": "美术社" },
+    { "id": "brass-band-club", "name": "管乐社" },
+    { "id": "baseball-club", "name": "棒球社" },
+    { "id": "soccer-club", "name": "足球社" },
+    { "id": "tennis-club", "name": "网球社" },
+    { "id": "swimming-club", "name": "游泳社" },
+    { "id": "basketball-club", "name": "篮球社" }
   ],
   "commands": [
     {
-      "id": "c-yandu-wenke",
+      "id": "cmd-study-literature",
       "name": "研读文科",
       "kind": "daily",
       "clubId": null,
       "isRestCommand": false,
       "successRate": 0.63,
-      "clubExperienceGain": 0,
-      "effects": { "tili": -0.8, "wenke": 0.9, "like": 0.1, "yishu": 0.1, "yundong": -0.4, "renyuan": 0.3, "rongzi": -0.3, "yili": -0.1, "yali": 0.8 }
+      "effects": { "stamina": -0.8, "literature": 0.9, "science": 0.1, "art": 0.1, "sports": -0.4, "popularity": 0.3, "appearance": -0.3, "grit": -0.1, "stress": 0.8 }
     },
     {
-      "id": "c-yandu-like",
+      "id": "cmd-study-science",
       "name": "研读理科",
       "kind": "daily",
       "clubId": null,
       "isRestCommand": false,
       "successRate": 0.63,
-      "clubExperienceGain": 0,
-      "effects": { "tili": -0.8, "wenke": 0.1, "like": 0.9, "yishu": 0.1, "yundong": -0.8, "renyuan": 0.1, "rongzi": -0.4, "yili": 0.3, "yali": 0.3 }
+      "effects": { "stamina": -0.8, "literature": 0.1, "science": 0.9, "art": 0.1, "sports": -0.8, "popularity": 0.1, "appearance": -0.4, "grit": 0.3, "stress": 0.3 }
     },
     {
-      "id": "c-peiyang-yishu",
+      "id": "cmd-practice-art",
       "name": "培养艺术气质",
       "kind": "daily",
       "clubId": null,
       "isRestCommand": false,
       "successRate": 0.63,
-      "clubExperienceGain": 0,
-      "effects": { "tili": -0.8, "wenke": 0.1, "like": 0.1, "yishu": 0.9, "yundong": -0.4, "renyuan": 0.1, "rongzi": -0.1, "yili": -0.1, "yali": -0.3 }
+      "effects": { "stamina": -0.8, "literature": 0.1, "science": 0.1, "art": 0.9, "sports": -0.4, "popularity": 0.1, "appearance": -0.1, "grit": -0.1, "stress": -0.3 }
     },
     {
-      "id": "c-yundong",
+      "id": "cmd-exercise",
       "name": "运动",
       "kind": "daily",
       "clubId": null,
       "isRestCommand": false,
       "successRate": 0.63,
-      "clubExperienceGain": 0,
-      "effects": { "tili": -2.4, "wenke": -0.1, "like": -0.1, "yishu": -0.1, "yundong": 3.3, "renyuan": 0.1, "rongzi": -0.4, "yili": 1.4, "yali": 0.1 }
+      "effects": { "stamina": -2.4, "literature": -0.1, "science": -0.1, "art": -0.1, "sports": 3.3, "popularity": 0.1, "appearance": -0.4, "grit": 1.4, "stress": 0.1 }
     },
     {
-      "id": "c-xianliao",
+      "id": "cmd-chat",
       "name": "和同学闲聊",
       "kind": "daily",
       "clubId": null,
       "isRestCommand": false,
       "successRate": 0.63,
-      "clubExperienceGain": 0,
-      "effects": { "tili": -1.2, "wenke": -0.3, "like": -0.3, "yishu": -0.3, "yundong": 0.2, "renyuan": 1.5, "rongzi": 0.8, "yili": -0.4, "yali": -0.9 }
+      "effects": { "stamina": -1.2, "literature": -0.3, "science": -0.3, "art": -0.3, "sports": 0.2, "popularity": 1.5, "appearance": 0.8, "grit": -0.4, "stress": -0.9 }
     },
     {
-      "id": "c-zhengli-yirong",
+      "id": "cmd-groom",
       "name": "整理仪容",
       "kind": "daily",
       "clubId": null,
       "isRestCommand": false,
       "successRate": 0.63,
-      "clubExperienceGain": 0,
-      "effects": { "tili": -0.6, "wenke": -0.1, "like": -0.1, "yishu": -0.1, "yundong": -0.1, "renyuan": 0.5, "rongzi": 2.1, "yili": -0.6, "yali": 0.1 }
+      "effects": { "stamina": -0.6, "literature": -0.1, "science": -0.1, "art": -0.1, "sports": -0.1, "popularity": 0.5, "appearance": 2.1, "grit": -0.6, "stress": 0.1 }
     },
     {
-      "id": "c-xiuxi",
+      "id": "cmd-rest",
       "name": "休息",
       "kind": "daily",
       "clubId": null,
       "isRestCommand": true,
       "successRate": 1,
-      "clubExperienceGain": 0,
-      "effects": { "tili": 3.1, "wenke": 0, "like": 0, "yishu": 0, "yundong": 0, "renyuan": -0.6, "rongzi": -0.8, "yili": -0.1, "yali": -2.9 }
+      "effects": { "stamina": 3.1, "literature": 0, "science": 0, "art": 0, "sports": 0, "popularity": -0.6, "appearance": -0.8, "grit": -0.1, "stress": -2.9 }
     },
     {
-      "id": "c-wenyishe",
+      "id": "cmd-club-literature",
       "name": "文艺社",
       "kind": "club",
-      "clubId": "wenyishe",
+      "clubId": "literature-club",
       "isRestCommand": false,
       "successRate": 0.63,
-      "clubExperienceGain": 1,
-      "effects": { "tili": -0.8, "wenke": 0.8, "like": 0.3, "yishu": 0.1, "yundong": 0, "renyuan": 0.1, "rongzi": -0.3, "yili": -0.1, "yali": 1.1 }
+      "effects": { "stamina": -0.8, "literature": 0.8, "science": 0.3, "art": 0.1, "sports": 0, "popularity": 0.1, "appearance": -0.3, "grit": -0.1, "stress": 1.1 }
     },
     {
-      "id": "c-yanjushe",
+      "id": "cmd-club-drama",
       "name": "演剧社",
       "kind": "club",
-      "clubId": "yanjushe",
+      "clubId": "drama-club",
       "isRestCommand": false,
       "successRate": 0.63,
-      "clubExperienceGain": 1,
-      "effects": { "tili": -0.9, "wenke": 0.9, "like": 0, "yishu": 0.4, "yundong": 0.1, "renyuan": 0.1, "rongzi": -0.1, "yili": 0.1, "yali": 1.1 }
+      "effects": { "stamina": -0.9, "literature": 0.9, "science": 0, "art": 0.4, "sports": 0.1, "popularity": 0.1, "appearance": -0.1, "grit": 0.1, "stress": 1.1 }
     },
     {
-      "id": "c-kexueshe",
+      "id": "cmd-club-science",
       "name": "科学社",
       "kind": "club",
-      "clubId": "kexueshe",
+      "clubId": "science-club",
       "isRestCommand": false,
       "successRate": 0.63,
-      "clubExperienceGain": 1,
-      "effects": { "tili": -0.8, "wenke": 0.1, "like": 0.9, "yishu": 0.3, "yundong": 0, "renyuan": 0.1, "rongzi": -0.3, "yili": 0.3, "yali": 1.4 }
+      "effects": { "stamina": -0.8, "literature": 0.1, "science": 0.9, "art": 0.3, "sports": 0, "popularity": 0.1, "appearance": -0.3, "grit": 0.3, "stress": 1.4 }
     },
     {
-      "id": "c-diannaoshe",
+      "id": "cmd-club-computer",
       "name": "电脑社",
       "kind": "club",
-      "clubId": "diannaoshe",
+      "clubId": "computer-club",
       "isRestCommand": false,
       "successRate": 0.63,
-      "clubExperienceGain": 1,
-      "effects": { "tili": -0.8, "wenke": 0.1, "like": 0.7, "yishu": 0.3, "yundong": 0, "renyuan": 0.2, "rongzi": -0.4, "yili": 0.2, "yali": 1.8 }
+      "effects": { "stamina": -0.8, "literature": 0.1, "science": 0.7, "art": 0.3, "sports": 0, "popularity": 0.2, "appearance": -0.4, "grit": 0.2, "stress": 1.8 }
     },
     {
-      "id": "c-meishushe",
+      "id": "cmd-club-art",
       "name": "美术社",
       "kind": "club",
-      "clubId": "meishushe",
+      "clubId": "art-club",
       "isRestCommand": false,
       "successRate": 0.63,
-      "clubExperienceGain": 1,
-      "effects": { "tili": -0.9, "wenke": 0.1, "like": 0, "yishu": 0.9, "yundong": 0.1, "renyuan": 0.1, "rongzi": -0.1, "yili": -0.1, "yali": 0.9 }
+      "effects": { "stamina": -0.9, "literature": 0.1, "science": 0, "art": 0.9, "sports": 0.1, "popularity": 0.1, "appearance": -0.1, "grit": -0.1, "stress": 0.9 }
     },
     {
-      "id": "c-guanyueshe",
+      "id": "cmd-club-brass-band",
       "name": "管乐社",
       "kind": "club",
-      "clubId": "guanyueshe",
+      "clubId": "brass-band-club",
       "isRestCommand": false,
       "successRate": 0.63,
-      "clubExperienceGain": 1,
-      "effects": { "tili": -0.9, "wenke": 0.1, "like": 0.1, "yishu": 0.9, "yundong": 0.2, "renyuan": 0.1, "rongzi": -0.2, "yili": 0.1, "yali": 0.9 }
+      "effects": { "stamina": -0.9, "literature": 0.1, "science": 0.1, "art": 0.9, "sports": 0.2, "popularity": 0.1, "appearance": -0.2, "grit": 0.1, "stress": 0.9 }
     },
     {
-      "id": "c-bangqiushe",
+      "id": "cmd-club-baseball",
       "name": "棒球社",
       "kind": "club",
-      "clubId": "bangqiushe",
+      "clubId": "baseball-club",
       "isRestCommand": false,
       "successRate": 0.63,
-      "clubExperienceGain": 1,
-      "effects": { "tili": -1.9, "wenke": -0.1, "like": -0.1, "yishu": -0.1, "yundong": 0.9, "renyuan": 0.1, "rongzi": -0.3, "yili": 0.3, "yali": 0.2 }
+      "effects": { "stamina": -1.9, "literature": -0.1, "science": -0.1, "art": -0.1, "sports": 0.9, "popularity": 0.1, "appearance": -0.3, "grit": 0.3, "stress": 0.2 }
     },
     {
-      "id": "c-zuqiushe",
+      "id": "cmd-club-soccer",
       "name": "足球社",
       "kind": "club",
-      "clubId": "zuqiushe",
+      "clubId": "soccer-club",
       "isRestCommand": false,
       "successRate": 0.63,
-      "clubExperienceGain": 1,
-      "effects": { "tili": -1.9, "wenke": -0.1, "like": -0.1, "yishu": -0.1, "yundong": 0.9, "renyuan": 0.1, "rongzi": -0.2, "yili": 0.7, "yali": 0.3 }
+      "effects": { "stamina": -1.9, "literature": -0.1, "science": -0.1, "art": -0.1, "sports": 0.9, "popularity": 0.1, "appearance": -0.2, "grit": 0.7, "stress": 0.3 }
     },
     {
-      "id": "c-wangqiushe",
+      "id": "cmd-club-tennis",
       "name": "网球社",
       "kind": "club",
-      "clubId": "wangqiushe",
+      "clubId": "tennis-club",
       "isRestCommand": false,
       "successRate": 0.63,
-      "clubExperienceGain": 1,
-      "effects": { "tili": -1.6, "wenke": -0.1, "like": -0.1, "yishu": 0, "yundong": 0.8, "renyuan": 0.1, "rongzi": -0.1, "yili": 0.6, "yali": 0.5 }
+      "effects": { "stamina": -1.6, "literature": -0.1, "science": -0.1, "art": 0, "sports": 0.8, "popularity": 0.1, "appearance": -0.1, "grit": 0.6, "stress": 0.5 }
     },
     {
-      "id": "c-youyongshe",
+      "id": "cmd-club-swimming",
       "name": "游泳社",
       "kind": "club",
-      "clubId": "youyongshe",
+      "clubId": "swimming-club",
       "isRestCommand": false,
       "successRate": 0.63,
-      "clubExperienceGain": 1,
-      "effects": { "tili": -1.9, "wenke": -0.1, "like": -0.1, "yishu": 0, "yundong": 0.9, "renyuan": 0, "rongzi": -0.1, "yili": 0.7, "yali": 0.2 }
+      "effects": { "stamina": -1.9, "literature": -0.1, "science": -0.1, "art": 0, "sports": 0.9, "popularity": 0, "appearance": -0.1, "grit": 0.7, "stress": 0.2 }
     },
     {
-      "id": "c-lanqiushe",
+      "id": "cmd-club-basketball",
       "name": "篮球社",
       "kind": "club",
-      "clubId": "lanqiushe",
+      "clubId": "basketball-club",
       "isRestCommand": false,
       "successRate": 0.63,
-      "clubExperienceGain": 1,
-      "effects": { "tili": -1.8, "wenke": -0.1, "like": -0.1, "yishu": -0.1, "yundong": 0.9, "renyuan": -0.1, "rongzi": -0.2, "yili": 0.6, "yali": 0.4 }
+      "effects": { "stamina": -1.8, "literature": -0.1, "science": -0.1, "art": -0.1, "sports": 0.9, "popularity": -0.1, "appearance": -0.2, "grit": 0.6, "stress": 0.4 }
     }
   ],
   "defaultStart": {
-    "tili": 100,
-    "wenke": 40,
-    "like": 40,
-    "yishu": 40,
-    "yundong": 40,
-    "renyuan": 32,
-    "rongzi": 60,
-    "yili": 5,
-    "yali": 0
+    "stamina": 100,
+    "literature": 40,
+    "science": 40,
+    "art": 40,
+    "sports": 40,
+    "popularity": 32,
+    "appearance": 60,
+    "grit": 5,
+    "stress": 0
   },
   "defaultGlobalConstraints": [
-    { "attribute": "tili", "op": ">=", "value": 20 },
-    { "attribute": "renyuan", "op": ">=", "value": 100 },
-    { "attribute": "rongzi", "op": ">=", "value": 35 },
-    { "attribute": "yali", "op": "<", "value": 70 }
+    { "attribute": "stamina", "op": ">=", "value": 20 },
+    { "attribute": "popularity", "op": ">=", "value": 100 },
+    { "attribute": "appearance", "op": ">=", "value": 35 },
+    { "attribute": "stress", "op": "<", "value": 70 }
   ],
   "defaultEndingGoals": [
-    { "attribute": "tili", "op": ">=", "value": 50 },
-    { "attribute": "wenke", "op": ">=", "value": 130 },
-    { "attribute": "like", "op": ">=", "value": 130 },
-    { "attribute": "yishu", "op": ">=", "value": 130 },
-    { "attribute": "yundong", "op": ">=", "value": 130 },
-    { "attribute": "renyuan", "op": ">=", "value": 120 },
-    { "attribute": "rongzi", "op": ">=", "value": 100 },
-    { "attribute": "yili", "op": ">=", "value": 100 },
-    { "attribute": "yali", "op": "<", "value": 50 }
+    { "attribute": "stamina", "op": ">=", "value": 50 },
+    { "attribute": "literature", "op": ">=", "value": 130 },
+    { "attribute": "science", "op": ">=", "value": 130 },
+    { "attribute": "art", "op": ">=", "value": 130 },
+    { "attribute": "sports", "op": ">=", "value": 130 },
+    { "attribute": "popularity", "op": ">=", "value": 120 },
+    { "attribute": "appearance", "op": ">=", "value": 100 },
+    { "attribute": "grit", "op": ">=", "value": 100 },
+    { "attribute": "stress", "op": "<", "value": 50 }
   ],
   "defaultMiniGoals": [
-    { "deadline": "1998-02-23", "attributes": ["wenke", "like", "yishu"], "op": ">=", "value": 561 },
+    { "deadline": "1998-02-23", "attributes": ["literature", "science", "art"], "op": ">=", "value": 561 },
     { "deadline": "1998-01-02", "attributes": ["clubExperience"], "op": ">=", "value": 380 }
   ]
 }

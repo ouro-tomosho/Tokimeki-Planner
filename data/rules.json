@@ -1,0 +1,262 @@
+{
+  "timeline": {
+    "start": "1995-04-04",
+    "end": "1998-03-01",
+    "lastSettlement": "1998-02-28"
+  },
+  "clubUnlockDate": "1995-04-09",
+  "fixedPointScale": 1000000,
+  "restDayBonus": {
+    "daily": 4,
+    "club": 6,
+    "restCommandNegative": 4
+  },
+  "clubExperienceGain": {
+    "weekday": 1,
+    "restDay": 6
+  },
+  "clubExperience": {
+    "id": "clubExperience",
+    "name": "社团经验",
+    "min": 0,
+    "max": 999
+  },
+  "attributes": [
+    { "id": "tili", "name": "体力", "direction": "up", "min": 0, "max": 999, "default": 100 },
+    { "id": "wenke", "name": "文科", "direction": "up", "min": 0, "max": 999, "default": 40 },
+    { "id": "like", "name": "理科", "direction": "up", "min": 0, "max": 999, "default": 40 },
+    { "id": "yishu", "name": "艺术", "direction": "up", "min": 0, "max": 999, "default": 40 },
+    { "id": "yundong", "name": "运动", "direction": "up", "min": 0, "max": 999, "default": 40 },
+    { "id": "renyuan", "name": "人缘", "direction": "up", "min": 0, "max": 999, "default": 32 },
+    { "id": "rongzi", "name": "容姿", "direction": "up", "min": 0, "max": 999, "default": 60 },
+    { "id": "yili", "name": "毅力", "direction": "up", "min": 0, "max": 999, "default": 5 },
+    { "id": "yali", "name": "压力", "direction": "down", "min": 0, "max": 999, "default": 0 }
+  ],
+  "clubs": [
+    { "id": "wenyishe", "name": "文艺社" },
+    { "id": "yanjushe", "name": "演剧社" },
+    { "id": "kexueshe", "name": "科学社" },
+    { "id": "diannaoshe", "name": "电脑社" },
+    { "id": "meishushe", "name": "美术社" },
+    { "id": "guanyueshe", "name": "管乐社" },
+    { "id": "bangqiushe", "name": "棒球社" },
+    { "id": "zuqiushe", "name": "足球社" },
+    { "id": "wangqiushe", "name": "网球社" },
+    { "id": "youyongshe", "name": "游泳社" },
+    { "id": "lanqiushe", "name": "篮球社" }
+  ],
+  "commands": [
+    {
+      "id": "c-yandu-wenke",
+      "name": "研读文科",
+      "kind": "daily",
+      "clubId": null,
+      "isRestCommand": false,
+      "successRate": 0.63,
+      "clubExperienceGain": 0,
+      "effects": { "tili": -0.8, "wenke": 0.9, "like": 0.1, "yishu": 0.1, "yundong": -0.4, "renyuan": 0.3, "rongzi": -0.3, "yili": -0.1, "yali": 0.8 }
+    },
+    {
+      "id": "c-yandu-like",
+      "name": "研读理科",
+      "kind": "daily",
+      "clubId": null,
+      "isRestCommand": false,
+      "successRate": 0.63,
+      "clubExperienceGain": 0,
+      "effects": { "tili": -0.8, "wenke": 0.1, "like": 0.9, "yishu": 0.1, "yundong": -0.8, "renyuan": 0.1, "rongzi": -0.4, "yili": 0.3, "yali": 0.3 }
+    },
+    {
+      "id": "c-peiyang-yishu",
+      "name": "培养艺术气质",
+      "kind": "daily",
+      "clubId": null,
+      "isRestCommand": false,
+      "successRate": 0.63,
+      "clubExperienceGain": 0,
+      "effects": { "tili": -0.8, "wenke": 0.1, "like": 0.1, "yishu": 0.9, "yundong": -0.4, "renyuan": 0.1, "rongzi": -0.1, "yili": -0.1, "yali": -0.3 }
+    },
+    {
+      "id": "c-yundong",
+      "name": "运动",
+      "kind": "daily",
+      "clubId": null,
+      "isRestCommand": false,
+      "successRate": 0.63,
+      "clubExperienceGain": 0,
+      "effects": { "tili": -2.4, "wenke": -0.1, "like": -0.1, "yishu": -0.1, "yundong": 3.3, "renyuan": 0.1, "rongzi": -0.4, "yili": 1.4, "yali": 0.1 }
+    },
+    {
+      "id": "c-xianliao",
+      "name": "和同学闲聊",
+      "kind": "daily",
+      "clubId": null,
+      "isRestCommand": false,
+      "successRate": 0.63,
+      "clubExperienceGain": 0,
+      "effects": { "tili": -1.2, "wenke": -0.3, "like": -0.3, "yishu": -0.3, "yundong": 0.2, "renyuan": 1.5, "rongzi": 0.8, "yili": -0.4, "yali": -0.9 }
+    },
+    {
+      "id": "c-zhengli-yirong",
+      "name": "整理仪容",
+      "kind": "daily",
+      "clubId": null,
+      "isRestCommand": false,
+      "successRate": 0.63,
+      "clubExperienceGain": 0,
+      "effects": { "tili": -0.6, "wenke": -0.1, "like": -0.1, "yishu": -0.1, "yundong": -0.1, "renyuan": 0.5, "rongzi": 2.1, "yili": -0.6, "yali": 0.1 }
+    },
+    {
+      "id": "c-xiuxi",
+      "name": "休息",
+      "kind": "daily",
+      "clubId": null,
+      "isRestCommand": true,
+      "successRate": 1,
+      "clubExperienceGain": 0,
+      "effects": { "tili": 3.1, "wenke": 0, "like": 0, "yishu": 0, "yundong": 0, "renyuan": -0.6, "rongzi": -0.8, "yili": -0.1, "yali": -2.9 }
+    },
+    {
+      "id": "c-wenyishe",
+      "name": "文艺社",
+      "kind": "club",
+      "clubId": "wenyishe",
+      "isRestCommand": false,
+      "successRate": 0.63,
+      "clubExperienceGain": 1,
+      "effects": { "tili": -0.8, "wenke": 0.8, "like": 0.3, "yishu": 0.1, "yundong": 0, "renyuan": 0.1, "rongzi": -0.3, "yili": -0.1, "yali": 1.1 }
+    },
+    {
+      "id": "c-yanjushe",
+      "name": "演剧社",
+      "kind": "club",
+      "clubId": "yanjushe",
+      "isRestCommand": false,
+      "successRate": 0.63,
+      "clubExperienceGain": 1,
+      "effects": { "tili": -0.9, "wenke": 0.9, "like": 0, "yishu": 0.4, "yundong": 0.1, "renyuan": 0.1, "rongzi": -0.1, "yili": 0.1, "yali": 1.1 }
+    },
+    {
+      "id": "c-kexueshe",
+      "name": "科学社",
+      "kind": "club",
+      "clubId": "kexueshe",
+      "isRestCommand": false,
+      "successRate": 0.63,
+      "clubExperienceGain": 1,
+      "effects": { "tili": -0.8, "wenke": 0.1, "like": 0.9, "yishu": 0.3, "yundong": 0, "renyuan": 0.1, "rongzi": -0.3, "yili": 0.3, "yali": 1.4 }
+    },
+    {
+      "id": "c-diannaoshe",
+      "name": "电脑社",
+      "kind": "club",
+      "clubId": "diannaoshe",
+      "isRestCommand": false,
+      "successRate": 0.63,
+      "clubExperienceGain": 1,
+      "effects": { "tili": -0.8, "wenke": 0.1, "like": 0.7, "yishu": 0.3, "yundong": 0, "renyuan": 0.2, "rongzi": -0.4, "yili": 0.2, "yali": 1.8 }
+    },
+    {
+      "id": "c-meishushe",
+      "name": "美术社",
+      "kind": "club",
+      "clubId": "meishushe",
+      "isRestCommand": false,
+      "successRate": 0.63,
+      "clubExperienceGain": 1,
+      "effects": { "tili": -0.9, "wenke": 0.1, "like": 0, "yishu": 0.9, "yundong": 0.1, "renyuan": 0.1, "rongzi": -0.1, "yili": -0.1, "yali": 0.9 }
+    },
+    {
+      "id": "c-guanyueshe",
+      "name": "管乐社",
+      "kind": "club",
+      "clubId": "guanyueshe",
+      "isRestCommand": false,
+      "successRate": 0.63,
+      "clubExperienceGain": 1,
+      "effects": { "tili": -0.9, "wenke": 0.1, "like": 0.1, "yishu": 0.9, "yundong": 0.2, "renyuan": 0.1, "rongzi": -0.2, "yili": 0.1, "yali": 0.9 }
+    },
+    {
+      "id": "c-bangqiushe",
+      "name": "棒球社",
+      "kind": "club",
+      "clubId": "bangqiushe",
+      "isRestCommand": false,
+      "successRate": 0.63,
+      "clubExperienceGain": 1,
+      "effects": { "tili": -1.9, "wenke": -0.1, "like": -0.1, "yishu": -0.1, "yundong": 0.9, "renyuan": 0.1, "rongzi": -0.3, "yili": 0.3, "yali": 0.2 }
+    },
+    {
+      "id": "c-zuqiushe",
+      "name": "足球社",
+      "kind": "club",
+      "clubId": "zuqiushe",
+      "isRestCommand": false,
+      "successRate": 0.63,
+      "clubExperienceGain": 1,
+      "effects": { "tili": -1.9, "wenke": -0.1, "like": -0.1, "yishu": -0.1, "yundong": 0.9, "renyuan": 0.1, "rongzi": -0.2, "yili": 0.7, "yali": 0.3 }
+    },
+    {
+      "id": "c-wangqiushe",
+      "name": "网球社",
+      "kind": "club",
+      "clubId": "wangqiushe",
+      "isRestCommand": false,
+      "successRate": 0.63,
+      "clubExperienceGain": 1,
+      "effects": { "tili": -1.6, "wenke": -0.1, "like": -0.1, "yishu": 0, "yundong": 0.8, "renyuan": 0.1, "rongzi": -0.1, "yili": 0.6, "yali": 0.5 }
+    },
+    {
+      "id": "c-youyongshe",
+      "name": "游泳社",
+      "kind": "club",
+      "clubId": "youyongshe",
+      "isRestCommand": false,
+      "successRate": 0.63,
+      "clubExperienceGain": 1,
+      "effects": { "tili": -1.9, "wenke": -0.1, "like": -0.1, "yishu": 0, "yundong": 0.9, "renyuan": 0, "rongzi": -0.1, "yili": 0.7, "yali": 0.2 }
+    },
+    {
+      "id": "c-lanqiushe",
+      "name": "篮球社",
+      "kind": "club",
+      "clubId": "lanqiushe",
+      "isRestCommand": false,
+      "successRate": 0.63,
+      "clubExperienceGain": 1,
+      "effects": { "tili": -1.8, "wenke": -0.1, "like": -0.1, "yishu": -0.1, "yundong": 0.9, "renyuan": -0.1, "rongzi": -0.2, "yili": 0.6, "yali": 0.4 }
+    }
+  ],
+  "defaultStart": {
+    "tili": 100,
+    "wenke": 40,
+    "like": 40,
+    "yishu": 40,
+    "yundong": 40,
+    "renyuan": 32,
+    "rongzi": 60,
+    "yili": 5,
+    "yali": 0
+  },
+  "defaultGlobalConstraints": [
+    { "attribute": "tili", "op": ">=", "value": 20 },
+    { "attribute": "renyuan", "op": ">=", "value": 100 },
+    { "attribute": "rongzi", "op": ">=", "value": 35 },
+    { "attribute": "yali", "op": "<", "value": 70 }
+  ],
+  "defaultEndingGoals": [
+    { "attribute": "tili", "op": ">=", "value": 50 },
+    { "attribute": "wenke", "op": ">=", "value": 130 },
+    { "attribute": "like", "op": ">=", "value": 130 },
+    { "attribute": "yishu", "op": ">=", "value": 130 },
+    { "attribute": "yundong", "op": ">=", "value": 130 },
+    { "attribute": "renyuan", "op": ">=", "value": 120 },
+    { "attribute": "rongzi", "op": ">=", "value": 100 },
+    { "attribute": "yili", "op": ">=", "value": 100 },
+    { "attribute": "yali", "op": "<", "value": 50 }
+  ],
+  "defaultMiniGoals": [
+    { "deadline": "1998-02-23", "attributes": ["wenke", "like", "yishu"], "op": ">=", "value": 561 },
+    { "deadline": "1998-01-02", "attributes": ["clubExperience"], "op": ">=", "value": 380 }
+  ]
+}

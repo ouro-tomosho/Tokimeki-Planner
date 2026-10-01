@@ -7,23 +7,14 @@ import assert from 'node:assert/strict';
 
 import { createPlanner } from '../src/plan.js';
 import { createSolver } from '../src/solver.js';
-import { defaultInput } from '../src/input.js';
+import { clubInput, dayMap } from './support/fixtures.js';
 import { loadRules } from './support/rules.js';
 
 const rules = loadRules();
 const plan = createPlanner(rules);
 const solve = createSolver(rules);
 
-/** 起点、属性、目标都取默认，只是先加入一个社团——否则社团经验那条永远不可达。 */
-function baseInput() {
-  const input = defaultInput(rules);
-  input.initialClub = 'science-club';
-  return input;
-}
-
-function dayMap(result) {
-  return new Map(result.days.map((day) => [day.date, day]));
-}
+const baseInput = () => clubInput(rules);
 
 function assertIdenticalBefore(before, after, cut) {
   const left = dayMap(before);
@@ -69,7 +60,9 @@ test('改动一处之后，重算起点之前的安排逐格不变', () => {
   const after = plan(edited, { assignments: solve(edited, { previous: solve(input), fromDate: cut }) });
 
   assertIdenticalBefore(before, after, cut);
-  assert.equal(dayMap(after).get(before.weeks[61].days[1]).commandId !== undefined, true);
+
+  const editedWeekday = after.days.find((day) => day.date > cut && !day.isRestDay);
+  assert.equal(editedWeekday.commandId, 'cmd-rest', '改动的那一周应当用上新指令');
 });
 
 test('从重算起点起的部分，与"把前缀当成显式指定后整份重排"一致', () => {

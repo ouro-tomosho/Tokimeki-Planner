@@ -9,6 +9,7 @@ import { createPlanner } from '../src/plan.js';
 import { createSolver } from '../src/solver.js';
 import { createSettlement } from '../src/settlement.js';
 import { defaultInput } from '../src/input.js';
+import { clubInput } from './support/fixtures.js';
 import { loadRules } from './support/rules.js';
 
 const rules = loadRules();
@@ -17,9 +18,7 @@ const solve = createSolver(rules);
 
 /** 一套确实有解的输入：加入科学社，沿用数据文件里的默认目标。 */
 function feasibleInput() {
-  const input = defaultInput(rules);
-  input.initialClub = 'science-club';
-  return input;
+  return clubInput(rules);
 }
 
 function solveAndPlan(input) {

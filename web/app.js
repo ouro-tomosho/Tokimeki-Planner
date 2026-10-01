@@ -6,7 +6,7 @@
 
 import rules from '../data/rules.json';
 import { resolveCommand } from '../src/calendar.js';
-import { weekStartOf } from '../src/dates.js';
+import { addDays, weekStartOf } from '../src/dates.js';
 import { availableCommandIds, createClubLookup } from '../src/clubs.js';
 import { attributeById, attributeIds } from '../src/lookup.js';
 import { defaultInput, fromJson, toJson } from '../src/input.js';
@@ -23,8 +23,6 @@ const state = {
   daysByDate: new Map(),
   assignments: null,
   solving: false,
-  // 下一次求解从哪一天起重算；null = 整份重排。改一处只影响它之后的部分（票 07）。
-  fromDate: null,
 };
 const pending = new Map();
 const inlinePlan = createPlanner(rules);
@@ -768,6 +766,16 @@ function describeEndingGoal(goal) {
     : `${relation} —— 实际 ${goal.actual.toFixed(1)}，还差 ${goal.shortfall.toFixed(1)}`;
 }
 
+/**
+ * 改动落在哪一天，就从**不早于它**的那个决策点起重算。
+ * 取"不早于"而不是"所在周"：否则锚点与改动日之间的那几天也会被牵连着重排，
+ * "之前的安排逐格不变"就没了保证。
+ */
+function anchorAtOrAfter(date) {
+  const anchor = weekStartOf(date);
+  return anchor === date ? anchor : addDays(anchor, 7);
+}
+
 /** 「文科 + 理科 ≥ 561」这种关系串，三种描述共用。 */
 function goalRelation(goal) {
   const names = goal.attributes ? goal.attributes.map(nameOf).join(' + ') : nameOf(goal.attribute);
@@ -905,10 +913,10 @@ async function runPlan() {
 }
 
 /** 「生成」：先求解出完整日程，再按这份日程规划。 */
-async function generate() {
+async function generate({ fromDate = null } = {}) {
   // 求解期间又来的改动不能丢：记下来，这一轮结束后再排一次。
   if (state.solving) {
-    state.resolveQueued = true;
+    state.resolveQueued = { fromDate };
     return;
   }
   state.solving = true;
@@ -917,13 +925,7 @@ async function generate() {
   setStatus('求解中…');
 
   // 有重算起点就冻结它之前的部分：使用者之前的安排不该因为改了一处就整体翻新。
-  const options =
-    state.fromDate === null
-      ? {}
-      : { previous: state.assignments, fromDate: state.fromDate };
-  const recomputedFrom = state.fromDate;
-  state.fromDate = null;
-
+  const options = fromDate === null ? {} : { previous: state.assignments, fromDate };
   try {
     const reply = await requestSolve(state.input, options);
     if (reply.cancelled) {
@@ -936,16 +938,14 @@ async function generate() {
     }
     state.assignments = reply.assignments;
     await runPlan();
-    if (recomputedFrom) {
-      setStatus(`已从 ${recomputedFrom} 起重算——之前的安排原样保留。`);
-    }
   } finally {
     state.solving = false;
     $('btn-cancel').hidden = true;
     $('btn-plan').disabled = false;
     if (state.resolveQueued) {
+      const queued = state.resolveQueued;
       state.resolveQueued = false;
-      generate();
+      generate(queued);
     }
   }
 }
@@ -1004,23 +1004,28 @@ $('calendar').addEventListener('change', (event) => {
 
   if (action === 'rest') {
     state.input.restDays = toggleInList(state.input.restDays, control.dataset.date, control.checked);
-    state.fromDate = weekStartOf(control.dataset.date);
+    generate({ fromDate: anchorAtOrAfter(control.dataset.date) });
+    return;
   } else if (action === 'skip') {
     state.input.skippedDays = toggleInList(
       state.input.skippedDays,
       control.dataset.date,
       control.checked,
     );
-    state.fromDate = weekStartOf(control.dataset.date);
+    generate({ fromDate: anchorAtOrAfter(control.dataset.date) });
+    return;
   } else if (action === 'week-command') {
     setMapEntry(state.input.weekCommands, control.dataset.week, control.value);
-    state.fromDate = control.dataset.week;
+    generate({ fromDate: control.dataset.week });
+    return;
   } else if (action === 'day-command') {
     setMapEntry(state.input.dayCommands, control.dataset.date, control.value);
-    state.fromDate = weekStartOf(control.dataset.date);
+    generate({ fromDate: anchorAtOrAfter(control.dataset.date) });
+    return;
   } else if (action === 'club-change') {
     setClubChange(control.dataset.week, control.value);
-    state.fromDate = control.dataset.week;
+    generate({ fromDate: control.dataset.week });
+    return;
   } else {
     return;
   }

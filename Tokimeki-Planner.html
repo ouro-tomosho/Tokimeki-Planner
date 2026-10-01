@@ -1515,15 +1515,14 @@ function createSolver(rules) {
    * 排一份日程：滚动时域贪心，不达标再收尾。
    * 诊断阶段也走这里，只不过那时拿到的输入是**副本**（小目标被拿掉若干条）。
    */
-  function search(input, frozenBefore = null, previous = null) {
-    /**
-     * 该槽位是否已被冻结：早于重算起点，且上一份日程里已经有决定。
-     * 冻结的部分原样保留——使用者之前的安排不该因为改了一处就整体翻新。
-     */
-    const frozen = (date, key, map) => {
-      if (frozenBefore === null || date >= frozenBefore) return undefined;
-      return previous?.[map]?.[key];
-    };
+  function search(input, { previous = null, fromDate = null } = {}) {
+    /** 该休息日是否已被冻结：早于重算起点，且上一份日程里已经有决定。 */
+    const frozenDay = (date) =>
+      fromDate === null || date >= fromDate ? undefined : previous?.dayCommands?.[date];
+
+    /** 该周是否已被冻结。以该周在表里的第一个平日为准。 */
+    const frozenWeek = (date, anchor) =>
+      fromDate === null || date >= fromDate ? undefined : previous?.weekCommands?.[anchor];
 
     const calendar = buildCalendar(rules, input);
     const clubAt = createClubLookup(input);
@@ -1674,7 +1673,7 @@ function createSolver(rules) {
         const pinned = input.dayCommands[day.date];
         let chosen = pinned;
         if (chosen === undefined) {
-          const kept = frozen(day.date, day.date, 'dayCommands');
+          const kept = frozenDay(day.date);
           chosen = kept ?? pick(state, [day], candidatesAt(day.date), clubAt(day.date), day.date);
           dayCommands[day.date] = chosen;
         }
@@ -1686,7 +1685,7 @@ function createSolver(rules) {
         let chosen = pinned;
         if (chosen === undefined) {
           const date = workdays[0].date;
-          const kept = frozen(date, week.start, 'weekCommands');
+          const kept = frozenWeek(date, week.start);
           chosen = kept ?? pick(state, workdays, candidatesAt(date), clubAt(date), date);
           weekCommands[week.start] = chosen;
         }
@@ -1699,7 +1698,7 @@ function createSolver(rules) {
     // 滚动时域贪心对"终点长什么样"没有直接视野，只靠加权引导。
     // 没达标就再收一次尾：从后往前逐个槽位试遍候选，只接受让整份规划更好的改动。
     if (planner(input, { assignments }).goals.ok) return assignments;
-    return repair(input, assignments, frozenBefore);
+    return repair(input, assignments, fromDate);
   }
 
   /**
@@ -1767,7 +1766,7 @@ function createSolver(rules) {
    *                          之后的重新排。不传就是整份重排。
    */
   return function solve(input, { previous = null, fromDate = null } = {}) {
-    const assignments = search(input, fromDate, previous);
+    const assignments = search(input, { previous, fromDate });
     if (planner(input, { assignments }).goals.ok) return assignments;
     return { ...assignments, diagnosis: diagnose(input) };
   };
@@ -1787,7 +1786,7 @@ function createSolver(rules) {
     return score;
   }
 
-  function repair(input, assignments, frozenBefore = null) {
+  function repair(input, assignments, fromDate = null) {
     const clubAt = createClubLookup(input);
     const calendar = buildCalendar(rules, input, assignments);
     const dayByDate = new Map(calendar.days.map((day) => [day.date, day]));
@@ -1807,7 +1806,7 @@ function createSolver(rules) {
         const workdays = days.filter((day) => !day.isRestDay);
 
         const weekDate = workdays[0]?.date;
-        const weekFrozen = frozenBefore !== null && weekDate !== undefined && weekDate < frozenBefore;
+        const weekFrozen = fromDate !== null && weekDate !== undefined && weekDate < fromDate;
         if (workdays.length > 0 && !weekFrozen && input.weekCommands[week.start] === undefined) {
           const date = workdays[0].date;
           const original = assignments.weekCommands[week.start];
@@ -1826,7 +1825,7 @@ function createSolver(rules) {
 
         for (const day of days) {
           if (!day.isRestDay || !day.isSettled) continue;
-          if (frozenBefore !== null && day.date < frozenBefore) continue;
+          if (fromDate !== null && day.date < fromDate) continue;
           if (input.dayCommands[day.date] !== undefined) continue;
           const original = assignments.dayCommands[day.date];
           for (const id of candidatesAt(day.date)) {
@@ -3012,15 +3011,14 @@ function createSolver(rules) {
    * 排一份日程：滚动时域贪心，不达标再收尾。
    * 诊断阶段也走这里，只不过那时拿到的输入是**副本**（小目标被拿掉若干条）。
    */
-  function search(input, frozenBefore = null, previous = null) {
-    /**
-     * 该槽位是否已被冻结：早于重算起点，且上一份日程里已经有决定。
-     * 冻结的部分原样保留——使用者之前的安排不该因为改了一处就整体翻新。
-     */
-    const frozen = (date, key, map) => {
-      if (frozenBefore === null || date >= frozenBefore) return undefined;
-      return previous?.[map]?.[key];
-    };
+  function search(input, { previous = null, fromDate = null } = {}) {
+    /** 该休息日是否已被冻结：早于重算起点，且上一份日程里已经有决定。 */
+    const frozenDay = (date) =>
+      fromDate === null || date >= fromDate ? undefined : previous?.dayCommands?.[date];
+
+    /** 该周是否已被冻结。以该周在表里的第一个平日为准。 */
+    const frozenWeek = (date, anchor) =>
+      fromDate === null || date >= fromDate ? undefined : previous?.weekCommands?.[anchor];
 
     const calendar = buildCalendar(rules, input);
     const clubAt = createClubLookup(input);
@@ -3171,7 +3169,7 @@ function createSolver(rules) {
         const pinned = input.dayCommands[day.date];
         let chosen = pinned;
         if (chosen === undefined) {
-          const kept = frozen(day.date, day.date, 'dayCommands');
+          const kept = frozenDay(day.date);
           chosen = kept ?? pick(state, [day], candidatesAt(day.date), clubAt(day.date), day.date);
           dayCommands[day.date] = chosen;
         }
@@ -3183,7 +3181,7 @@ function createSolver(rules) {
         let chosen = pinned;
         if (chosen === undefined) {
           const date = workdays[0].date;
-          const kept = frozen(date, week.start, 'weekCommands');
+          const kept = frozenWeek(date, week.start);
           chosen = kept ?? pick(state, workdays, candidatesAt(date), clubAt(date), date);
           weekCommands[week.start] = chosen;
         }
@@ -3196,7 +3194,7 @@ function createSolver(rules) {
     // 滚动时域贪心对"终点长什么样"没有直接视野，只靠加权引导。
     // 没达标就再收一次尾：从后往前逐个槽位试遍候选，只接受让整份规划更好的改动。
     if (planner(input, { assignments }).goals.ok) return assignments;
-    return repair(input, assignments, frozenBefore);
+    return repair(input, assignments, fromDate);
   }
 
   /**
@@ -3264,7 +3262,7 @@ function createSolver(rules) {
    *                          之后的重新排。不传就是整份重排。
    */
   return function solve(input, { previous = null, fromDate = null } = {}) {
-    const assignments = search(input, fromDate, previous);
+    const assignments = search(input, { previous, fromDate });
     if (planner(input, { assignments }).goals.ok) return assignments;
     return { ...assignments, diagnosis: diagnose(input) };
   };
@@ -3284,7 +3282,7 @@ function createSolver(rules) {
     return score;
   }
 
-  function repair(input, assignments, frozenBefore = null) {
+  function repair(input, assignments, fromDate = null) {
     const clubAt = createClubLookup(input);
     const calendar = buildCalendar(rules, input, assignments);
     const dayByDate = new Map(calendar.days.map((day) => [day.date, day]));
@@ -3304,7 +3302,7 @@ function createSolver(rules) {
         const workdays = days.filter((day) => !day.isRestDay);
 
         const weekDate = workdays[0]?.date;
-        const weekFrozen = frozenBefore !== null && weekDate !== undefined && weekDate < frozenBefore;
+        const weekFrozen = fromDate !== null && weekDate !== undefined && weekDate < fromDate;
         if (workdays.length > 0 && !weekFrozen && input.weekCommands[week.start] === undefined) {
           const date = workdays[0].date;
           const original = assignments.weekCommands[week.start];
@@ -3323,7 +3321,7 @@ function createSolver(rules) {
 
         for (const day of days) {
           if (!day.isRestDay || !day.isSettled) continue;
-          if (frozenBefore !== null && day.date < frozenBefore) continue;
+          if (fromDate !== null && day.date < fromDate) continue;
           if (input.dayCommands[day.date] !== undefined) continue;
           const original = assignments.dayCommands[day.date];
           for (const id of candidatesAt(day.date)) {
@@ -3350,7 +3348,7 @@ return { createSolver };
 __ns["web/app.js"] = (() => {
 const rules = __ns["data/rules.json"];
 const { resolveCommand } = __ns["src/calendar.js"];
-const { weekStartOf } = __ns["src/dates.js"];
+const { addDays, weekStartOf } = __ns["src/dates.js"];
 const { availableCommandIds, createClubLookup } = __ns["src/clubs.js"];
 const { attributeById, attributeIds } = __ns["src/lookup.js"];
 const { defaultInput, fromJson, toJson } = __ns["src/input.js"];
@@ -3381,8 +3379,6 @@ const state = {
   daysByDate: new Map(),
   assignments: null,
   solving: false,
-  // 下一次求解从哪一天起重算；null = 整份重排。改一处只影响它之后的部分（票 07）。
-  fromDate: null,
 };
 const pending = new Map();
 const inlinePlan = createPlanner(rules);
@@ -4126,6 +4122,16 @@ function describeEndingGoal(goal) {
     : `${relation} —— 实际 ${goal.actual.toFixed(1)}，还差 ${goal.shortfall.toFixed(1)}`;
 }
 
+/**
+ * 改动落在哪一天，就从**不早于它**的那个决策点起重算。
+ * 取"不早于"而不是"所在周"：否则锚点与改动日之间的那几天也会被牵连着重排，
+ * "之前的安排逐格不变"就没了保证。
+ */
+function anchorAtOrAfter(date) {
+  const anchor = weekStartOf(date);
+  return anchor === date ? anchor : addDays(anchor, 7);
+}
+
 /** 「文科 + 理科 ≥ 561」这种关系串，三种描述共用。 */
 function goalRelation(goal) {
   const names = goal.attributes ? goal.attributes.map(nameOf).join(' + ') : nameOf(goal.attribute);
@@ -4263,10 +4269,10 @@ async function runPlan() {
 }
 
 /** 「生成」：先求解出完整日程，再按这份日程规划。 */
-async function generate() {
+async function generate({ fromDate = null } = {}) {
   // 求解期间又来的改动不能丢：记下来，这一轮结束后再排一次。
   if (state.solving) {
-    state.resolveQueued = true;
+    state.resolveQueued = { fromDate };
     return;
   }
   state.solving = true;
@@ -4275,13 +4281,7 @@ async function generate() {
   setStatus('求解中…');
 
   // 有重算起点就冻结它之前的部分：使用者之前的安排不该因为改了一处就整体翻新。
-  const options =
-    state.fromDate === null
-      ? {}
-      : { previous: state.assignments, fromDate: state.fromDate };
-  const recomputedFrom = state.fromDate;
-  state.fromDate = null;
-
+  const options = fromDate === null ? {} : { previous: state.assignments, fromDate };
   try {
     const reply = await requestSolve(state.input, options);
     if (reply.cancelled) {
@@ -4294,16 +4294,14 @@ async function generate() {
     }
     state.assignments = reply.assignments;
     await runPlan();
-    if (recomputedFrom) {
-      setStatus(`已从 ${recomputedFrom} 起重算——之前的安排原样保留。`);
-    }
   } finally {
     state.solving = false;
     $('btn-cancel').hidden = true;
     $('btn-plan').disabled = false;
     if (state.resolveQueued) {
+      const queued = state.resolveQueued;
       state.resolveQueued = false;
-      generate();
+      generate(queued);
     }
   }
 }
@@ -4362,23 +4360,28 @@ $('calendar').addEventListener('change', (event) => {
 
   if (action === 'rest') {
     state.input.restDays = toggleInList(state.input.restDays, control.dataset.date, control.checked);
-    state.fromDate = weekStartOf(control.dataset.date);
+    generate({ fromDate: anchorAtOrAfter(control.dataset.date) });
+    return;
   } else if (action === 'skip') {
     state.input.skippedDays = toggleInList(
       state.input.skippedDays,
       control.dataset.date,
       control.checked,
     );
-    state.fromDate = weekStartOf(control.dataset.date);
+    generate({ fromDate: anchorAtOrAfter(control.dataset.date) });
+    return;
   } else if (action === 'week-command') {
     setMapEntry(state.input.weekCommands, control.dataset.week, control.value);
-    state.fromDate = control.dataset.week;
+    generate({ fromDate: control.dataset.week });
+    return;
   } else if (action === 'day-command') {
     setMapEntry(state.input.dayCommands, control.dataset.date, control.value);
-    state.fromDate = weekStartOf(control.dataset.date);
+    generate({ fromDate: anchorAtOrAfter(control.dataset.date) });
+    return;
   } else if (action === 'club-change') {
     setClubChange(control.dataset.week, control.value);
-    state.fromDate = control.dataset.week;
+    generate({ fromDate: control.dataset.week });
+    return;
   } else {
     return;
   }

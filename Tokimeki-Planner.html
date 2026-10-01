@@ -255,6 +255,13 @@
         <h2 class="spaced">当前属性</h2>
         <div id="attributes"></div>
 
+        <h2 class="spaced">社团</h2>
+        <div class="field">
+          <span>起始社团</span>
+          <select id="initial-club"></select>
+        </div>
+        <small>社团只能在周日切换，用每周表头的社团下拉框；未加入社团时社团指令不可选。</small>
+
         <h2 class="spaced">全局默认指令</h2>
         <div class="field">
           <span>平日周指令</span>
@@ -489,6 +496,50 @@ function buildSequence(days) {
 }
 return { WEEKDAY_NAMES, buildCalendar };
 })();
+__ns["src/clubs.js"] = (() => {
+// 社团状态：某个日期上，使用者当前加入的是哪个社团。
+//
+// 社团切换只在周日发生、自该周日起生效，所以某一天的社团 = 不晚于该日的最后一次切换结果。
+// 工具从不自行选择或切换社团。
+
+/** @returns {(date: string) => string | null} */
+function createClubLookup(input) {
+  const changes = [...input.clubChanges].sort((a, b) =>
+    a.date < b.date ? -1 : a.date > b.date ? 1 : 0,
+  );
+
+  return function clubAt(date) {
+    let club = input.initialClub;
+    for (const change of changes) {
+      if (change.date > date) break;
+      club = change.clubId;
+    }
+    return club;
+  };
+}
+
+/**
+ * 这一天不能执行这条指令的原因；`null` 表示可以执行。
+ *   'club-not-unlocked'  还没到社团解锁日
+ *   'club-not-selected'  这个时点没有加入任何社团
+ *   'club-mismatch'      加入的是别的社团
+ */
+function clubBlockReason(rules, command, club, date) {
+  if (command.kind !== 'club') return null;
+  if (date < rules.clubUnlockDate) return 'club-not-unlocked';
+  if (club === null) return 'club-not-selected';
+  if (command.clubId !== club) return 'club-mismatch';
+  return null;
+}
+
+/** 这一天可选的指令 id（受解锁日与当前社团限制）。 */
+function availableCommandIds(rules, club, date) {
+  return rules.commands
+    .filter((command) => clubBlockReason(rules, command, club, date) === null)
+    .map((command) => command.id);
+}
+return { createClubLookup, clubBlockReason, availableCommandIds };
+})();
 __ns["src/goals.js"] = (() => {
 const { isDate } = __ns["src/dates.js"];
 // 目标与约束的形状校验。规则文件的默认目标与使用者输入的目标，
@@ -699,8 +750,13 @@ function checkClub(input, clubIds, inTimeline, problems) {
     return;
   }
   for (const change of input.clubChanges) {
-    if (!isDate(change?.date)) problems.push(`clubChanges 的日期格式错误：${change?.date}`);
-    else if (!inTimeline(change.date)) problems.push(`clubChanges 的日期超出时间轴：${change.date}`);
+    if (!isDate(change?.date)) {
+      problems.push(`clubChanges 的日期格式错误：${change?.date}`);
+    } else if (!inTimeline(change.date)) {
+      problems.push(`clubChanges 的日期超出时间轴：${change.date}`);
+    } else if (weekdayOf(change.date) !== 0) {
+      problems.push(`clubChanges 只能在周日切换社团：${change.date}`);
+    }
     if (change?.clubId !== null && !clubIds.has(change?.clubId)) {
       problems.push(`clubChanges 引用了未知社团 ${change?.clubId}`);
     }
@@ -1072,14 +1128,16 @@ return { WEEKDAY, REST_DAY, createSettlement };
 })();
 __ns["src/plan.js"] = (() => {
 const { buildCalendar } = __ns["src/calendar.js"];
+const { clubBlockReason, createClubLookup } = __ns["src/clubs.js"];
 const { validateInput } = __ns["src/input.js"];
 const { validateRules } = __ns["src/rules.js"];
 const { REST_DAY, WEEKDAY, createSettlement } = __ns["src/settlement.js"];
 // 规划入口。
 //
 // 预先商定的接缝是 `plan(input) → PlanResult`：规则在**构造时**注入，所以调用方
-// 只传 input。本票把日历与单日结算接起来：每一天按它实际执行的指令结算，结果表
-// 因此带上逐日属性。指令还没有被"求解"——没有指定时就是空过。
+// 只传 input。本票把日历、社团状态与单日结算接起来：每一天按它实际执行的指令结算，
+// 不可用的社团指令不会被结算。指令还没有被"求解"——没有指定时就是待定。
+
 
 
 
@@ -1089,6 +1147,7 @@ const { REST_DAY, WEEKDAY, createSettlement } = __ns["src/settlement.js"];
 function createPlanner(rules) {
   const ruleProblems = validateRules(rules);
   const settleDay = createSettlement(rules);
+  const commandsById = new Map(rules.commands.map((command) => [command.id, command]));
   const scale = rules.fixedPointScale;
 
   const toScaled = (values) =>
@@ -1107,6 +1166,7 @@ function createPlanner(rules) {
     }
 
     const calendar = buildCalendar(rules, input);
+    const clubAt = createClubLookup(input);
 
     let state = {
       attributes: toScaled(input.attributes),
@@ -1114,11 +1174,17 @@ function createPlanner(rules) {
     };
 
     const days = calendar.days.map((day) => {
-      if (day.isSettled) {
-        state = settleDay(state, day.commandId, day.isRestDay ? REST_DAY : WEEKDAY);
+      const command = day.commandId ? commandsById.get(day.commandId) : null;
+      // 社团指令受解锁日与「当前社团」限制；使用者写进来的指令若不可用，就不执行。
+      const commandBlocked = command
+        ? clubBlockReason(rules, command, clubAt(day.date), day.date)
+        : null;
+
+      if (day.isSettled && command && commandBlocked === null) {
+        state = settleDay(state, command.id, day.isRestDay ? REST_DAY : WEEKDAY);
       }
-      // 不结算的日子（空过、开局日、终点）属性原样带入下一天。
-      return { ...day, attributes: toReal(state.attributes) };
+      // 不结算的日子（空过、开局日、终点、指令不可用）属性原样带入下一天。
+      return { ...day, commandBlocked, attributes: toReal(state.attributes) };
     });
 
     return {
@@ -1174,6 +1240,50 @@ return {  };
     <script>
 const __ns = {};
 __ns["data/rules.json"] = {"timeline":{"start":"1995-04-04","end":"1998-03-01","lastSettlement":"1998-02-28"},"clubUnlockDate":"1995-04-09","fixedPointScale":1000000,"restDayBonus":{"daily":4,"club":6,"restCommandNegative":4},"clubExperienceGain":{"weekday":1,"restDay":6},"clubExperience":{"id":"clubExperience","name":"社团经验","min":0,"max":999},"attributes":[{"id":"stamina","name":"体力","direction":"up","min":0,"max":999},{"id":"literature","name":"文科","direction":"up","min":0,"max":999},{"id":"science","name":"理科","direction":"up","min":0,"max":999},{"id":"art","name":"艺术","direction":"up","min":0,"max":999},{"id":"sports","name":"运动","direction":"up","min":0,"max":999},{"id":"popularity","name":"人缘","direction":"up","min":0,"max":999},{"id":"appearance","name":"容姿","direction":"up","min":0,"max":999},{"id":"grit","name":"毅力","direction":"up","min":0,"max":999},{"id":"stress","name":"压力","direction":"down","min":0,"max":999}],"clubs":[{"id":"literature-club","name":"文艺社"},{"id":"drama-club","name":"演剧社"},{"id":"science-club","name":"科学社"},{"id":"computer-club","name":"电脑社"},{"id":"art-club","name":"美术社"},{"id":"brass-band-club","name":"管乐社"},{"id":"baseball-club","name":"棒球社"},{"id":"soccer-club","name":"足球社"},{"id":"tennis-club","name":"网球社"},{"id":"swimming-club","name":"游泳社"},{"id":"basketball-club","name":"篮球社"}],"commands":[{"id":"cmd-study-literature","name":"研读文科","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.9,"science":0.1,"art":0.1,"sports":-0.4,"popularity":0.3,"appearance":-0.3,"grit":-0.1,"stress":0.8}},{"id":"cmd-study-science","name":"研读理科","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.1,"science":0.9,"art":0.1,"sports":-0.8,"popularity":0.1,"appearance":-0.4,"grit":0.3,"stress":0.3}},{"id":"cmd-practice-art","name":"培养艺术气质","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.1,"science":0.1,"art":0.9,"sports":-0.4,"popularity":0.1,"appearance":-0.1,"grit":-0.1,"stress":-0.3}},{"id":"cmd-exercise","name":"运动","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-2.4,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":3.3,"popularity":0.1,"appearance":-0.4,"grit":1.4,"stress":0.1}},{"id":"cmd-chat","name":"和同学闲聊","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.2,"literature":-0.3,"science":-0.3,"art":-0.3,"sports":0.2,"popularity":1.5,"appearance":0.8,"grit":-0.4,"stress":-0.9}},{"id":"cmd-groom","name":"整理仪容","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.6,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":-0.1,"popularity":0.5,"appearance":2.1,"grit":-0.6,"stress":0.1}},{"id":"cmd-rest","name":"休息","kind":"daily","clubId":null,"isRestCommand":true,"successRate":1,"effects":{"stamina":3.1,"literature":0,"science":0,"art":0,"sports":0,"popularity":-0.6,"appearance":-0.8,"grit":-0.1,"stress":-2.9}},{"id":"cmd-club-literature","name":"文艺社","kind":"club","clubId":"literature-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.8,"science":0.3,"art":0.1,"sports":0,"popularity":0.1,"appearance":-0.3,"grit":-0.1,"stress":1.1}},{"id":"cmd-club-drama","name":"演剧社","kind":"club","clubId":"drama-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.9,"literature":0.9,"science":0,"art":0.4,"sports":0.1,"popularity":0.1,"appearance":-0.1,"grit":0.1,"stress":1.1}},{"id":"cmd-club-science","name":"科学社","kind":"club","clubId":"science-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.1,"science":0.9,"art":0.3,"sports":0,"popularity":0.1,"appearance":-0.3,"grit":0.3,"stress":1.4}},{"id":"cmd-club-computer","name":"电脑社","kind":"club","clubId":"computer-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.1,"science":0.7,"art":0.3,"sports":0,"popularity":0.2,"appearance":-0.4,"grit":0.2,"stress":1.8}},{"id":"cmd-club-art","name":"美术社","kind":"club","clubId":"art-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.9,"literature":0.1,"science":0,"art":0.9,"sports":0.1,"popularity":0.1,"appearance":-0.1,"grit":-0.1,"stress":0.9}},{"id":"cmd-club-brass-band","name":"管乐社","kind":"club","clubId":"brass-band-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.9,"literature":0.1,"science":0.1,"art":0.9,"sports":0.2,"popularity":0.1,"appearance":-0.2,"grit":0.1,"stress":0.9}},{"id":"cmd-club-baseball","name":"棒球社","kind":"club","clubId":"baseball-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.9,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":0.9,"popularity":0.1,"appearance":-0.3,"grit":0.3,"stress":0.2}},{"id":"cmd-club-soccer","name":"足球社","kind":"club","clubId":"soccer-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.9,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":0.9,"popularity":0.1,"appearance":-0.2,"grit":0.7,"stress":0.3}},{"id":"cmd-club-tennis","name":"网球社","kind":"club","clubId":"tennis-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.6,"literature":-0.1,"science":-0.1,"art":0,"sports":0.8,"popularity":0.1,"appearance":-0.1,"grit":0.6,"stress":0.5}},{"id":"cmd-club-swimming","name":"游泳社","kind":"club","clubId":"swimming-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.9,"literature":-0.1,"science":-0.1,"art":0,"sports":0.9,"popularity":0,"appearance":-0.1,"grit":0.7,"stress":0.2}},{"id":"cmd-club-basketball","name":"篮球社","kind":"club","clubId":"basketball-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.8,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":0.9,"popularity":-0.1,"appearance":-0.2,"grit":0.6,"stress":0.4}}],"defaultStart":{"stamina":100,"literature":40,"science":40,"art":40,"sports":40,"popularity":32,"appearance":60,"grit":5,"stress":0},"defaultGlobalConstraints":[{"attribute":"stamina","op":">=","value":20},{"attribute":"popularity","op":">=","value":100},{"attribute":"appearance","op":">=","value":35},{"attribute":"stress","op":"<","value":70}],"defaultEndingGoals":[{"attribute":"stamina","op":">=","value":50},{"attribute":"literature","op":">=","value":130},{"attribute":"science","op":">=","value":130},{"attribute":"art","op":">=","value":130},{"attribute":"sports","op":">=","value":130},{"attribute":"popularity","op":">=","value":120},{"attribute":"appearance","op":">=","value":100},{"attribute":"grit","op":">=","value":100},{"attribute":"stress","op":"<","value":50}],"defaultMiniGoals":[{"deadline":"1998-02-23","attributes":["literature","science","art"],"op":">=","value":561},{"deadline":"1998-01-02","attributes":["clubExperience"],"op":">=","value":380}]};
+__ns["src/clubs.js"] = (() => {
+// 社团状态：某个日期上，使用者当前加入的是哪个社团。
+//
+// 社团切换只在周日发生、自该周日起生效，所以某一天的社团 = 不晚于该日的最后一次切换结果。
+// 工具从不自行选择或切换社团。
+
+/** @returns {(date: string) => string | null} */
+function createClubLookup(input) {
+  const changes = [...input.clubChanges].sort((a, b) =>
+    a.date < b.date ? -1 : a.date > b.date ? 1 : 0,
+  );
+
+  return function clubAt(date) {
+    let club = input.initialClub;
+    for (const change of changes) {
+      if (change.date > date) break;
+      club = change.clubId;
+    }
+    return club;
+  };
+}
+
+/**
+ * 这一天不能执行这条指令的原因；`null` 表示可以执行。
+ *   'club-not-unlocked'  还没到社团解锁日
+ *   'club-not-selected'  这个时点没有加入任何社团
+ *   'club-mismatch'      加入的是别的社团
+ */
+function clubBlockReason(rules, command, club, date) {
+  if (command.kind !== 'club') return null;
+  if (date < rules.clubUnlockDate) return 'club-not-unlocked';
+  if (club === null) return 'club-not-selected';
+  if (command.clubId !== club) return 'club-mismatch';
+  return null;
+}
+
+/** 这一天可选的指令 id（受解锁日与当前社团限制）。 */
+function availableCommandIds(rules, club, date) {
+  return rules.commands
+    .filter((command) => clubBlockReason(rules, command, club, date) === null)
+    .map((command) => command.id);
+}
+return { createClubLookup, clubBlockReason, availableCommandIds };
+})();
 __ns["src/lookup.js"] = (() => {
 // 领域对象的查询视图。校验在 rules.js，这里只负责按 id 取用。
 
@@ -1421,8 +1531,13 @@ function checkClub(input, clubIds, inTimeline, problems) {
     return;
   }
   for (const change of input.clubChanges) {
-    if (!isDate(change?.date)) problems.push(`clubChanges 的日期格式错误：${change?.date}`);
-    else if (!inTimeline(change.date)) problems.push(`clubChanges 的日期超出时间轴：${change.date}`);
+    if (!isDate(change?.date)) {
+      problems.push(`clubChanges 的日期格式错误：${change?.date}`);
+    } else if (!inTimeline(change.date)) {
+      problems.push(`clubChanges 的日期超出时间轴：${change.date}`);
+    } else if (weekdayOf(change.date) !== 0) {
+      problems.push(`clubChanges 只能在周日切换社团：${change.date}`);
+    }
     if (change?.clubId !== null && !clubIds.has(change?.clubId)) {
       problems.push(`clubChanges 引用了未知社团 ${change?.clubId}`);
     }
@@ -1954,14 +2069,16 @@ return { WEEKDAY, REST_DAY, createSettlement };
 })();
 __ns["src/plan.js"] = (() => {
 const { buildCalendar } = __ns["src/calendar.js"];
+const { clubBlockReason, createClubLookup } = __ns["src/clubs.js"];
 const { validateInput } = __ns["src/input.js"];
 const { validateRules } = __ns["src/rules.js"];
 const { REST_DAY, WEEKDAY, createSettlement } = __ns["src/settlement.js"];
 // 规划入口。
 //
 // 预先商定的接缝是 `plan(input) → PlanResult`：规则在**构造时**注入，所以调用方
-// 只传 input。本票把日历与单日结算接起来：每一天按它实际执行的指令结算，结果表
-// 因此带上逐日属性。指令还没有被"求解"——没有指定时就是空过。
+// 只传 input。本票把日历、社团状态与单日结算接起来：每一天按它实际执行的指令结算，
+// 不可用的社团指令不会被结算。指令还没有被"求解"——没有指定时就是待定。
+
 
 
 
@@ -1971,6 +2088,7 @@ const { REST_DAY, WEEKDAY, createSettlement } = __ns["src/settlement.js"];
 function createPlanner(rules) {
   const ruleProblems = validateRules(rules);
   const settleDay = createSettlement(rules);
+  const commandsById = new Map(rules.commands.map((command) => [command.id, command]));
   const scale = rules.fixedPointScale;
 
   const toScaled = (values) =>
@@ -1989,6 +2107,7 @@ function createPlanner(rules) {
     }
 
     const calendar = buildCalendar(rules, input);
+    const clubAt = createClubLookup(input);
 
     let state = {
       attributes: toScaled(input.attributes),
@@ -1996,11 +2115,17 @@ function createPlanner(rules) {
     };
 
     const days = calendar.days.map((day) => {
-      if (day.isSettled) {
-        state = settleDay(state, day.commandId, day.isRestDay ? REST_DAY : WEEKDAY);
+      const command = day.commandId ? commandsById.get(day.commandId) : null;
+      // 社团指令受解锁日与「当前社团」限制；使用者写进来的指令若不可用，就不执行。
+      const commandBlocked = command
+        ? clubBlockReason(rules, command, clubAt(day.date), day.date)
+        : null;
+
+      if (day.isSettled && command && commandBlocked === null) {
+        state = settleDay(state, command.id, day.isRestDay ? REST_DAY : WEEKDAY);
       }
-      // 不结算的日子（空过、开局日、终点）属性原样带入下一天。
-      return { ...day, attributes: toReal(state.attributes) };
+      // 不结算的日子（空过、开局日、终点、指令不可用）属性原样带入下一天。
+      return { ...day, commandBlocked, attributes: toReal(state.attributes) };
     });
 
     return {
@@ -2027,6 +2152,7 @@ return { createPlanner };
 })();
 __ns["web/app.js"] = (() => {
 const rules = __ns["data/rules.json"];
+const { availableCommandIds, createClubLookup } = __ns["src/clubs.js"];
 const { attributeById, attributeIds } = __ns["src/lookup.js"];
 const { defaultInput, fromJson, toJson } = __ns["src/input.js"];
 const { createPlanner } = __ns["src/plan.js"];
@@ -2041,8 +2167,10 @@ const { createPlanner } = __ns["src/plan.js"];
 
 
 
+
 const UNSET = '';
 const EMPTY = '__empty__';
+const NO_CLUB = '__no_club__';
 
 const state = { input: defaultInput(rules), requestId: 0, daysByDate: new Map() };
 const pending = new Map();
@@ -2056,6 +2184,7 @@ let workerUnavailable = false;
 let dayRows = new Map();
 let weekRows = new Map();
 let renderedSignature = '';
+let clubAtNow = () => null;
 
 const BASE_COLUMNS = ['日期', '星期', '当天顺序', '结算', '指令', '休息日', '跳过'];
 const COLUMNS = [...BASE_COLUMNS, ...attributeLabels.map((a) => a.name)];
@@ -2065,6 +2194,11 @@ const EMPTY_LABELS = {
   day: '空过（指定本日）',
   'day-command': '空过（日指令置空）',
   week: '空过（本周空过）',
+};
+const BLOCK_LABELS = {
+  'club-not-unlocked': '不结算（社团未解锁）',
+  'club-not-selected': '不结算（未加入社团）',
+  'club-mismatch': '不结算（社团不符）',
 };
 const CURVE_COLORS = [
   '#2f6fed',
@@ -2158,12 +2292,13 @@ function commandIdFromDefaultChoice(choice) {
 /**
  * 填一个指令下拉框。`choice` 是已经归一化过的选择串。
  * `allowEmpty` 为假时不给「空过」选项——那就是全局默认指令。
+ * `commands` 用来把不可用的社团指令挡在候选之外。
  */
-function fillCommandSelect(select, choice, { allowEmpty = true } = {}) {
+function fillCommandSelect(select, choice, { allowEmpty = true, commands = rules.commands } = {}) {
   select.textContent = '';
   const entries = [[UNSET, '未指定']];
   if (allowEmpty) entries.push([EMPTY, '空过']);
-  for (const command of rules.commands) entries.push([command.id, command.name]);
+  for (const command of commands) entries.push([command.id, command.name]);
 
   for (const [value, label] of entries) {
     const option = document.createElement('option');
@@ -2171,7 +2306,48 @@ function fillCommandSelect(select, choice, { allowEmpty = true } = {}) {
     option.textContent = label;
     select.append(option);
   }
+
+  // 已经写进输入、但当前**不可用**的指令也要留在选项里——否则下拉框会显示成"未指定"，
+  // 与输入里那条真实存在的指定对不上。至于为什么没执行，由结算列说明。
+  if (choice && !entries.some(([value]) => value === choice)) {
+    const option = document.createElement('option');
+    option.value = choice;
+    option.textContent = `${commandNames.get(choice) ?? choice}（不可用）`;
+    select.append(option);
+  }
+
   select.value = choice;
+}
+
+/** 这一天能选的指令——社团指令受解锁日与当前社团限制。 */
+function commandsAvailableAt(date) {
+  const allowed = new Set(availableCommandIds(rules, clubAtNow(date), date));
+  return rules.commands.filter((command) => allowed.has(command.id));
+}
+
+function fillClubSelect(select, value) {
+  select.textContent = '';
+  const entries = [[UNSET, '未加入'], ...rules.clubs.map((club) => [club.id, club.name])];
+  for (const [optionValue, label] of entries) {
+    const option = document.createElement('option');
+    option.value = optionValue;
+    option.textContent = label;
+    select.append(option);
+  }
+  select.value = value ?? UNSET;
+}
+
+/** 每周表头里的社团下拉框：三态——不切换 / 退出社团 / 某个社团。 */
+function fillWeekClubSelect(select, value) {
+  select.textContent = '';
+  const entries = [[UNSET, '不切换'], [NO_CLUB, '退出社团'], ...rules.clubs.map((club) => [club.id, club.name])];
+  for (const [optionValue, label] of entries) {
+    const option = document.createElement('option');
+    option.value = optionValue;
+    option.textContent = label;
+    select.append(option);
+  }
+  select.value = value === undefined ? UNSET : value === null ? NO_CLUB : value;
 }
 
 function setMapEntry(map, key, choice) {
@@ -2190,7 +2366,9 @@ function fillCommandCell(cell, day) {
     const select = document.createElement('select');
     select.dataset.action = 'day-command';
     select.dataset.date = day.date;
-    fillCommandSelect(select, choiceFromCommandId(state.input.dayCommands[day.date]));
+    fillCommandSelect(select, choiceFromCommandId(state.input.dayCommands[day.date]), {
+      commands: commandsAvailableAt(day.date),
+    });
     cell.append(select);
     return;
   }
@@ -2236,6 +2414,7 @@ function renderForm() {
     container.append(label);
   }
 
+  fillClubSelect($('initial-club'), state.input.initialClub);
   fillCommandSelect($('default-week-command'), state.input.defaultWeekCommand ?? UNSET, {
     allowEmpty: false,
   });
@@ -2248,7 +2427,9 @@ function renderForm() {
 
 function calendarSignature(result) {
   const last = result.days[result.days.length - 1];
-  return `${result.startDate}|${result.days.length}|${last ? last.date : ''}`;
+  // 社团决定了每个时点能选哪些指令，所以它一变就得重建下拉框里的候选。
+  const clubs = `${state.input.initialClub}|${JSON.stringify(state.input.clubChanges)}`;
+  return `${result.startDate}|${result.days.length}|${last ? last.date : ''}|${clubs}`;
 }
 
 function renderCalendar(result) {
@@ -2297,18 +2478,35 @@ function buildWeekRow(week) {
   const anchor = document.createElement('span');
   anchor.textContent = `周锚点 ${week.start}（${week.firstDay} 起）`;
 
-  const flag = document.createElement('label');
-  flag.className = 'week-flag';
-  const select = document.createElement('select');
-  select.dataset.action = 'week-command';
-  select.dataset.week = week.start;
-  fillCommandSelect(select, choiceFromCommandId(state.input.weekCommands[week.start]));
-  flag.append(document.createTextNode(' 周指令 '), select);
+  const commandFlag = document.createElement('label');
+  commandFlag.className = 'week-flag';
+  const commandSelect = document.createElement('select');
+  commandSelect.dataset.action = 'week-command';
+  commandSelect.dataset.week = week.start;
+  fillCommandSelect(commandSelect, choiceFromCommandId(state.input.weekCommands[week.start]), {
+    commands: commandsAvailableAt(week.firstDay),
+  });
+  commandFlag.append(document.createTextNode(' 周指令 '), commandSelect);
 
-  cell.append(anchor, flag);
+  // 社团只能在周日切换，而每周表头正是那个周日。
+  const clubFlag = document.createElement('label');
+  clubFlag.className = 'week-flag';
+  const clubSelect = document.createElement('select');
+  clubSelect.dataset.action = 'club-change';
+  clubSelect.dataset.week = week.start;
+  fillWeekClubSelect(clubSelect, clubChangeValueAt(week.start));
+  clubFlag.append(document.createTextNode(' 社团 '), clubSelect);
+
+  cell.append(anchor, commandFlag, clubFlag);
   row.append(cell);
   weekRows.set(week.start, row);
   return row;
+}
+
+/** 该周锚点上是否有一条「切换社团」记录；undefined 表示不切换。 */
+function clubChangeValueAt(date) {
+  const change = state.input.clubChanges.find((entry) => entry.date === date);
+  return change ? change.clubId : undefined;
 }
 
 function buildDayRow(day) {
@@ -2344,6 +2542,8 @@ function buildDayRow(day) {
 
 /** 结果形状没变时只更新既有行，不重建 DOM——否则改一个下拉就要重画一千多行。 */
 function applyCalendar(result) {
+  clubAtNow = createClubLookup(state.input);
+
   if (renderedSignature !== calendarSignature(result)) {
     renderCalendar(result);
   }
@@ -2367,9 +2567,11 @@ function applyCalendar(result) {
       ? EMPTY_LABELS[day.skipSource]
       : !day.isSettled
         ? '不结算'
-        : day.commandId
-          ? '结算'
-          : '待定';
+        : day.commandBlocked
+          ? BLOCK_LABELS[day.commandBlocked]
+          : day.commandId
+            ? '结算'
+            : '待定';
 
     // 指令单元格只在「是否休息日」改变时才重建
     const restFlag = day.isRestDay ? '1' : '0';
@@ -2397,8 +2599,15 @@ function applyCalendar(result) {
   }
 
   for (const week of result.weeks) {
-    const select = weekRows.get(week.start)?.querySelector('select[data-action="week-command"]');
-    if (select) select.value = choiceFromCommandId(state.input.weekCommands[week.start]);
+    const row = weekRows.get(week.start);
+    if (!row) continue;
+    const commandSelect = row.querySelector('select[data-action="week-command"]');
+    if (commandSelect) commandSelect.value = choiceFromCommandId(state.input.weekCommands[week.start]);
+    const clubSelect = row.querySelector('select[data-action="club-change"]');
+    if (clubSelect) {
+      const value = clubChangeValueAt(week.start);
+      clubSelect.value = value === undefined ? UNSET : value === null ? NO_CLUB : value;
+    }
   }
 
   state.daysByDate = new Map(result.days.map((d) => [d.date, d]));
@@ -2559,6 +2768,19 @@ function toggleInList(list, value, present) {
   return [...next].sort();
 }
 
+/** 在一个周锚点上写入/清除社团切换。不切换 = 没有这条记录。 */
+function setClubChange(weekStart, choice) {
+  const others = state.input.clubChanges.filter((entry) => entry.date !== weekStart);
+  if (choice === UNSET) {
+    state.input.clubChanges = others;
+    return;
+  }
+  const clubId = choice === NO_CLUB ? null : choice;
+  state.input.clubChanges = [...others, { date: weekStart, clubId }].sort((a, b) =>
+    a.date < b.date ? -1 : 1,
+  );
+}
+
 $('calendar').addEventListener('change', (event) => {
   const control = event.target;
   const action = control.dataset && control.dataset.action;
@@ -2575,6 +2797,8 @@ $('calendar').addEventListener('change', (event) => {
     setMapEntry(state.input.weekCommands, control.dataset.week, control.value);
   } else if (action === 'day-command') {
     setMapEntry(state.input.dayCommands, control.dataset.date, control.value);
+  } else if (action === 'club-change') {
+    setClubChange(control.dataset.week, control.value);
   } else {
     return;
   }
@@ -2586,6 +2810,11 @@ renderForm();
 
 $('start-date').addEventListener('change', (event) => {
   state.input.startDate = event.target.value;
+  runPlan();
+});
+
+$('initial-club').addEventListener('change', (event) => {
+  state.input.initialClub = event.target.value === UNSET ? null : event.target.value;
   runPlan();
 });
 

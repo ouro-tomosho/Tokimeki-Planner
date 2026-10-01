@@ -130,8 +130,13 @@ function checkClub(input, clubIds, inTimeline, problems) {
     return;
   }
   for (const change of input.clubChanges) {
-    if (!isDate(change?.date)) problems.push(`clubChanges 的日期格式错误：${change?.date}`);
-    else if (!inTimeline(change.date)) problems.push(`clubChanges 的日期超出时间轴：${change.date}`);
+    if (!isDate(change?.date)) {
+      problems.push(`clubChanges 的日期格式错误：${change?.date}`);
+    } else if (!inTimeline(change.date)) {
+      problems.push(`clubChanges 的日期超出时间轴：${change.date}`);
+    } else if (weekdayOf(change.date) !== 0) {
+      problems.push(`clubChanges 只能在周日切换社团：${change.date}`);
+    }
     if (change?.clubId !== null && !clubIds.has(change?.clubId)) {
       problems.push(`clubChanges 引用了未知社团 ${change?.clubId}`);
     }

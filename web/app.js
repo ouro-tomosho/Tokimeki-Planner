@@ -5,12 +5,14 @@
 // 保证"双击即用"这件事在任何浏览器里都成立。
 
 import rules from '../data/rules.json';
+import { availableCommandIds, createClubLookup } from '../src/clubs.js';
 import { attributeById, attributeIds } from '../src/lookup.js';
 import { defaultInput, fromJson, toJson } from '../src/input.js';
 import { createPlanner } from '../src/plan.js';
 
 const UNSET = '';
 const EMPTY = '__empty__';
+const NO_CLUB = '__no_club__';
 
 const state = { input: defaultInput(rules), requestId: 0, daysByDate: new Map() };
 const pending = new Map();
@@ -24,6 +26,7 @@ let workerUnavailable = false;
 let dayRows = new Map();
 let weekRows = new Map();
 let renderedSignature = '';
+let clubAtNow = () => null;
 
 const BASE_COLUMNS = ['日期', '星期', '当天顺序', '结算', '指令', '休息日', '跳过'];
 const COLUMNS = [...BASE_COLUMNS, ...attributeLabels.map((a) => a.name)];
@@ -33,6 +36,11 @@ const EMPTY_LABELS = {
   day: '空过（指定本日）',
   'day-command': '空过（日指令置空）',
   week: '空过（本周空过）',
+};
+const BLOCK_LABELS = {
+  'club-not-unlocked': '不结算（社团未解锁）',
+  'club-not-selected': '不结算（未加入社团）',
+  'club-mismatch': '不结算（社团不符）',
 };
 const CURVE_COLORS = [
   '#2f6fed',
@@ -126,12 +134,13 @@ function commandIdFromDefaultChoice(choice) {
 /**
  * 填一个指令下拉框。`choice` 是已经归一化过的选择串。
  * `allowEmpty` 为假时不给「空过」选项——那就是全局默认指令。
+ * `commands` 用来把不可用的社团指令挡在候选之外。
  */
-function fillCommandSelect(select, choice, { allowEmpty = true } = {}) {
+function fillCommandSelect(select, choice, { allowEmpty = true, commands = rules.commands } = {}) {
   select.textContent = '';
   const entries = [[UNSET, '未指定']];
   if (allowEmpty) entries.push([EMPTY, '空过']);
-  for (const command of rules.commands) entries.push([command.id, command.name]);
+  for (const command of commands) entries.push([command.id, command.name]);
 
   for (const [value, label] of entries) {
     const option = document.createElement('option');
@@ -139,7 +148,48 @@ function fillCommandSelect(select, choice, { allowEmpty = true } = {}) {
     option.textContent = label;
     select.append(option);
   }
+
+  // 已经写进输入、但当前**不可用**的指令也要留在选项里——否则下拉框会显示成"未指定"，
+  // 与输入里那条真实存在的指定对不上。至于为什么没执行，由结算列说明。
+  if (choice && !entries.some(([value]) => value === choice)) {
+    const option = document.createElement('option');
+    option.value = choice;
+    option.textContent = `${commandNames.get(choice) ?? choice}（不可用）`;
+    select.append(option);
+  }
+
   select.value = choice;
+}
+
+/** 这一天能选的指令——社团指令受解锁日与当前社团限制。 */
+function commandsAvailableAt(date) {
+  const allowed = new Set(availableCommandIds(rules, clubAtNow(date), date));
+  return rules.commands.filter((command) => allowed.has(command.id));
+}
+
+function fillClubSelect(select, value) {
+  select.textContent = '';
+  const entries = [[UNSET, '未加入'], ...rules.clubs.map((club) => [club.id, club.name])];
+  for (const [optionValue, label] of entries) {
+    const option = document.createElement('option');
+    option.value = optionValue;
+    option.textContent = label;
+    select.append(option);
+  }
+  select.value = value ?? UNSET;
+}
+
+/** 每周表头里的社团下拉框：三态——不切换 / 退出社团 / 某个社团。 */
+function fillWeekClubSelect(select, value) {
+  select.textContent = '';
+  const entries = [[UNSET, '不切换'], [NO_CLUB, '退出社团'], ...rules.clubs.map((club) => [club.id, club.name])];
+  for (const [optionValue, label] of entries) {
+    const option = document.createElement('option');
+    option.value = optionValue;
+    option.textContent = label;
+    select.append(option);
+  }
+  select.value = value === undefined ? UNSET : value === null ? NO_CLUB : value;
 }
 
 function setMapEntry(map, key, choice) {
@@ -158,7 +208,9 @@ function fillCommandCell(cell, day) {
     const select = document.createElement('select');
     select.dataset.action = 'day-command';
     select.dataset.date = day.date;
-    fillCommandSelect(select, choiceFromCommandId(state.input.dayCommands[day.date]));
+    fillCommandSelect(select, choiceFromCommandId(state.input.dayCommands[day.date]), {
+      commands: commandsAvailableAt(day.date),
+    });
     cell.append(select);
     return;
   }
@@ -204,6 +256,7 @@ function renderForm() {
     container.append(label);
   }
 
+  fillClubSelect($('initial-club'), state.input.initialClub);
   fillCommandSelect($('default-week-command'), state.input.defaultWeekCommand ?? UNSET, {
     allowEmpty: false,
   });
@@ -216,7 +269,9 @@ function renderForm() {
 
 function calendarSignature(result) {
   const last = result.days[result.days.length - 1];
-  return `${result.startDate}|${result.days.length}|${last ? last.date : ''}`;
+  // 社团决定了每个时点能选哪些指令，所以它一变就得重建下拉框里的候选。
+  const clubs = `${state.input.initialClub}|${JSON.stringify(state.input.clubChanges)}`;
+  return `${result.startDate}|${result.days.length}|${last ? last.date : ''}|${clubs}`;
 }
 
 function renderCalendar(result) {
@@ -265,18 +320,35 @@ function buildWeekRow(week) {
   const anchor = document.createElement('span');
   anchor.textContent = `周锚点 ${week.start}（${week.firstDay} 起）`;
 
-  const flag = document.createElement('label');
-  flag.className = 'week-flag';
-  const select = document.createElement('select');
-  select.dataset.action = 'week-command';
-  select.dataset.week = week.start;
-  fillCommandSelect(select, choiceFromCommandId(state.input.weekCommands[week.start]));
-  flag.append(document.createTextNode(' 周指令 '), select);
+  const commandFlag = document.createElement('label');
+  commandFlag.className = 'week-flag';
+  const commandSelect = document.createElement('select');
+  commandSelect.dataset.action = 'week-command';
+  commandSelect.dataset.week = week.start;
+  fillCommandSelect(commandSelect, choiceFromCommandId(state.input.weekCommands[week.start]), {
+    commands: commandsAvailableAt(week.firstDay),
+  });
+  commandFlag.append(document.createTextNode(' 周指令 '), commandSelect);
 
-  cell.append(anchor, flag);
+  // 社团只能在周日切换，而每周表头正是那个周日。
+  const clubFlag = document.createElement('label');
+  clubFlag.className = 'week-flag';
+  const clubSelect = document.createElement('select');
+  clubSelect.dataset.action = 'club-change';
+  clubSelect.dataset.week = week.start;
+  fillWeekClubSelect(clubSelect, clubChangeValueAt(week.start));
+  clubFlag.append(document.createTextNode(' 社团 '), clubSelect);
+
+  cell.append(anchor, commandFlag, clubFlag);
   row.append(cell);
   weekRows.set(week.start, row);
   return row;
+}
+
+/** 该周锚点上是否有一条「切换社团」记录；undefined 表示不切换。 */
+function clubChangeValueAt(date) {
+  const change = state.input.clubChanges.find((entry) => entry.date === date);
+  return change ? change.clubId : undefined;
 }
 
 function buildDayRow(day) {
@@ -312,6 +384,8 @@ function buildDayRow(day) {
 
 /** 结果形状没变时只更新既有行，不重建 DOM——否则改一个下拉就要重画一千多行。 */
 function applyCalendar(result) {
+  clubAtNow = createClubLookup(state.input);
+
   if (renderedSignature !== calendarSignature(result)) {
     renderCalendar(result);
   }
@@ -335,9 +409,11 @@ function applyCalendar(result) {
       ? EMPTY_LABELS[day.skipSource]
       : !day.isSettled
         ? '不结算'
-        : day.commandId
-          ? '结算'
-          : '待定';
+        : day.commandBlocked
+          ? BLOCK_LABELS[day.commandBlocked]
+          : day.commandId
+            ? '结算'
+            : '待定';
 
     // 指令单元格只在「是否休息日」改变时才重建
     const restFlag = day.isRestDay ? '1' : '0';
@@ -365,8 +441,15 @@ function applyCalendar(result) {
   }
 
   for (const week of result.weeks) {
-    const select = weekRows.get(week.start)?.querySelector('select[data-action="week-command"]');
-    if (select) select.value = choiceFromCommandId(state.input.weekCommands[week.start]);
+    const row = weekRows.get(week.start);
+    if (!row) continue;
+    const commandSelect = row.querySelector('select[data-action="week-command"]');
+    if (commandSelect) commandSelect.value = choiceFromCommandId(state.input.weekCommands[week.start]);
+    const clubSelect = row.querySelector('select[data-action="club-change"]');
+    if (clubSelect) {
+      const value = clubChangeValueAt(week.start);
+      clubSelect.value = value === undefined ? UNSET : value === null ? NO_CLUB : value;
+    }
   }
 
   state.daysByDate = new Map(result.days.map((d) => [d.date, d]));
@@ -527,6 +610,19 @@ function toggleInList(list, value, present) {
   return [...next].sort();
 }
 
+/** 在一个周锚点上写入/清除社团切换。不切换 = 没有这条记录。 */
+function setClubChange(weekStart, choice) {
+  const others = state.input.clubChanges.filter((entry) => entry.date !== weekStart);
+  if (choice === UNSET) {
+    state.input.clubChanges = others;
+    return;
+  }
+  const clubId = choice === NO_CLUB ? null : choice;
+  state.input.clubChanges = [...others, { date: weekStart, clubId }].sort((a, b) =>
+    a.date < b.date ? -1 : 1,
+  );
+}
+
 $('calendar').addEventListener('change', (event) => {
   const control = event.target;
   const action = control.dataset && control.dataset.action;
@@ -543,6 +639,8 @@ $('calendar').addEventListener('change', (event) => {
     setMapEntry(state.input.weekCommands, control.dataset.week, control.value);
   } else if (action === 'day-command') {
     setMapEntry(state.input.dayCommands, control.dataset.date, control.value);
+  } else if (action === 'club-change') {
+    setClubChange(control.dataset.week, control.value);
   } else {
     return;
   }
@@ -554,6 +652,11 @@ renderForm();
 
 $('start-date').addEventListener('change', (event) => {
   state.input.startDate = event.target.value;
+  runPlan();
+});
+
+$('initial-club').addEventListener('change', (event) => {
+  state.input.initialClub = event.target.value === UNSET ? null : event.target.value;
   runPlan();
 });
 

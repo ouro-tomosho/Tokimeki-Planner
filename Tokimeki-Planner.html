@@ -540,6 +540,123 @@ function availableCommandIds(rules, club, date) {
 }
 return { createClubLookup, clubBlockReason, availableCommandIds };
 })();
+__ns["src/constraints.js"] = (() => {
+// 约束判定与目标函数。
+//
+// 三层（见 ADR-0002）：全部硬约束达标 → 正向属性等权总和最大 → 负面指标最小。
+//
+// 三类硬约束：
+//   全局约束  每次每日结算后都要成立。起点已满足 → 硬不变量；起点未满足 → 尽快满足。
+//   小目标    截止日期 + 一个属性集合 + 一个求和阈值。
+//   结局目标  在时间轴终点逐项评估。
+//
+// 空过的天不发生结算，因此**不参与**全局约束的判定。
+
+const EPSILON = 1e-9;
+
+/** 阈值比较：小数部分直接舍去（见数据需求清单）。 */
+function meets(value, op, threshold) {
+  const floored = Math.floor(value);
+  return op === '>=' ? floored >= threshold : floored < threshold;
+}
+
+/** 还差多少才能满足这个阈值。 */
+function shortfallOf(actual, op, threshold) {
+  if (meets(actual, op, threshold)) return 0;
+  return op === '>=' ? threshold - actual : actual - (threshold - 1);
+}
+
+function evaluateGoals(rules, input, days) {
+  const positiveIds = rules.attributes.filter((a) => a.direction === 'up').map((a) => a.id);
+  const negativeId = rules.attributes.find((a) => a.direction === 'down').id;
+  const endState = days.length > 0 ? days[days.length - 1].attributes : input.attributes;
+  const settledDays = days.filter((day) => day.isSettled);
+
+  const globalConstraints = input.globalConstraints.map((goal) =>
+    evaluateGlobalConstraint(goal, input.attributes, settledDays),
+  );
+  const miniGoals = input.miniGoals.map((goal) => evaluateMiniGoal(rules, goal, days));
+  const endingGoals = input.endingGoals.map((goal) => evaluateEndingGoal(goal, endState));
+
+  return {
+    ok: [...globalConstraints, ...miniGoals, ...endingGoals].every(
+      (entry) => entry.state === 'met',
+    ),
+    globalConstraints,
+    miniGoals,
+    endingGoals,
+    score: {
+      positiveSum: positiveIds.reduce((sum, id) => sum + endState[id], 0),
+      negative: endState[negativeId],
+    },
+  };
+}
+
+function evaluateGlobalConstraint(goal, startAttributes, settledDays) {
+  // 起点已满足 → 往后每天都不得破；起点未满足 → 尽快满足，不直接判定无解。
+  const mode = meets(startAttributes[goal.attribute], goal.op, goal.value) ? 'invariant' : 'asap';
+
+  const violatedOn = [];
+  let metOn = null;
+  for (const day of settledDays) {
+    if (meets(day.attributes[goal.attribute], goal.op, goal.value)) {
+      if (metOn === null) metOn = day.date;
+    } else {
+      violatedOn.push(day.date);
+    }
+  }
+
+  const state =
+    mode === 'invariant' ? (violatedOn.length === 0 ? 'met' : 'unmet') : metOn === null ? 'unmet' : 'met';
+
+  return { ...goal, mode, state, metOn, violatedOn };
+}
+
+function valueOf(rules, day, id) {
+  return id === rules.clubExperience.id ? day.clubExperience : day.attributes[id];
+}
+
+function evaluateMiniGoal(rules, goal, days) {
+  // 在截止日当天（含）结算之后评估；若截止日落在时间轴之外，取最靠后的那一天。
+  const at = [...days].reverse().find((day) => day.date <= goal.deadline) ?? days[0];
+  const actual = goal.attributes.reduce((sum, id) => sum + valueOf(rules, at, id), 0);
+
+  return {
+    ...goal,
+    evaluatedOn: at.date,
+    actual,
+    state: meets(actual, goal.op, goal.value) ? 'met' : 'unmet',
+    shortfall: shortfallOf(actual, goal.op, goal.value),
+  };
+}
+
+function evaluateEndingGoal(goal, endState) {
+  const actual = endState[goal.attribute];
+  return {
+    ...goal,
+    actual,
+    state: meets(actual, goal.op, goal.value) ? 'met' : 'unmet',
+    shortfall: shortfallOf(actual, goal.op, goal.value),
+  };
+}
+
+/**
+ * ADR-0002 的三层比较：硬约束 → 正向等权总和最大 → 负面指标最小。
+ * 返回负数表示 a 更优，正数表示 b 更优，0 表示打平。
+ */
+function comparePlans(a, b) {
+  if (a.goals.ok !== b.goals.ok) return a.goals.ok ? -1 : 1;
+
+  const sumDelta = a.goals.score.positiveSum - b.goals.score.positiveSum;
+  if (Math.abs(sumDelta) > EPSILON) return sumDelta > 0 ? -1 : 1;
+
+  const negativeDelta = a.goals.score.negative - b.goals.score.negative;
+  if (Math.abs(negativeDelta) > EPSILON) return negativeDelta < 0 ? -1 : 1;
+
+  return 0;
+}
+return { meets, shortfallOf, evaluateGoals, comparePlans };
+})();
 __ns["src/goals.js"] = (() => {
 const { isDate } = __ns["src/dates.js"];
 // 目标与约束的形状校验。规则文件的默认目标与使用者输入的目标，
@@ -615,7 +732,7 @@ function attributeIds(rules) {
 return { attributeById, commandById, attributeIds };
 })();
 __ns["src/input.js"] = (() => {
-const { isDate, weekdayOf } = __ns["src/dates.js"];
+const { isDate, weekdayOf, weekStartOf } = __ns["src/dates.js"];
 const { goalProblems, miniGoalProblems } = __ns["src/goals.js"];
 const { attributeIds } = __ns["src/lookup.js"];
 // 使用者输入的形状与校验。JSON 只承载输入，不承载结果。
@@ -689,6 +806,10 @@ function validateInput(input, rules) {
 
   const { start, lastSettlement } = rules.timeline;
   const inTimeline = (date) => isDate(date) && date >= start && date <= lastSettlement;
+  // 周锚点是自然周的周日，可能是**起点前一天或更早**（从周二开始规划时，
+  // 那一周的锚点就在起点之前）。社团切换同理，只发生在周锚点上。
+  const firstAnchor = weekStartOf(start);
+  const inWeekAnchors = (date) => isDate(date) && date >= firstAnchor && date <= lastSettlement;
 
   if (!isDate(input.startDate)) {
     problems.push(`startDate 格式错误：${input.startDate}`);
@@ -709,10 +830,10 @@ function validateInput(input, rules) {
     ...miniGoalProblems(input.miniGoals, 'miniGoals', { ...goalContext, allowClubExperience: true }),
   );
 
-  checkClub(input, clubIds, inTimeline, problems);
+  checkClub(input, clubIds, inWeekAnchors, problems);
   checkCommandId('defaultWeekCommand', input.defaultWeekCommand, commandIds, problems);
   checkCommandId('defaultDayCommand', input.defaultDayCommand, commandIds, problems);
-  checkWeekCommands(input.weekCommands, commandIds, inTimeline, problems);
+  checkWeekCommands(input.weekCommands, commandIds, inWeekAnchors, problems);
   checkDayCommands(input.dayCommands, commandIds, inTimeline, problems);
   checkDayList('restDays', input.restDays, inTimeline, problems);
   checkDayList('skippedDays', input.skippedDays, inTimeline, problems);
@@ -753,7 +874,7 @@ function checkClub(input, clubIds, inTimeline, problems) {
     if (!isDate(change?.date)) {
       problems.push(`clubChanges 的日期格式错误：${change?.date}`);
     } else if (!inTimeline(change.date)) {
-      problems.push(`clubChanges 的日期超出时间轴：${change.date}`);
+      problems.push(`clubChanges 的日期超出可切换范围：${change.date}`);
     } else if (weekdayOf(change.date) !== 0) {
       problems.push(`clubChanges 只能在周日切换社团：${change.date}`);
     }
@@ -778,7 +899,7 @@ function checkWeekCommands(map, commandIds, inTimeline, problems) {
     if (!isDate(date)) {
       problems.push(`weekCommands 的键不是日期：${date}`);
     } else if (!inTimeline(date)) {
-      problems.push(`weekCommands 的日期超出时间轴：${date}`);
+      problems.push(`weekCommands 的日期超出可指定范围：${date}`);
     } else if (weekdayOf(date) !== 0) {
       problems.push(`weekCommands 的键必须是周日（周锚点）：${date}`);
     }
@@ -1129,6 +1250,7 @@ return { WEEKDAY, REST_DAY, createSettlement };
 __ns["src/plan.js"] = (() => {
 const { buildCalendar } = __ns["src/calendar.js"];
 const { clubBlockReason, createClubLookup } = __ns["src/clubs.js"];
+const { evaluateGoals } = __ns["src/constraints.js"];
 const { validateInput } = __ns["src/input.js"];
 const { validateRules } = __ns["src/rules.js"];
 const { REST_DAY, WEEKDAY, createSettlement } = __ns["src/settlement.js"];
@@ -1137,6 +1259,7 @@ const { REST_DAY, WEEKDAY, createSettlement } = __ns["src/settlement.js"];
 // 预先商定的接缝是 `plan(input) → PlanResult`：规则在**构造时**注入，所以调用方
 // 只传 input。本票把日历、社团状态与单日结算接起来：每一天按它实际执行的指令结算，
 // 不可用的社团指令不会被结算。指令还没有被"求解"——没有指定时就是待定。
+
 
 
 
@@ -1184,7 +1307,13 @@ function createPlanner(rules) {
         state = settleDay(state, command.id, day.isRestDay ? REST_DAY : WEEKDAY);
       }
       // 不结算的日子（空过、开局日、终点、指令不可用）属性原样带入下一天。
-      return { ...day, commandBlocked, attributes: toReal(state.attributes) };
+      const club = clubAt(day.date);
+      return {
+        ...day,
+        commandBlocked,
+        attributes: toReal(state.attributes),
+        clubExperience: club ? (state.clubExperience[club] ?? 0) / scale : 0,
+      };
     });
 
     return {
@@ -1197,6 +1326,7 @@ function createPlanner(rules) {
       weeks: calendar.weeks,
       sequence: calendar.sequence,
       summary: calendar.summary,
+      goals: evaluateGoals(rules, input, days),
       finalAttributes: toReal(state.attributes),
       clubExperience: toReal(state.clubExperience),
       ruleSummary: {
@@ -1396,7 +1526,7 @@ function miniGoalProblems(list, label, context) {
 return { goalProblems, miniGoalProblems };
 })();
 __ns["src/input.js"] = (() => {
-const { isDate, weekdayOf } = __ns["src/dates.js"];
+const { isDate, weekdayOf, weekStartOf } = __ns["src/dates.js"];
 const { goalProblems, miniGoalProblems } = __ns["src/goals.js"];
 const { attributeIds } = __ns["src/lookup.js"];
 // 使用者输入的形状与校验。JSON 只承载输入，不承载结果。
@@ -1470,6 +1600,10 @@ function validateInput(input, rules) {
 
   const { start, lastSettlement } = rules.timeline;
   const inTimeline = (date) => isDate(date) && date >= start && date <= lastSettlement;
+  // 周锚点是自然周的周日，可能是**起点前一天或更早**（从周二开始规划时，
+  // 那一周的锚点就在起点之前）。社团切换同理，只发生在周锚点上。
+  const firstAnchor = weekStartOf(start);
+  const inWeekAnchors = (date) => isDate(date) && date >= firstAnchor && date <= lastSettlement;
 
   if (!isDate(input.startDate)) {
     problems.push(`startDate 格式错误：${input.startDate}`);
@@ -1490,10 +1624,10 @@ function validateInput(input, rules) {
     ...miniGoalProblems(input.miniGoals, 'miniGoals', { ...goalContext, allowClubExperience: true }),
   );
 
-  checkClub(input, clubIds, inTimeline, problems);
+  checkClub(input, clubIds, inWeekAnchors, problems);
   checkCommandId('defaultWeekCommand', input.defaultWeekCommand, commandIds, problems);
   checkCommandId('defaultDayCommand', input.defaultDayCommand, commandIds, problems);
-  checkWeekCommands(input.weekCommands, commandIds, inTimeline, problems);
+  checkWeekCommands(input.weekCommands, commandIds, inWeekAnchors, problems);
   checkDayCommands(input.dayCommands, commandIds, inTimeline, problems);
   checkDayList('restDays', input.restDays, inTimeline, problems);
   checkDayList('skippedDays', input.skippedDays, inTimeline, problems);
@@ -1534,7 +1668,7 @@ function checkClub(input, clubIds, inTimeline, problems) {
     if (!isDate(change?.date)) {
       problems.push(`clubChanges 的日期格式错误：${change?.date}`);
     } else if (!inTimeline(change.date)) {
-      problems.push(`clubChanges 的日期超出时间轴：${change.date}`);
+      problems.push(`clubChanges 的日期超出可切换范围：${change.date}`);
     } else if (weekdayOf(change.date) !== 0) {
       problems.push(`clubChanges 只能在周日切换社团：${change.date}`);
     }
@@ -1559,7 +1693,7 @@ function checkWeekCommands(map, commandIds, inTimeline, problems) {
     if (!isDate(date)) {
       problems.push(`weekCommands 的键不是日期：${date}`);
     } else if (!inTimeline(date)) {
-      problems.push(`weekCommands 的日期超出时间轴：${date}`);
+      problems.push(`weekCommands 的日期超出可指定范围：${date}`);
     } else if (weekdayOf(date) !== 0) {
       problems.push(`weekCommands 的键必须是周日（周锚点）：${date}`);
     }
@@ -1752,6 +1886,123 @@ function buildSequence(days) {
   return entries.map((entry, order) => ({ ...entry, order }));
 }
 return { WEEKDAY_NAMES, buildCalendar };
+})();
+__ns["src/constraints.js"] = (() => {
+// 约束判定与目标函数。
+//
+// 三层（见 ADR-0002）：全部硬约束达标 → 正向属性等权总和最大 → 负面指标最小。
+//
+// 三类硬约束：
+//   全局约束  每次每日结算后都要成立。起点已满足 → 硬不变量；起点未满足 → 尽快满足。
+//   小目标    截止日期 + 一个属性集合 + 一个求和阈值。
+//   结局目标  在时间轴终点逐项评估。
+//
+// 空过的天不发生结算，因此**不参与**全局约束的判定。
+
+const EPSILON = 1e-9;
+
+/** 阈值比较：小数部分直接舍去（见数据需求清单）。 */
+function meets(value, op, threshold) {
+  const floored = Math.floor(value);
+  return op === '>=' ? floored >= threshold : floored < threshold;
+}
+
+/** 还差多少才能满足这个阈值。 */
+function shortfallOf(actual, op, threshold) {
+  if (meets(actual, op, threshold)) return 0;
+  return op === '>=' ? threshold - actual : actual - (threshold - 1);
+}
+
+function evaluateGoals(rules, input, days) {
+  const positiveIds = rules.attributes.filter((a) => a.direction === 'up').map((a) => a.id);
+  const negativeId = rules.attributes.find((a) => a.direction === 'down').id;
+  const endState = days.length > 0 ? days[days.length - 1].attributes : input.attributes;
+  const settledDays = days.filter((day) => day.isSettled);
+
+  const globalConstraints = input.globalConstraints.map((goal) =>
+    evaluateGlobalConstraint(goal, input.attributes, settledDays),
+  );
+  const miniGoals = input.miniGoals.map((goal) => evaluateMiniGoal(rules, goal, days));
+  const endingGoals = input.endingGoals.map((goal) => evaluateEndingGoal(goal, endState));
+
+  return {
+    ok: [...globalConstraints, ...miniGoals, ...endingGoals].every(
+      (entry) => entry.state === 'met',
+    ),
+    globalConstraints,
+    miniGoals,
+    endingGoals,
+    score: {
+      positiveSum: positiveIds.reduce((sum, id) => sum + endState[id], 0),
+      negative: endState[negativeId],
+    },
+  };
+}
+
+function evaluateGlobalConstraint(goal, startAttributes, settledDays) {
+  // 起点已满足 → 往后每天都不得破；起点未满足 → 尽快满足，不直接判定无解。
+  const mode = meets(startAttributes[goal.attribute], goal.op, goal.value) ? 'invariant' : 'asap';
+
+  const violatedOn = [];
+  let metOn = null;
+  for (const day of settledDays) {
+    if (meets(day.attributes[goal.attribute], goal.op, goal.value)) {
+      if (metOn === null) metOn = day.date;
+    } else {
+      violatedOn.push(day.date);
+    }
+  }
+
+  const state =
+    mode === 'invariant' ? (violatedOn.length === 0 ? 'met' : 'unmet') : metOn === null ? 'unmet' : 'met';
+
+  return { ...goal, mode, state, metOn, violatedOn };
+}
+
+function valueOf(rules, day, id) {
+  return id === rules.clubExperience.id ? day.clubExperience : day.attributes[id];
+}
+
+function evaluateMiniGoal(rules, goal, days) {
+  // 在截止日当天（含）结算之后评估；若截止日落在时间轴之外，取最靠后的那一天。
+  const at = [...days].reverse().find((day) => day.date <= goal.deadline) ?? days[0];
+  const actual = goal.attributes.reduce((sum, id) => sum + valueOf(rules, at, id), 0);
+
+  return {
+    ...goal,
+    evaluatedOn: at.date,
+    actual,
+    state: meets(actual, goal.op, goal.value) ? 'met' : 'unmet',
+    shortfall: shortfallOf(actual, goal.op, goal.value),
+  };
+}
+
+function evaluateEndingGoal(goal, endState) {
+  const actual = endState[goal.attribute];
+  return {
+    ...goal,
+    actual,
+    state: meets(actual, goal.op, goal.value) ? 'met' : 'unmet',
+    shortfall: shortfallOf(actual, goal.op, goal.value),
+  };
+}
+
+/**
+ * ADR-0002 的三层比较：硬约束 → 正向等权总和最大 → 负面指标最小。
+ * 返回负数表示 a 更优，正数表示 b 更优，0 表示打平。
+ */
+function comparePlans(a, b) {
+  if (a.goals.ok !== b.goals.ok) return a.goals.ok ? -1 : 1;
+
+  const sumDelta = a.goals.score.positiveSum - b.goals.score.positiveSum;
+  if (Math.abs(sumDelta) > EPSILON) return sumDelta > 0 ? -1 : 1;
+
+  const negativeDelta = a.goals.score.negative - b.goals.score.negative;
+  if (Math.abs(negativeDelta) > EPSILON) return negativeDelta < 0 ? -1 : 1;
+
+  return 0;
+}
+return { meets, shortfallOf, evaluateGoals, comparePlans };
 })();
 __ns["src/rules.js"] = (() => {
 const { isDate } = __ns["src/dates.js"];
@@ -2070,6 +2321,7 @@ return { WEEKDAY, REST_DAY, createSettlement };
 __ns["src/plan.js"] = (() => {
 const { buildCalendar } = __ns["src/calendar.js"];
 const { clubBlockReason, createClubLookup } = __ns["src/clubs.js"];
+const { evaluateGoals } = __ns["src/constraints.js"];
 const { validateInput } = __ns["src/input.js"];
 const { validateRules } = __ns["src/rules.js"];
 const { REST_DAY, WEEKDAY, createSettlement } = __ns["src/settlement.js"];
@@ -2078,6 +2330,7 @@ const { REST_DAY, WEEKDAY, createSettlement } = __ns["src/settlement.js"];
 // 预先商定的接缝是 `plan(input) → PlanResult`：规则在**构造时**注入，所以调用方
 // 只传 input。本票把日历、社团状态与单日结算接起来：每一天按它实际执行的指令结算，
 // 不可用的社团指令不会被结算。指令还没有被"求解"——没有指定时就是待定。
+
 
 
 
@@ -2125,7 +2378,13 @@ function createPlanner(rules) {
         state = settleDay(state, command.id, day.isRestDay ? REST_DAY : WEEKDAY);
       }
       // 不结算的日子（空过、开局日、终点、指令不可用）属性原样带入下一天。
-      return { ...day, commandBlocked, attributes: toReal(state.attributes) };
+      const club = clubAt(day.date);
+      return {
+        ...day,
+        commandBlocked,
+        attributes: toReal(state.attributes),
+        clubExperience: club ? (state.clubExperience[club] ?? 0) / scale : 0,
+      };
     });
 
     return {
@@ -2138,6 +2397,7 @@ function createPlanner(rules) {
       weeks: calendar.weeks,
       sequence: calendar.sequence,
       summary: calendar.summary,
+      goals: evaluateGoals(rules, input, days),
       finalAttributes: toReal(state.attributes),
       clubExperience: toReal(state.clubExperience),
       ruleSummary: {
@@ -2183,8 +2443,7 @@ let workerUnavailable = false;
 
 let dayRows = new Map();
 let weekRows = new Map();
-let renderedSignature = '';
-let clubAtNow = () => null;
+let renderedKey = '';
 
 const BASE_COLUMNS = ['日期', '星期', '当天顺序', '结算', '指令', '休息日', '跳过'];
 const COLUMNS = [...BASE_COLUMNS, ...attributeLabels.map((a) => a.name)];
@@ -2289,65 +2548,52 @@ function commandIdFromDefaultChoice(choice) {
   return choice === UNSET ? null : choice;
 }
 
+/** 三个下拉框共用的建 option 循环。 */
+function fillSelect(select, entries, value) {
+  select.textContent = '';
+  for (const [optionValue, label] of entries) {
+    const option = document.createElement('option');
+    option.value = optionValue;
+    option.textContent = label;
+    select.append(option);
+  }
+  select.value = value;
+}
+
 /**
- * 填一个指令下拉框。`choice` 是已经归一化过的选择串。
+ * 指令下拉框。`choice` 是已经归一化过的选择串。
  * `allowEmpty` 为假时不给「空过」选项——那就是全局默认指令。
  * `commands` 用来把不可用的社团指令挡在候选之外。
  */
 function fillCommandSelect(select, choice, { allowEmpty = true, commands = rules.commands } = {}) {
-  select.textContent = '';
   const entries = [[UNSET, '未指定']];
   if (allowEmpty) entries.push([EMPTY, '空过']);
   for (const command of commands) entries.push([command.id, command.name]);
 
-  for (const [value, label] of entries) {
-    const option = document.createElement('option');
-    option.value = value;
-    option.textContent = label;
-    select.append(option);
-  }
-
   // 已经写进输入、但当前**不可用**的指令也要留在选项里——否则下拉框会显示成"未指定"，
   // 与输入里那条真实存在的指定对不上。至于为什么没执行，由结算列说明。
   if (choice && !entries.some(([value]) => value === choice)) {
-    const option = document.createElement('option');
-    option.value = choice;
-    option.textContent = `${commandNames.get(choice) ?? choice}（不可用）`;
-    select.append(option);
+    entries.push([choice, `${commandNames.get(choice) ?? choice}（不可用）`]);
   }
-
-  select.value = choice;
+  fillSelect(select, entries, choice);
 }
 
 /** 这一天能选的指令——社团指令受解锁日与当前社团限制。 */
-function commandsAvailableAt(date) {
-  const allowed = new Set(availableCommandIds(rules, clubAtNow(date), date));
+function commandsAvailableAt(clubAt, date) {
+  const allowed = new Set(availableCommandIds(rules, clubAt(date), date));
   return rules.commands.filter((command) => allowed.has(command.id));
 }
 
 function fillClubSelect(select, value) {
-  select.textContent = '';
-  const entries = [[UNSET, '未加入'], ...rules.clubs.map((club) => [club.id, club.name])];
-  for (const [optionValue, label] of entries) {
-    const option = document.createElement('option');
-    option.value = optionValue;
-    option.textContent = label;
-    select.append(option);
-  }
-  select.value = value ?? UNSET;
+  const clubs = rules.clubs.map((club) => [club.id, club.name]);
+  fillSelect(select, [[UNSET, '未加入'], ...clubs], value ?? UNSET);
 }
 
 /** 每周表头里的社团下拉框：三态——不切换 / 退出社团 / 某个社团。 */
 function fillWeekClubSelect(select, value) {
-  select.textContent = '';
-  const entries = [[UNSET, '不切换'], [NO_CLUB, '退出社团'], ...rules.clubs.map((club) => [club.id, club.name])];
-  for (const [optionValue, label] of entries) {
-    const option = document.createElement('option');
-    option.value = optionValue;
-    option.textContent = label;
-    select.append(option);
-  }
-  select.value = value === undefined ? UNSET : value === null ? NO_CLUB : value;
+  const clubs = rules.clubs.map((club) => [club.id, club.name]);
+  const entries = [[UNSET, '不切换'], [NO_CLUB, '退出社团'], ...clubs];
+  fillSelect(select, entries, value === undefined ? UNSET : value === null ? NO_CLUB : value);
 }
 
 function setMapEntry(map, key, choice) {
@@ -2360,14 +2606,14 @@ function setMapEntry(map, key, choice) {
  * 一天的「指令」单元格：休息日给可改的下拉框，平日只显示本周周指令（不可单独决策）。
  * 休息日只在**真正需要**时才建下拉框——一千多行每行都塞一个二十项的下拉框太重。
  */
-function fillCommandCell(cell, day) {
+function fillCommandCell(cell, day, clubAt) {
   cell.textContent = '';
   if (day.isRestDay) {
     const select = document.createElement('select');
     select.dataset.action = 'day-command';
     select.dataset.date = day.date;
     fillCommandSelect(select, choiceFromCommandId(state.input.dayCommands[day.date]), {
-      commands: commandsAvailableAt(day.date),
+      commands: commandsAvailableAt(clubAt, day.date),
     });
     cell.append(select);
     return;
@@ -2380,6 +2626,26 @@ function fillCommandCell(cell, day) {
   const pinned = state.input.weekCommands[day.weekStart];
   const effective = pinned === undefined ? state.input.defaultWeekCommand : pinned;
   cell.textContent = effective ? (commandNames.get(effective) ?? effective) : '—';
+}
+
+/**
+ * 全局默认指令能选的指令：只要这套规划里**某个时点**用得上就列出来。
+ * 没加入过任何社团时，一条社团指令都不该出现在这里（票 04 审查指出的漏洞）。
+ */
+function commandsUsableSomewhere() {
+  const joined = new Set();
+  if (state.input.initialClub) joined.add(state.input.initialClub);
+  for (const change of state.input.clubChanges) {
+    if (change.clubId) joined.add(change.clubId);
+  }
+  return rules.commands.filter((command) => command.kind !== 'club' || joined.has(command.clubId));
+}
+
+/** 社团一变，全局默认指令里能选的社团指令也跟着变。 */
+function refreshGlobalCommandSelects() {
+  const globals = { allowEmpty: false, commands: commandsUsableSomewhere() };
+  fillCommandSelect($('default-week-command'), state.input.defaultWeekCommand ?? UNSET, globals);
+  fillCommandSelect($('default-day-command'), state.input.defaultDayCommand ?? UNSET, globals);
 }
 
 // ---------------------------------------------------------------- 输入区
@@ -2415,29 +2681,27 @@ function renderForm() {
   }
 
   fillClubSelect($('initial-club'), state.input.initialClub);
-  fillCommandSelect($('default-week-command'), state.input.defaultWeekCommand ?? UNSET, {
-    allowEmpty: false,
-  });
-  fillCommandSelect($('default-day-command'), state.input.defaultDayCommand ?? UNSET, {
-    allowEmpty: false,
-  });
+  refreshGlobalCommandSelects();
 }
 
 // ---------------------------------------------------------------- 日历表
 
-function calendarSignature(result) {
+/**
+ * 结果表的渲染缓存键：只要它没变，就只更新既有行、不重建 DOM。
+ * 社团会改变每个时点能选的指令（下拉框候选），所以它也在键里。
+ */
+function renderKey(result) {
   const last = result.days[result.days.length - 1];
-  // 社团决定了每个时点能选哪些指令，所以它一变就得重建下拉框里的候选。
   const clubs = `${state.input.initialClub}|${JSON.stringify(state.input.clubChanges)}`;
   return `${result.startDate}|${result.days.length}|${last ? last.date : ''}|${clubs}`;
 }
 
-function renderCalendar(result) {
+function renderCalendar(result, clubAt) {
   const host = $('calendar');
   host.textContent = '';
   dayRows = new Map();
   weekRows = new Map();
-  renderedSignature = calendarSignature(result);
+  renderedKey = renderKey(result);
 
   const table = document.createElement('table');
   table.className = 'calendar';
@@ -2457,9 +2721,9 @@ function renderCalendar(result) {
   const dayByDate = new Map(result.days.map((d) => [d.date, d]));
 
   for (const week of result.weeks) {
-    fragment.append(buildWeekRow(week));
+    fragment.append(buildWeekRow(week, clubAt));
     for (const date of week.days) {
-      fragment.append(buildDayRow(dayByDate.get(date)));
+      fragment.append(buildDayRow(dayByDate.get(date), clubAt));
     }
   }
 
@@ -2468,7 +2732,7 @@ function renderCalendar(result) {
   host.append(table);
 }
 
-function buildWeekRow(week) {
+function buildWeekRow(week, clubAt) {
   const row = document.createElement('tr');
   row.className = 'week-row';
 
@@ -2484,7 +2748,7 @@ function buildWeekRow(week) {
   commandSelect.dataset.action = 'week-command';
   commandSelect.dataset.week = week.start;
   fillCommandSelect(commandSelect, choiceFromCommandId(state.input.weekCommands[week.start]), {
-    commands: commandsAvailableAt(week.firstDay),
+    commands: commandsAvailableAt(clubAt, week.firstDay),
   });
   commandFlag.append(document.createTextNode(' 周指令 '), commandSelect);
 
@@ -2509,7 +2773,7 @@ function clubChangeValueAt(date) {
   return change ? change.clubId : undefined;
 }
 
-function buildDayRow(day) {
+function buildDayRow(day, clubAt) {
   const row = document.createElement('tr');
   row.className = 'day-row';
   row.dataset.date = day.date;
@@ -2519,7 +2783,7 @@ function buildDayRow(day) {
     if (name === '日期') cell.textContent = day.date;
     if (name === '星期') cell.textContent = day.weekdayName;
     if (name === '结算') cell.className = 'state';
-    if (name === '指令') fillCommandCell(cell, day);
+    if (name === '指令') fillCommandCell(cell, day, clubAt);
     if (name === '休息日' || name === '跳过') {
       const box = document.createElement('input');
       box.type = 'checkbox';
@@ -2542,10 +2806,10 @@ function buildDayRow(day) {
 
 /** 结果形状没变时只更新既有行，不重建 DOM——否则改一个下拉就要重画一千多行。 */
 function applyCalendar(result) {
-  clubAtNow = createClubLookup(state.input);
+  const clubAt = createClubLookup(state.input);
 
-  if (renderedSignature !== calendarSignature(result)) {
-    renderCalendar(result);
+  if (renderedKey !== renderKey(result)) {
+    renderCalendar(result, clubAt);
   }
 
   const sequenceByDate = new Map();
@@ -2573,15 +2837,17 @@ function applyCalendar(result) {
             ? '结算'
             : '待定';
 
-    // 指令单元格只在「是否休息日」改变时才重建
     const restFlag = day.isRestDay ? '1' : '0';
     if (row.dataset.rest !== restFlag) {
       row.dataset.rest = restFlag;
-      fillCommandCell(cells[4], day);
+      fillCommandCell(cells[4], day, clubAt);
     }
     const select = cells[4].querySelector('select');
-    if (select) select.value = choiceFromCommandId(state.input.dayCommands[day.date]);
-    else fillCommandCell(cells[4], day);
+    if (select) {
+      select.value = choiceFromCommandId(state.input.dayCommands[day.date]);
+    } else {
+      fillCommandCell(cells[4], day, clubAt);
+    }
 
     const restBox = row.querySelector('input[data-action="rest"]');
     restBox.checked = day.isRestDay;
@@ -2799,6 +3065,7 @@ $('calendar').addEventListener('change', (event) => {
     setMapEntry(state.input.dayCommands, control.dataset.date, control.value);
   } else if (action === 'club-change') {
     setClubChange(control.dataset.week, control.value);
+    refreshGlobalCommandSelects();
   } else {
     return;
   }
@@ -2815,6 +3082,7 @@ $('start-date').addEventListener('change', (event) => {
 
 $('initial-club').addEventListener('change', (event) => {
   state.input.initialClub = event.target.value === UNSET ? null : event.target.value;
+  refreshGlobalCommandSelects();
   runPlan();
 });
 

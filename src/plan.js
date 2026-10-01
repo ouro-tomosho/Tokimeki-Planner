@@ -6,6 +6,7 @@
 
 import { buildCalendar } from './calendar.js';
 import { clubBlockReason, createClubLookup } from './clubs.js';
+import { evaluateGoals } from './constraints.js';
 import { validateInput } from './input.js';
 import { validateRules } from './rules.js';
 import { REST_DAY, WEEKDAY, createSettlement } from './settlement.js';
@@ -50,7 +51,13 @@ export function createPlanner(rules) {
         state = settleDay(state, command.id, day.isRestDay ? REST_DAY : WEEKDAY);
       }
       // 不结算的日子（空过、开局日、终点、指令不可用）属性原样带入下一天。
-      return { ...day, commandBlocked, attributes: toReal(state.attributes) };
+      const club = clubAt(day.date);
+      return {
+        ...day,
+        commandBlocked,
+        attributes: toReal(state.attributes),
+        clubExperience: club ? (state.clubExperience[club] ?? 0) / scale : 0,
+      };
     });
 
     return {
@@ -63,6 +70,7 @@ export function createPlanner(rules) {
       weeks: calendar.weeks,
       sequence: calendar.sequence,
       summary: calendar.summary,
+      goals: evaluateGoals(rules, input, days),
       finalAttributes: toReal(state.attributes),
       clubExperience: toReal(state.clubExperience),
       ruleSummary: {

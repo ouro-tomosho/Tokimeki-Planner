@@ -25,8 +25,7 @@ let workerUnavailable = false;
 
 let dayRows = new Map();
 let weekRows = new Map();
-let renderedSignature = '';
-let clubAtNow = () => null;
+let renderedKey = '';
 
 const BASE_COLUMNS = ['日期', '星期', '当天顺序', '结算', '指令', '休息日', '跳过'];
 const COLUMNS = [...BASE_COLUMNS, ...attributeLabels.map((a) => a.name)];
@@ -131,65 +130,52 @@ function commandIdFromDefaultChoice(choice) {
   return choice === UNSET ? null : choice;
 }
 
+/** 三个下拉框共用的建 option 循环。 */
+function fillSelect(select, entries, value) {
+  select.textContent = '';
+  for (const [optionValue, label] of entries) {
+    const option = document.createElement('option');
+    option.value = optionValue;
+    option.textContent = label;
+    select.append(option);
+  }
+  select.value = value;
+}
+
 /**
- * 填一个指令下拉框。`choice` 是已经归一化过的选择串。
+ * 指令下拉框。`choice` 是已经归一化过的选择串。
  * `allowEmpty` 为假时不给「空过」选项——那就是全局默认指令。
  * `commands` 用来把不可用的社团指令挡在候选之外。
  */
 function fillCommandSelect(select, choice, { allowEmpty = true, commands = rules.commands } = {}) {
-  select.textContent = '';
   const entries = [[UNSET, '未指定']];
   if (allowEmpty) entries.push([EMPTY, '空过']);
   for (const command of commands) entries.push([command.id, command.name]);
 
-  for (const [value, label] of entries) {
-    const option = document.createElement('option');
-    option.value = value;
-    option.textContent = label;
-    select.append(option);
-  }
-
   // 已经写进输入、但当前**不可用**的指令也要留在选项里——否则下拉框会显示成"未指定"，
   // 与输入里那条真实存在的指定对不上。至于为什么没执行，由结算列说明。
   if (choice && !entries.some(([value]) => value === choice)) {
-    const option = document.createElement('option');
-    option.value = choice;
-    option.textContent = `${commandNames.get(choice) ?? choice}（不可用）`;
-    select.append(option);
+    entries.push([choice, `${commandNames.get(choice) ?? choice}（不可用）`]);
   }
-
-  select.value = choice;
+  fillSelect(select, entries, choice);
 }
 
 /** 这一天能选的指令——社团指令受解锁日与当前社团限制。 */
-function commandsAvailableAt(date) {
-  const allowed = new Set(availableCommandIds(rules, clubAtNow(date), date));
+function commandsAvailableAt(clubAt, date) {
+  const allowed = new Set(availableCommandIds(rules, clubAt(date), date));
   return rules.commands.filter((command) => allowed.has(command.id));
 }
 
 function fillClubSelect(select, value) {
-  select.textContent = '';
-  const entries = [[UNSET, '未加入'], ...rules.clubs.map((club) => [club.id, club.name])];
-  for (const [optionValue, label] of entries) {
-    const option = document.createElement('option');
-    option.value = optionValue;
-    option.textContent = label;
-    select.append(option);
-  }
-  select.value = value ?? UNSET;
+  const clubs = rules.clubs.map((club) => [club.id, club.name]);
+  fillSelect(select, [[UNSET, '未加入'], ...clubs], value ?? UNSET);
 }
 
 /** 每周表头里的社团下拉框：三态——不切换 / 退出社团 / 某个社团。 */
 function fillWeekClubSelect(select, value) {
-  select.textContent = '';
-  const entries = [[UNSET, '不切换'], [NO_CLUB, '退出社团'], ...rules.clubs.map((club) => [club.id, club.name])];
-  for (const [optionValue, label] of entries) {
-    const option = document.createElement('option');
-    option.value = optionValue;
-    option.textContent = label;
-    select.append(option);
-  }
-  select.value = value === undefined ? UNSET : value === null ? NO_CLUB : value;
+  const clubs = rules.clubs.map((club) => [club.id, club.name]);
+  const entries = [[UNSET, '不切换'], [NO_CLUB, '退出社团'], ...clubs];
+  fillSelect(select, entries, value === undefined ? UNSET : value === null ? NO_CLUB : value);
 }
 
 function setMapEntry(map, key, choice) {
@@ -202,14 +188,14 @@ function setMapEntry(map, key, choice) {
  * 一天的「指令」单元格：休息日给可改的下拉框，平日只显示本周周指令（不可单独决策）。
  * 休息日只在**真正需要**时才建下拉框——一千多行每行都塞一个二十项的下拉框太重。
  */
-function fillCommandCell(cell, day) {
+function fillCommandCell(cell, day, clubAt) {
   cell.textContent = '';
   if (day.isRestDay) {
     const select = document.createElement('select');
     select.dataset.action = 'day-command';
     select.dataset.date = day.date;
     fillCommandSelect(select, choiceFromCommandId(state.input.dayCommands[day.date]), {
-      commands: commandsAvailableAt(day.date),
+      commands: commandsAvailableAt(clubAt, day.date),
     });
     cell.append(select);
     return;
@@ -222,6 +208,26 @@ function fillCommandCell(cell, day) {
   const pinned = state.input.weekCommands[day.weekStart];
   const effective = pinned === undefined ? state.input.defaultWeekCommand : pinned;
   cell.textContent = effective ? (commandNames.get(effective) ?? effective) : '—';
+}
+
+/**
+ * 全局默认指令能选的指令：只要这套规划里**某个时点**用得上就列出来。
+ * 没加入过任何社团时，一条社团指令都不该出现在这里（票 04 审查指出的漏洞）。
+ */
+function commandsUsableSomewhere() {
+  const joined = new Set();
+  if (state.input.initialClub) joined.add(state.input.initialClub);
+  for (const change of state.input.clubChanges) {
+    if (change.clubId) joined.add(change.clubId);
+  }
+  return rules.commands.filter((command) => command.kind !== 'club' || joined.has(command.clubId));
+}
+
+/** 社团一变，全局默认指令里能选的社团指令也跟着变。 */
+function refreshGlobalCommandSelects() {
+  const globals = { allowEmpty: false, commands: commandsUsableSomewhere() };
+  fillCommandSelect($('default-week-command'), state.input.defaultWeekCommand ?? UNSET, globals);
+  fillCommandSelect($('default-day-command'), state.input.defaultDayCommand ?? UNSET, globals);
 }
 
 // ---------------------------------------------------------------- 输入区
@@ -257,29 +263,27 @@ function renderForm() {
   }
 
   fillClubSelect($('initial-club'), state.input.initialClub);
-  fillCommandSelect($('default-week-command'), state.input.defaultWeekCommand ?? UNSET, {
-    allowEmpty: false,
-  });
-  fillCommandSelect($('default-day-command'), state.input.defaultDayCommand ?? UNSET, {
-    allowEmpty: false,
-  });
+  refreshGlobalCommandSelects();
 }
 
 // ---------------------------------------------------------------- 日历表
 
-function calendarSignature(result) {
+/**
+ * 结果表的渲染缓存键：只要它没变，就只更新既有行、不重建 DOM。
+ * 社团会改变每个时点能选的指令（下拉框候选），所以它也在键里。
+ */
+function renderKey(result) {
   const last = result.days[result.days.length - 1];
-  // 社团决定了每个时点能选哪些指令，所以它一变就得重建下拉框里的候选。
   const clubs = `${state.input.initialClub}|${JSON.stringify(state.input.clubChanges)}`;
   return `${result.startDate}|${result.days.length}|${last ? last.date : ''}|${clubs}`;
 }
 
-function renderCalendar(result) {
+function renderCalendar(result, clubAt) {
   const host = $('calendar');
   host.textContent = '';
   dayRows = new Map();
   weekRows = new Map();
-  renderedSignature = calendarSignature(result);
+  renderedKey = renderKey(result);
 
   const table = document.createElement('table');
   table.className = 'calendar';
@@ -299,9 +303,9 @@ function renderCalendar(result) {
   const dayByDate = new Map(result.days.map((d) => [d.date, d]));
 
   for (const week of result.weeks) {
-    fragment.append(buildWeekRow(week));
+    fragment.append(buildWeekRow(week, clubAt));
     for (const date of week.days) {
-      fragment.append(buildDayRow(dayByDate.get(date)));
+      fragment.append(buildDayRow(dayByDate.get(date), clubAt));
     }
   }
 
@@ -310,7 +314,7 @@ function renderCalendar(result) {
   host.append(table);
 }
 
-function buildWeekRow(week) {
+function buildWeekRow(week, clubAt) {
   const row = document.createElement('tr');
   row.className = 'week-row';
 
@@ -326,7 +330,7 @@ function buildWeekRow(week) {
   commandSelect.dataset.action = 'week-command';
   commandSelect.dataset.week = week.start;
   fillCommandSelect(commandSelect, choiceFromCommandId(state.input.weekCommands[week.start]), {
-    commands: commandsAvailableAt(week.firstDay),
+    commands: commandsAvailableAt(clubAt, week.firstDay),
   });
   commandFlag.append(document.createTextNode(' 周指令 '), commandSelect);
 
@@ -351,7 +355,7 @@ function clubChangeValueAt(date) {
   return change ? change.clubId : undefined;
 }
 
-function buildDayRow(day) {
+function buildDayRow(day, clubAt) {
   const row = document.createElement('tr');
   row.className = 'day-row';
   row.dataset.date = day.date;
@@ -361,7 +365,7 @@ function buildDayRow(day) {
     if (name === '日期') cell.textContent = day.date;
     if (name === '星期') cell.textContent = day.weekdayName;
     if (name === '结算') cell.className = 'state';
-    if (name === '指令') fillCommandCell(cell, day);
+    if (name === '指令') fillCommandCell(cell, day, clubAt);
     if (name === '休息日' || name === '跳过') {
       const box = document.createElement('input');
       box.type = 'checkbox';
@@ -384,10 +388,10 @@ function buildDayRow(day) {
 
 /** 结果形状没变时只更新既有行，不重建 DOM——否则改一个下拉就要重画一千多行。 */
 function applyCalendar(result) {
-  clubAtNow = createClubLookup(state.input);
+  const clubAt = createClubLookup(state.input);
 
-  if (renderedSignature !== calendarSignature(result)) {
-    renderCalendar(result);
+  if (renderedKey !== renderKey(result)) {
+    renderCalendar(result, clubAt);
   }
 
   const sequenceByDate = new Map();
@@ -415,15 +419,17 @@ function applyCalendar(result) {
             ? '结算'
             : '待定';
 
-    // 指令单元格只在「是否休息日」改变时才重建
     const restFlag = day.isRestDay ? '1' : '0';
     if (row.dataset.rest !== restFlag) {
       row.dataset.rest = restFlag;
-      fillCommandCell(cells[4], day);
+      fillCommandCell(cells[4], day, clubAt);
     }
     const select = cells[4].querySelector('select');
-    if (select) select.value = choiceFromCommandId(state.input.dayCommands[day.date]);
-    else fillCommandCell(cells[4], day);
+    if (select) {
+      select.value = choiceFromCommandId(state.input.dayCommands[day.date]);
+    } else {
+      fillCommandCell(cells[4], day, clubAt);
+    }
 
     const restBox = row.querySelector('input[data-action="rest"]');
     restBox.checked = day.isRestDay;
@@ -641,6 +647,7 @@ $('calendar').addEventListener('change', (event) => {
     setMapEntry(state.input.dayCommands, control.dataset.date, control.value);
   } else if (action === 'club-change') {
     setClubChange(control.dataset.week, control.value);
+    refreshGlobalCommandSelects();
   } else {
     return;
   }
@@ -657,6 +664,7 @@ $('start-date').addEventListener('change', (event) => {
 
 $('initial-club').addEventListener('change', (event) => {
   state.input.initialClub = event.target.value === UNSET ? null : event.target.value;
+  refreshGlobalCommandSelects();
   runPlan();
 });
 

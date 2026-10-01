@@ -5,7 +5,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createPlanner } from '../src/plan.js';
-import { createClubLookup } from '../src/clubs.js';
 import { defaultInput } from '../src/input.js';
 import { loadRules } from './support/rules.js';
 
@@ -26,34 +25,46 @@ function dayAt(result, date) {
   return day;
 }
 
-test('社团时点查询：起点社团之后，每次切换自该日起生效', () => {
-  const clubAt = createClubLookup({
-    initialClub: 'literature-club',
-    clubChanges: [
-      { date: '1996-05-05', clubId: 'science-club' },
-      { date: '1997-01-05', clubId: null },
-    ],
+test('社团切换自该日起生效：切换之前不可用，当天起可用', () => {
+  const result = planOf((input) => {
+    input.startDate = '1995-04-09';
+    input.initialClub = 'literature-club';
+    input.clubChanges = [{ date: '1995-04-16', clubId: 'science-club' }];
+    input.defaultWeekCommand = 'cmd-club-science';
   });
 
-  assert.equal(clubAt('1996-05-04'), 'literature-club');
-  assert.equal(clubAt('1996-05-05'), 'science-club', '切换当天就生效');
-  assert.equal(clubAt('1997-01-04'), 'science-club');
-  assert.equal(clubAt('1997-01-05'), null, '退出社团');
-  assert.equal(clubAt('1998-01-01'), null);
+  // 04-09 那一周的社团还是文艺社
+  assert.equal(dayAt(result, '1995-04-10').commandBlocked, 'club-mismatch');
+  // 04-16 是切换当天，那一周起科学社指令可用
+  assert.equal(dayAt(result, '1995-04-17').commandBlocked, null);
 });
 
-test('社团时点查询不受输入里切换记录顺序的影响', () => {
-  const clubAt = createClubLookup({
-    initialClub: null,
-    clubChanges: [
-      { date: '1997-01-05', clubId: 'art-club' },
-      { date: '1996-05-05', clubId: 'science-club' },
-    ],
-  });
+test('起点之前没有社团、之后加入：切换记录的顺序不影响结果', () => {
+  const build = (changes) =>
+    planOf((input) => {
+      input.startDate = '1995-04-09';
+      input.initialClub = null;
+      input.clubChanges = changes;
+      input.defaultWeekCommand = 'cmd-club-art';
+      input.initialClub = null;
+    });
 
-  assert.equal(clubAt('1996-04-01'), null);
-  assert.equal(clubAt('1996-06-01'), 'science-club');
-  assert.equal(clubAt('1997-06-01'), 'art-club');
+  const forward = build([
+    { date: '1995-04-16', clubId: 'science-club' },
+    { date: '1995-04-30', clubId: 'art-club' },
+  ]);
+  const backward = build([
+    { date: '1995-04-30', clubId: 'art-club' },
+    { date: '1995-04-16', clubId: 'science-club' },
+  ]);
+
+  const blocking = (result) => result.days.map((day) => day.commandBlocked);
+  assert.deepEqual(blocking(forward), blocking(backward));
+
+  // 04-16 之前没有社团，04-16 起是科学社，04-30 起才是美术社
+  assert.equal(dayAt(forward, '1995-04-10').commandBlocked, 'club-not-selected');
+  assert.equal(dayAt(forward, '1995-04-17').commandBlocked, 'club-mismatch');
+  assert.equal(dayAt(forward, '1995-05-01').commandBlocked, null);
 });
 
 test('没有加入社团时，社团指令不会被结算', () => {

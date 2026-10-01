@@ -7,7 +7,7 @@
 // 用「显式的 null」表示空过，用「键不存在」表示尚未指定（交由求解器决定）。
 // 这两种状态必须能穿过 JSON 往返而不被混淆。
 
-import { isDate, weekdayOf } from './dates.js';
+import { isDate, weekdayOf, weekStartOf } from './dates.js';
 import { goalProblems, miniGoalProblems } from './goals.js';
 import { attributeIds } from './lookup.js';
 
@@ -69,6 +69,10 @@ export function validateInput(input, rules) {
 
   const { start, lastSettlement } = rules.timeline;
   const inTimeline = (date) => isDate(date) && date >= start && date <= lastSettlement;
+  // 周锚点是自然周的周日，可能是**起点前一天或更早**（从周二开始规划时，
+  // 那一周的锚点就在起点之前）。社团切换同理，只发生在周锚点上。
+  const firstAnchor = weekStartOf(start);
+  const inWeekAnchors = (date) => isDate(date) && date >= firstAnchor && date <= lastSettlement;
 
   if (!isDate(input.startDate)) {
     problems.push(`startDate 格式错误：${input.startDate}`);
@@ -89,10 +93,10 @@ export function validateInput(input, rules) {
     ...miniGoalProblems(input.miniGoals, 'miniGoals', { ...goalContext, allowClubExperience: true }),
   );
 
-  checkClub(input, clubIds, inTimeline, problems);
+  checkClub(input, clubIds, inWeekAnchors, problems);
   checkCommandId('defaultWeekCommand', input.defaultWeekCommand, commandIds, problems);
   checkCommandId('defaultDayCommand', input.defaultDayCommand, commandIds, problems);
-  checkWeekCommands(input.weekCommands, commandIds, inTimeline, problems);
+  checkWeekCommands(input.weekCommands, commandIds, inWeekAnchors, problems);
   checkDayCommands(input.dayCommands, commandIds, inTimeline, problems);
   checkDayList('restDays', input.restDays, inTimeline, problems);
   checkDayList('skippedDays', input.skippedDays, inTimeline, problems);
@@ -133,7 +137,7 @@ function checkClub(input, clubIds, inTimeline, problems) {
     if (!isDate(change?.date)) {
       problems.push(`clubChanges 的日期格式错误：${change?.date}`);
     } else if (!inTimeline(change.date)) {
-      problems.push(`clubChanges 的日期超出时间轴：${change.date}`);
+      problems.push(`clubChanges 的日期超出可切换范围：${change.date}`);
     } else if (weekdayOf(change.date) !== 0) {
       problems.push(`clubChanges 只能在周日切换社团：${change.date}`);
     }
@@ -158,7 +162,7 @@ function checkWeekCommands(map, commandIds, inTimeline, problems) {
     if (!isDate(date)) {
       problems.push(`weekCommands 的键不是日期：${date}`);
     } else if (!inTimeline(date)) {
-      problems.push(`weekCommands 的日期超出时间轴：${date}`);
+      problems.push(`weekCommands 的日期超出可指定范围：${date}`);
     } else if (weekdayOf(date) !== 0) {
       problems.push(`weekCommands 的键必须是周日（周锚点）：${date}`);
     }

@@ -9,14 +9,16 @@ import { availableCommandIds, createClubLookup } from '../src/clubs.js';
 import { attributeById, attributeIds } from '../src/lookup.js';
 import { defaultInput, fromJson, toJson } from '../src/input.js';
 import { createPlanner } from '../src/plan.js';
+import { createSolver } from '../src/solver.js';
 
 const UNSET = '';
 const EMPTY = '__empty__';
 const NO_CLUB = '__no_club__';
 
-const state = { input: defaultInput(rules), requestId: 0, daysByDate: new Map() };
+const state = { input: defaultInput(rules), requestId: 0, daysByDate: new Map(), assignments: null, solving: false };
 const pending = new Map();
 const inlinePlan = createPlanner(rules);
+const inlineSolve = createSolver(rules);
 const commandNames = new Map(rules.commands.map((c) => [c.id, c.name]));
 const attributeLabels = rules.attributes.map((a) => ({ id: a.id, name: a.name }));
 
@@ -90,7 +92,7 @@ function startWorker() {
 
 function runOnMainThread(input) {
   try {
-    return { ok: true, result: inlinePlan(input) };
+    return { ok: true, result: inlinePlan(input, { assignments: state.assignments }) };
   } catch (error) {
     return { ok: false, error: error.message };
   }
@@ -102,12 +104,47 @@ function requestPlan(input) {
   const id = ++state.requestId;
   return new Promise((resolve) => {
     pending.set(id, resolve);
-    worker.postMessage({ id, type: 'plan', input });
+    worker.postMessage({ id, type: 'plan', input, assignments: state.assignments });
   }).then((reply) => {
     if (!reply.fallback) return reply;
     setStatus('当前浏览器不允许内联 Worker，已回退到主线程计算。');
     return runOnMainThread(input);
   });
+}
+
+function runSolveOnMainThread(input) {
+  try {
+    return { ok: true, assignments: inlineSolve(input) };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
+function requestSolve(input) {
+  if (workerUnavailable || !worker) return Promise.resolve(runSolveOnMainThread(input));
+
+  const id = ++state.requestId;
+  return new Promise((resolve) => {
+    pending.set(id, resolve);
+    worker.postMessage({ id, type: 'solve', input });
+  }).then((reply) => {
+    if (!reply.fallback) return reply;
+    return runSolveOnMainThread(input);
+  });
+}
+
+/** 取消：直接把 worker 掐掉重建——求解是同步循环，没有协作式中断点。 */
+function cancelSolve() {
+  if (!state.solving) return;
+  const inflight = [...pending.values()];
+  pending.clear();
+  if (worker) {
+    worker.terminate();
+    worker = null;
+  }
+  workerUnavailable = false;
+  startWorker();
+  for (const settle of inflight) settle({ cancelled: true });
 }
 
 // ---------------------------------------------------------------- 指令选择器
@@ -188,26 +225,36 @@ function setMapEntry(map, key, choice) {
  * 一天的「指令」单元格：休息日给可改的下拉框，平日只显示本周周指令（不可单独决策）。
  * 休息日只在**真正需要**时才建下拉框——一千多行每行都塞一个二十项的下拉框太重。
  */
+/**
+ * 下拉框该显示什么：使用者指定的优先，其次是求解器排的（**改它就等于指定**），
+ * 再次是全局默认指令。
+ */
+function selectionChoice(day) {
+  const pinned = state.input.dayCommands[day.date];
+  if (pinned !== undefined) return choiceFromCommandId(pinned);
+  const assigned = state.assignments?.dayCommands?.[day.date];
+  if (assigned !== undefined) return choiceFromCommandId(assigned);
+  return state.input.defaultDayCommand ?? UNSET;
+}
+
 function fillCommandCell(cell, day, clubAt) {
   cell.textContent = '';
   if (day.isRestDay) {
     const select = document.createElement('select');
     select.dataset.action = 'day-command';
     select.dataset.date = day.date;
-    fillCommandSelect(select, choiceFromCommandId(state.input.dayCommands[day.date]), {
+    fillCommandSelect(select, selectionChoice(day), {
       commands: commandsAvailableAt(clubAt, day.date),
     });
     cell.append(select);
     return;
   }
-  // 平日不单独决策：这里显示的是本周周指令，由输入推导（空过日的 commandId 本来就是空）
+  // 平日不单独决策：显示本周实际执行的周指令（可能来自使用者的指定，也可能来自求解器）。
   if (day.skipSource === 'week') {
     cell.textContent = '空过';
     return;
   }
-  const pinned = state.input.weekCommands[day.weekStart];
-  const effective = pinned === undefined ? state.input.defaultWeekCommand : pinned;
-  cell.textContent = effective ? (commandNames.get(effective) ?? effective) : '—';
+  cell.textContent = day.commandId ? (commandNames.get(day.commandId) ?? day.commandId) : '—';
 }
 
 /**
@@ -330,9 +377,17 @@ function buildWeekRow(week, clubAt) {
   const commandSelect = document.createElement('select');
   commandSelect.dataset.action = 'week-command';
   commandSelect.dataset.week = week.start;
-  fillCommandSelect(commandSelect, choiceFromCommandId(state.input.weekCommands[week.start]), {
-    commands: commandsAvailableAt(clubAt, week.firstDay),
-  });
+  const pinnedWeek = state.input.weekCommands[week.start];
+  const assignedWeek = state.assignments?.weekCommands?.[week.start];
+  fillCommandSelect(
+    commandSelect,
+    choiceFromCommandId(
+      pinnedWeek !== undefined ? pinnedWeek : assignedWeek !== undefined ? assignedWeek : undefined,
+    ),
+    {
+      commands: commandsAvailableAt(clubAt, week.firstDay),
+    },
+  );
   commandFlag.append(document.createTextNode(' 周指令 '), commandSelect);
 
   // 社团只能在周日切换，而每周表头正是那个周日。
@@ -427,7 +482,7 @@ function applyCalendar(result) {
     }
     const select = cells[4].querySelector('select');
     if (select) {
-      select.value = choiceFromCommandId(state.input.dayCommands[day.date]);
+      select.value = selectionChoice(day);
     } else {
       fillCommandCell(cells[4], day, clubAt);
     }
@@ -451,7 +506,13 @@ function applyCalendar(result) {
     const row = weekRows.get(week.start);
     if (!row) continue;
     const commandSelect = row.querySelector('select[data-action="week-command"]');
-    if (commandSelect) commandSelect.value = choiceFromCommandId(state.input.weekCommands[week.start]);
+    if (commandSelect) {
+      const pinned = state.input.weekCommands[week.start];
+      const assigned = state.assignments?.weekCommands?.[week.start];
+      commandSelect.value = choiceFromCommandId(
+        pinned !== undefined ? pinned : assigned !== undefined ? assigned : undefined,
+      );
+    }
     const clubSelect = row.querySelector('select[data-action="club-change"]');
     if (clubSelect) {
       const value = clubChangeValueAt(week.start);
@@ -672,14 +733,14 @@ function wireGoalList({ hostId, listKey, options }) {
     const row = event.target.closest('.goal-row');
     if (!row) return;
     state.input[listKey][Number(row.dataset.index)] = goalFromRow(row, options);
-    runPlan();
+    generate();
   });
   host.addEventListener('click', (event) => {
     if (event.target.dataset.role !== 'remove') return;
     const row = event.target.closest('.goal-row');
     state.input[listKey].splice(Number(row.dataset.index), 1);
     renderGoalEditors();
-    runPlan();
+    generate();
   });
 }
 
@@ -787,13 +848,49 @@ function renderResult(result) {
 }
 
 async function runPlan() {
-  setStatus('计算中…');
+  setStatus(state.assignments ? '计算中…' : '尚未生成日程——点「生成」让工具排出一份。');
   const reply = await requestPlan(state.input);
+  if (reply.cancelled) return;
   if (!reply.ok) {
     setStatus(`计算失败：${reply.error}`, true);
     return;
   }
   renderResult(reply.result);
+}
+
+/** 「生成」：先求解出完整日程，再按这份日程规划。 */
+async function generate() {
+  // 求解期间又来的改动不能丢：记下来，这一轮结束后再排一次。
+  if (state.solving) {
+    state.resolveQueued = true;
+    return;
+  }
+  state.solving = true;
+  $('btn-cancel').hidden = false;
+  $('btn-plan').disabled = true;
+  setStatus('求解中…');
+
+  try {
+    const reply = await requestSolve(state.input);
+    if (reply.cancelled) {
+      setStatus('已取消计算。');
+      return;
+    }
+    if (!reply.ok) {
+      setStatus(`求解失败：${reply.error}`, true);
+      return;
+    }
+    state.assignments = reply.assignments;
+    await runPlan();
+  } finally {
+    state.solving = false;
+    $('btn-cancel').hidden = true;
+    $('btn-plan').disabled = false;
+    if (state.resolveQueued) {
+      state.resolveQueued = false;
+      generate();
+    }
+  }
 }
 
 // ---------------------------------------------------------------- JSON
@@ -819,7 +916,7 @@ async function importJson(file) {
     return;
   }
   renderForm();
-  await runPlan();
+  await generate();
 }
 
 // ---------------------------------------------------------------- 交互
@@ -866,7 +963,7 @@ $('calendar').addEventListener('change', (event) => {
   } else {
     return;
   }
-  runPlan();
+  generate();
 });
 
 startWorker();
@@ -877,13 +974,13 @@ for (const list of GOAL_LISTS) wireGoalList(list);
 $('btn-add-global').addEventListener('click', () => {
   state.input.globalConstraints.push({ attribute: attributeLabels[0].id, op: '>=', value: 50 });
   renderGoalEditors();
-  runPlan();
+  generate();
 });
 
 $('btn-add-ending').addEventListener('click', () => {
   state.input.endingGoals.push({ attribute: attributeLabels[0].id, op: '>=', value: 50 });
   renderGoalEditors();
-  runPlan();
+  generate();
 });
 
 $('btn-add-mini').addEventListener('click', () => {
@@ -894,32 +991,36 @@ $('btn-add-mini').addEventListener('click', () => {
     value: 50,
   });
   renderGoalEditors();
-  runPlan();
+  generate();
 });
 
 $('start-date').addEventListener('change', (event) => {
   state.input.startDate = event.target.value;
-  runPlan();
+  generate();
 });
 
 $('initial-club').addEventListener('change', (event) => {
   state.input.initialClub = event.target.value === UNSET ? null : event.target.value;
   refreshGlobalCommandSelects();
-  runPlan();
+  generate();
 });
 
 $('default-week-command').addEventListener('change', (event) => {
   state.input.defaultWeekCommand = commandIdFromDefaultChoice(event.target.value);
-  runPlan();
+  generate();
 });
 
 $('default-day-command').addEventListener('change', (event) => {
   state.input.defaultDayCommand = commandIdFromDefaultChoice(event.target.value);
-  runPlan();
+  generate();
 });
 
 $('btn-plan').addEventListener('click', () => {
-  runPlan();
+  generate();
+});
+
+$('btn-cancel').addEventListener('click', () => {
+  cancelSolve();
 });
 
 $('btn-export').addEventListener('click', () => {
@@ -936,4 +1037,5 @@ $('file-import').addEventListener('change', (event) => {
   if (file) importJson(file);
 });
 
-runPlan();
+// 打开就先排一份，使用者不必先点一次「生成」才看得到东西。
+generate();

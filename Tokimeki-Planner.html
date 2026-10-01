@@ -373,6 +373,7 @@
 
         <div class="actions">
           <button id="btn-plan" class="primary" type="button">生成</button>
+          <button id="btn-cancel" type="button" hidden>取消</button>
           <button id="btn-export" type="button">导出 JSON</button>
           <label class="file-button">
             导入 JSON
@@ -465,7 +466,7 @@ function resolveSkipSource(date, isRestDay, weekStart, input, skippedDaySet) {
   return null;
 }
 
-function buildCalendar(rules, input) {
+function buildCalendar(rules, input, assignments = null) {
   const { start: timelineStart, end, lastSettlement } = rules.timeline;
   const restDays = new Set(input.restDays);
   const skippedDaySet = new Set(input.skippedDays);
@@ -483,12 +484,20 @@ function buildCalendar(rules, input) {
     const isTimelineEnd = date === end;
     const isSettled = !isEmpty && !isGameOpening && !isTimelineEnd;
 
-    // 显式指定（含显式 null = 空过）优先；键不存在时才落到全局默认指令。
+    // 使用者显式指定（含显式 null = 空过）最优先；其次才是求解器的填空；
+    // 再次是全局默认指令；都没有就留空（待定）。
     const pinned = isRestDay ? input.dayCommands[date] : input.weekCommands[weekStart];
+    const assigned = isRestDay
+      ? assignments?.dayCommands?.[date]
+      : assignments?.weekCommands?.[weekStart];
     const fallback = isRestDay ? input.defaultDayCommand : input.defaultWeekCommand;
     // 空过就是「指令留空」（见 GLOSSARY）；界面要显示"本来会执行什么"时，
     // 自己从输入推导，而不是让数据模型替界面记住。
-    const commandId = isEmpty ? null : pinned === undefined ? (fallback ?? null) : pinned;
+    const commandId = isEmpty
+      ? null
+      : pinned !== undefined
+        ? pinned
+        : (assigned ?? fallback ?? null);
 
     days.push({
       date,
@@ -1377,7 +1386,7 @@ function createPlanner(rules) {
   const toReal = (values) =>
     Object.fromEntries(Object.entries(values).map(([id, value]) => [id, value / scale]));
 
-  return function plan(input) {
+  return function plan(input, { assignments = null } = {}) {
     if (ruleProblems.length > 0) {
       return { ok: false, status: 'invalid-rules', problems: ruleProblems };
     }
@@ -1387,7 +1396,7 @@ function createPlanner(rules) {
       return { ok: false, status: 'invalid-input', problems: inputProblems };
     }
 
-    const calendar = buildCalendar(rules, input);
+    const calendar = buildCalendar(rules, input, assignments);
     const clubAt = createClubLookup(input);
 
     let state = {
@@ -1438,22 +1447,242 @@ function createPlanner(rules) {
 }
 return { createPlanner };
 })();
+__ns["src/solver.js"] = (() => {
+const { buildCalendar } = __ns["src/calendar.js"];
+const { clubBlockReason, createClubLookup, availableCommandIds } = __ns["src/clubs.js"];
+const { meets } = __ns["src/constraints.js"];
+const { REST_DAY, WEEKDAY, createSettlement } = __ns["src/settlement.js"];
+// 求解器：把使用者**没有指定**的那些槽位填满。
+//
+// 计划：
+//   - 只做确定性推算，不掷骰子。同一输入必得同一结果。
+//   - 不追求数学最优，也不承诺全局最优（见规格）。
+//   - 绝不自行选择或切换社团——社团只来自使用者。
+//   - 空过不在候选池里：它只能由使用者的跳过操作产生。
+//
+// 算法是**滚动时域贪心**：按日期顺序走过每一周，为每个槽位逐一试遍候选，
+// 用"离各项目标还差多少"加权打分，取分最高者并落定，然后带着新的状态进入下一周。
+//
+// 为什么不用"每个候选都重算整份规划"的局部搜索：一次完整规划要 5.8 ms，
+// 305 个槽位 × 17 个候选 × 全量重算 ≈ 30 秒/轮，够不上"秒到十几秒"。
+// 滚动时域只看当前槽位的那几天（约 0.04 ms/次），整趟约 0.2 秒，代价是短视。
+
+
+
+
+
+
+// 破坏硬不变量的代价按**破坏程度**计，而不是每天一个固定值：
+// 固定值在"所有候选都破"的死局里会把梯度抹平，求解器就再也爬不出来。
+const BREACH_PENALTY = 1e6;
+
+// 打分时给硬不变量留一条安全边距。真实的约束判定仍按原阈值（由 constraints.js 负责），
+// 这条边距只影响求解器"愿意贴多近"——只看一周的贪心若贴着悬崖走，迟早会掉下去。
+const INVARIANT_MARGIN = 4;
+
+function createSolver(rules) {
+  const settleDay = createSettlement(rules);
+  const scale = rules.fixedPointScale;
+  const negativeId = rules.attributes.find((attribute) => attribute.direction === 'down').id;
+  const positiveIds = rules.attributes
+    .filter((attribute) => attribute.direction === 'up')
+    .map((attribute) => attribute.id);
+  const clubExperienceId = rules.clubExperience.id;
+
+  function initialState(input) {
+    return {
+      attributes: Object.fromEntries(
+        Object.entries(input.attributes).map(([id, value]) => [id, value * scale]),
+      ),
+      clubExperience: Object.fromEntries(rules.clubs.map((club) => [club.id, 0])),
+    };
+  }
+
+  return function solve(input) {
+    const calendar = buildCalendar(rules, input);
+    const clubAt = createClubLookup(input);
+    const dayByDate = new Map(calendar.days.map((day) => [day.date, day]));
+
+    // 起点已满足的全局约束，在整个规划里都是硬不变量——求解时不得破。
+    const hardConstraints = input.globalConstraints.filter((goal) =>
+      meets(input.attributes[goal.attribute], goal.op, goal.value),
+    );
+
+    const valueOf = (state, club, id) =>
+      id === clubExperienceId
+        ? club
+          ? (state.clubExperience[club] ?? 0) / scale
+          : 0
+        : state.attributes[id] / scale;
+
+    /**
+     * 此刻每个属性"离目标还差多少"，取所有目标里最严的那条。
+     * 小目标的求和缺口按集合成员数摊到每个成员头上。
+     */
+    function targetsAt(state, club, date) {
+      const targets = new Map();
+      const consider = (attribute, op, value) => {
+        const current = targets.get(attribute);
+        if (!current) {
+          targets.set(attribute, { op, value });
+          return;
+        }
+        if (op === '>=' && (current.op !== '>=' || value > current.value)) {
+          targets.set(attribute, { op, value });
+        }
+        if (op === '<' && (current.op !== '<' || value < current.value)) {
+          targets.set(attribute, { op, value });
+        }
+      };
+
+      for (const goal of input.globalConstraints) consider(goal.attribute, goal.op, goal.value);
+      for (const goal of input.endingGoals) consider(goal.attribute, goal.op, goal.value);
+      for (const goal of input.miniGoals) {
+        if (goal.deadline < date) continue; // 截止日已过，不再影响决策
+        const sum = goal.attributes.reduce((total, id) => total + valueOf(state, club, id), 0);
+        const gap = goal.op === '>=' ? goal.value - sum : sum - (goal.value - 1);
+        if (gap <= 0) continue;
+        const share = gap / goal.attributes.length;
+        for (const id of goal.attributes) consider(id, '>=', valueOf(state, club, id) + share);
+      }
+      return targets;
+    }
+
+    function needOf(current, target) {
+      return target.op === '=' ? 0 : target.op === '>=' ? Math.max(0, target.value - current) : Math.max(0, current - (target.value - 1));
+    }
+
+    /** 一个槽位上的候选：不可用的社团指令不进候选池。 */
+    const candidatesAt = (date) => availableCommandIds(rules, clubAt(date), date);
+
+    /**
+     * 按与 plan 相同的规则结算这几天；不可用的指令不执行。
+     * 同时逐日检查硬不变量——只看周末状态会漏掉"周中破了、周末又回来了"。
+     */
+    function simulate(state, days, commandId) {
+      let next = state;
+      let breachCost = 0;
+      const command = commandId
+        ? rules.commands.find((entry) => entry.id === commandId)
+        : null;
+
+      for (const day of days) {
+        if (day.isSettled && command && clubBlockReason(rules, command, clubAt(day.date), day.date) === null) {
+          next = settleDay(next, commandId, day.isRestDay ? REST_DAY : WEEKDAY);
+        }
+        const club = clubAt(day.date);
+        for (const goal of hardConstraints) {
+          breachCost += breachSeverity(valueOf(next, club, goal.attribute), goal);
+        }
+      }
+      return { state: next, breachCost };
+    }
+
+    /** 破了多少：满足阈值**并留住安全边距**时为 0，否则是差出的量。 */
+    function breachSeverity(value, goal) {
+      const limit = goal.op === '>=' ? goal.value + INVARIANT_MARGIN : goal.value - INVARIANT_MARGIN;
+      if (meets(value, goal.op, limit)) return 0;
+      return goal.op === '>=' ? limit - value : value - (limit - 1);
+    }
+
+    /** 打分：先看离目标推进了多少，其次才轮到正向总和与压力（与 ADR-0002 同序）。 */
+    function scoreOf(before, after, breachCost, targets, club) {
+      let score = -BREACH_PENALTY * breachCost;
+      for (const [attribute, target] of targets) {
+        // 社团经验是独立的一张表，不在 state.attributes 里——必须走同一个取值口径，
+        // 否则这里会算出 NaN，导致每个槽位都悄悄退回候选列表的第一个。
+        const beforeValue = valueOf(before, club, attribute);
+        const afterValue = valueOf(after, club, attribute);
+        const delta = afterValue - beforeValue;
+        score += (target.op === '>=' ? delta : -delta) * needOf(beforeValue, target);
+      }
+
+      let positiveDelta = 0;
+      for (const id of positiveIds) {
+        positiveDelta += (after.attributes[id] - before.attributes[id]) / scale;
+      }
+      score += positiveDelta * 1e-6;
+      score -= ((after.attributes[negativeId] - before.attributes[negativeId]) / scale) * 1e-9;
+      return score;
+    }
+
+    function pick(state, days, candidates, club, date) {
+      const targets = targetsAt(state, club, date);
+      let bestId = candidates[0] ?? null;
+      let bestScore = -Infinity;
+      for (const id of candidates) {
+        const outcome = simulate(state, days, id);
+        const score = scoreOf(state, outcome.state, outcome.breachCost, targets, club);
+        if (score > bestScore) {
+          bestScore = score;
+          bestId = id;
+        }
+      }
+      return bestId;
+    }
+
+    let state = initialState(input);
+    const weekCommands = {};
+    const dayCommands = {};
+
+    for (const week of calendar.weeks) {
+      const days = week.days.map((date) => dayByDate.get(date));
+      const restDays = days.filter((day) => day.isRestDay);
+      const workdays = days.filter((day) => !day.isRestDay);
+
+      // 决策顺序就是日历的顺序：先周日的日指令与结算，再定本周周指令，最后各平日。
+      for (const day of restDays) {
+        const pinned = input.dayCommands[day.date];
+        let chosen = pinned;
+        if (pinned === undefined) {
+          chosen = pick(state, [day], candidatesAt(day.date), clubAt(day.date), day.date);
+          dayCommands[day.date] = chosen;
+        }
+        state = simulate(state, [day], chosen).state;
+      }
+
+      if (workdays.length > 0) {
+        const pinned = input.weekCommands[week.start];
+        let chosen = pinned;
+        if (pinned === undefined) {
+          const date = workdays[0].date;
+          chosen = pick(state, workdays, candidatesAt(date), clubAt(date), date);
+          weekCommands[week.start] = chosen;
+        }
+        state = simulate(state, workdays, chosen).state;
+      }
+    }
+
+    return { weekCommands, dayCommands };
+  };
+}
+return { createSolver };
+})();
 __ns["web/worker.js"] = (() => {
 const rules = __ns["data/rules.json"];
 const { createPlanner } = __ns["src/plan.js"];
-// 内联 Web Worker：主线程只收输入、只渲染结果，规划在后台线程里跑。
+const { createSolver } = __ns["src/solver.js"];
+// 内联 Web Worker：主线程只收输入、只渲染结果，规划与求解都在后台线程里跑。
+
 
 
 
 
 const plan = createPlanner(rules);
+const solve = createSolver(rules);
 
 self.onmessage = (event) => {
   const message = event.data || {};
   const id = message.id;
   try {
     if (message.type === 'plan') {
-      self.postMessage({ id, ok: true, result: plan(message.input) });
+      self.postMessage({ id, ok: true, result: plan(message.input, { assignments: message.assignments }) });
+      return;
+    }
+    if (message.type === 'solve') {
+      // 求解很慢，先把中间结论交出去也没意义——一次性把日程交回，由主线程再规划一次。
+      const assignments = solve(message.input);
+      self.postMessage({ id, ok: true, assignments });
       return;
     }
     self.postMessage({ id, ok: false, error: `未知消息类型：${message.type}` });
@@ -1856,7 +2085,7 @@ function resolveSkipSource(date, isRestDay, weekStart, input, skippedDaySet) {
   return null;
 }
 
-function buildCalendar(rules, input) {
+function buildCalendar(rules, input, assignments = null) {
   const { start: timelineStart, end, lastSettlement } = rules.timeline;
   const restDays = new Set(input.restDays);
   const skippedDaySet = new Set(input.skippedDays);
@@ -1874,12 +2103,20 @@ function buildCalendar(rules, input) {
     const isTimelineEnd = date === end;
     const isSettled = !isEmpty && !isGameOpening && !isTimelineEnd;
 
-    // 显式指定（含显式 null = 空过）优先；键不存在时才落到全局默认指令。
+    // 使用者显式指定（含显式 null = 空过）最优先；其次才是求解器的填空；
+    // 再次是全局默认指令；都没有就留空（待定）。
     const pinned = isRestDay ? input.dayCommands[date] : input.weekCommands[weekStart];
+    const assigned = isRestDay
+      ? assignments?.dayCommands?.[date]
+      : assignments?.weekCommands?.[weekStart];
     const fallback = isRestDay ? input.defaultDayCommand : input.defaultWeekCommand;
     // 空过就是「指令留空」（见 GLOSSARY）；界面要显示"本来会执行什么"时，
     // 自己从输入推导，而不是让数据模型替界面记住。
-    const commandId = isEmpty ? null : pinned === undefined ? (fallback ?? null) : pinned;
+    const commandId = isEmpty
+      ? null
+      : pinned !== undefined
+        ? pinned
+        : (assigned ?? fallback ?? null);
 
     days.push({
       date,
@@ -2448,7 +2685,7 @@ function createPlanner(rules) {
   const toReal = (values) =>
     Object.fromEntries(Object.entries(values).map(([id, value]) => [id, value / scale]));
 
-  return function plan(input) {
+  return function plan(input, { assignments = null } = {}) {
     if (ruleProblems.length > 0) {
       return { ok: false, status: 'invalid-rules', problems: ruleProblems };
     }
@@ -2458,7 +2695,7 @@ function createPlanner(rules) {
       return { ok: false, status: 'invalid-input', problems: inputProblems };
     }
 
-    const calendar = buildCalendar(rules, input);
+    const calendar = buildCalendar(rules, input, assignments);
     const clubAt = createClubLookup(input);
 
     let state = {
@@ -2509,12 +2746,224 @@ function createPlanner(rules) {
 }
 return { createPlanner };
 })();
+__ns["src/solver.js"] = (() => {
+const { buildCalendar } = __ns["src/calendar.js"];
+const { clubBlockReason, createClubLookup, availableCommandIds } = __ns["src/clubs.js"];
+const { meets } = __ns["src/constraints.js"];
+const { REST_DAY, WEEKDAY, createSettlement } = __ns["src/settlement.js"];
+// 求解器：把使用者**没有指定**的那些槽位填满。
+//
+// 计划：
+//   - 只做确定性推算，不掷骰子。同一输入必得同一结果。
+//   - 不追求数学最优，也不承诺全局最优（见规格）。
+//   - 绝不自行选择或切换社团——社团只来自使用者。
+//   - 空过不在候选池里：它只能由使用者的跳过操作产生。
+//
+// 算法是**滚动时域贪心**：按日期顺序走过每一周，为每个槽位逐一试遍候选，
+// 用"离各项目标还差多少"加权打分，取分最高者并落定，然后带着新的状态进入下一周。
+//
+// 为什么不用"每个候选都重算整份规划"的局部搜索：一次完整规划要 5.8 ms，
+// 305 个槽位 × 17 个候选 × 全量重算 ≈ 30 秒/轮，够不上"秒到十几秒"。
+// 滚动时域只看当前槽位的那几天（约 0.04 ms/次），整趟约 0.2 秒，代价是短视。
+
+
+
+
+
+
+// 破坏硬不变量的代价按**破坏程度**计，而不是每天一个固定值：
+// 固定值在"所有候选都破"的死局里会把梯度抹平，求解器就再也爬不出来。
+const BREACH_PENALTY = 1e6;
+
+// 打分时给硬不变量留一条安全边距。真实的约束判定仍按原阈值（由 constraints.js 负责），
+// 这条边距只影响求解器"愿意贴多近"——只看一周的贪心若贴着悬崖走，迟早会掉下去。
+const INVARIANT_MARGIN = 4;
+
+function createSolver(rules) {
+  const settleDay = createSettlement(rules);
+  const scale = rules.fixedPointScale;
+  const negativeId = rules.attributes.find((attribute) => attribute.direction === 'down').id;
+  const positiveIds = rules.attributes
+    .filter((attribute) => attribute.direction === 'up')
+    .map((attribute) => attribute.id);
+  const clubExperienceId = rules.clubExperience.id;
+
+  function initialState(input) {
+    return {
+      attributes: Object.fromEntries(
+        Object.entries(input.attributes).map(([id, value]) => [id, value * scale]),
+      ),
+      clubExperience: Object.fromEntries(rules.clubs.map((club) => [club.id, 0])),
+    };
+  }
+
+  return function solve(input) {
+    const calendar = buildCalendar(rules, input);
+    const clubAt = createClubLookup(input);
+    const dayByDate = new Map(calendar.days.map((day) => [day.date, day]));
+
+    // 起点已满足的全局约束，在整个规划里都是硬不变量——求解时不得破。
+    const hardConstraints = input.globalConstraints.filter((goal) =>
+      meets(input.attributes[goal.attribute], goal.op, goal.value),
+    );
+
+    const valueOf = (state, club, id) =>
+      id === clubExperienceId
+        ? club
+          ? (state.clubExperience[club] ?? 0) / scale
+          : 0
+        : state.attributes[id] / scale;
+
+    /**
+     * 此刻每个属性"离目标还差多少"，取所有目标里最严的那条。
+     * 小目标的求和缺口按集合成员数摊到每个成员头上。
+     */
+    function targetsAt(state, club, date) {
+      const targets = new Map();
+      const consider = (attribute, op, value) => {
+        const current = targets.get(attribute);
+        if (!current) {
+          targets.set(attribute, { op, value });
+          return;
+        }
+        if (op === '>=' && (current.op !== '>=' || value > current.value)) {
+          targets.set(attribute, { op, value });
+        }
+        if (op === '<' && (current.op !== '<' || value < current.value)) {
+          targets.set(attribute, { op, value });
+        }
+      };
+
+      for (const goal of input.globalConstraints) consider(goal.attribute, goal.op, goal.value);
+      for (const goal of input.endingGoals) consider(goal.attribute, goal.op, goal.value);
+      for (const goal of input.miniGoals) {
+        if (goal.deadline < date) continue; // 截止日已过，不再影响决策
+        const sum = goal.attributes.reduce((total, id) => total + valueOf(state, club, id), 0);
+        const gap = goal.op === '>=' ? goal.value - sum : sum - (goal.value - 1);
+        if (gap <= 0) continue;
+        const share = gap / goal.attributes.length;
+        for (const id of goal.attributes) consider(id, '>=', valueOf(state, club, id) + share);
+      }
+      return targets;
+    }
+
+    function needOf(current, target) {
+      return target.op === '=' ? 0 : target.op === '>=' ? Math.max(0, target.value - current) : Math.max(0, current - (target.value - 1));
+    }
+
+    /** 一个槽位上的候选：不可用的社团指令不进候选池。 */
+    const candidatesAt = (date) => availableCommandIds(rules, clubAt(date), date);
+
+    /**
+     * 按与 plan 相同的规则结算这几天；不可用的指令不执行。
+     * 同时逐日检查硬不变量——只看周末状态会漏掉"周中破了、周末又回来了"。
+     */
+    function simulate(state, days, commandId) {
+      let next = state;
+      let breachCost = 0;
+      const command = commandId
+        ? rules.commands.find((entry) => entry.id === commandId)
+        : null;
+
+      for (const day of days) {
+        if (day.isSettled && command && clubBlockReason(rules, command, clubAt(day.date), day.date) === null) {
+          next = settleDay(next, commandId, day.isRestDay ? REST_DAY : WEEKDAY);
+        }
+        const club = clubAt(day.date);
+        for (const goal of hardConstraints) {
+          breachCost += breachSeverity(valueOf(next, club, goal.attribute), goal);
+        }
+      }
+      return { state: next, breachCost };
+    }
+
+    /** 破了多少：满足阈值**并留住安全边距**时为 0，否则是差出的量。 */
+    function breachSeverity(value, goal) {
+      const limit = goal.op === '>=' ? goal.value + INVARIANT_MARGIN : goal.value - INVARIANT_MARGIN;
+      if (meets(value, goal.op, limit)) return 0;
+      return goal.op === '>=' ? limit - value : value - (limit - 1);
+    }
+
+    /** 打分：先看离目标推进了多少，其次才轮到正向总和与压力（与 ADR-0002 同序）。 */
+    function scoreOf(before, after, breachCost, targets, club) {
+      let score = -BREACH_PENALTY * breachCost;
+      for (const [attribute, target] of targets) {
+        // 社团经验是独立的一张表，不在 state.attributes 里——必须走同一个取值口径，
+        // 否则这里会算出 NaN，导致每个槽位都悄悄退回候选列表的第一个。
+        const beforeValue = valueOf(before, club, attribute);
+        const afterValue = valueOf(after, club, attribute);
+        const delta = afterValue - beforeValue;
+        score += (target.op === '>=' ? delta : -delta) * needOf(beforeValue, target);
+      }
+
+      let positiveDelta = 0;
+      for (const id of positiveIds) {
+        positiveDelta += (after.attributes[id] - before.attributes[id]) / scale;
+      }
+      score += positiveDelta * 1e-6;
+      score -= ((after.attributes[negativeId] - before.attributes[negativeId]) / scale) * 1e-9;
+      return score;
+    }
+
+    function pick(state, days, candidates, club, date) {
+      const targets = targetsAt(state, club, date);
+      let bestId = candidates[0] ?? null;
+      let bestScore = -Infinity;
+      for (const id of candidates) {
+        const outcome = simulate(state, days, id);
+        const score = scoreOf(state, outcome.state, outcome.breachCost, targets, club);
+        if (score > bestScore) {
+          bestScore = score;
+          bestId = id;
+        }
+      }
+      return bestId;
+    }
+
+    let state = initialState(input);
+    const weekCommands = {};
+    const dayCommands = {};
+
+    for (const week of calendar.weeks) {
+      const days = week.days.map((date) => dayByDate.get(date));
+      const restDays = days.filter((day) => day.isRestDay);
+      const workdays = days.filter((day) => !day.isRestDay);
+
+      // 决策顺序就是日历的顺序：先周日的日指令与结算，再定本周周指令，最后各平日。
+      for (const day of restDays) {
+        const pinned = input.dayCommands[day.date];
+        let chosen = pinned;
+        if (pinned === undefined) {
+          chosen = pick(state, [day], candidatesAt(day.date), clubAt(day.date), day.date);
+          dayCommands[day.date] = chosen;
+        }
+        state = simulate(state, [day], chosen).state;
+      }
+
+      if (workdays.length > 0) {
+        const pinned = input.weekCommands[week.start];
+        let chosen = pinned;
+        if (pinned === undefined) {
+          const date = workdays[0].date;
+          chosen = pick(state, workdays, candidatesAt(date), clubAt(date), date);
+          weekCommands[week.start] = chosen;
+        }
+        state = simulate(state, workdays, chosen).state;
+      }
+    }
+
+    return { weekCommands, dayCommands };
+  };
+}
+return { createSolver };
+})();
 __ns["web/app.js"] = (() => {
 const rules = __ns["data/rules.json"];
 const { availableCommandIds, createClubLookup } = __ns["src/clubs.js"];
 const { attributeById, attributeIds } = __ns["src/lookup.js"];
 const { defaultInput, fromJson, toJson } = __ns["src/input.js"];
 const { createPlanner } = __ns["src/plan.js"];
+const { createSolver } = __ns["src/solver.js"];
 // 主线程：表单、指令选择、日历表与曲线、JSON 导入导出，以及一次 Worker 往返。
 //
 // 页面是从 file:// 双击打开的，而有些浏览器在 file:// 下拒绝构造 blob Worker。
@@ -2527,13 +2976,15 @@ const { createPlanner } = __ns["src/plan.js"];
 
 
 
+
 const UNSET = '';
 const EMPTY = '__empty__';
 const NO_CLUB = '__no_club__';
 
-const state = { input: defaultInput(rules), requestId: 0, daysByDate: new Map() };
+const state = { input: defaultInput(rules), requestId: 0, daysByDate: new Map(), assignments: null, solving: false };
 const pending = new Map();
 const inlinePlan = createPlanner(rules);
+const inlineSolve = createSolver(rules);
 const commandNames = new Map(rules.commands.map((c) => [c.id, c.name]));
 const attributeLabels = rules.attributes.map((a) => ({ id: a.id, name: a.name }));
 
@@ -2607,7 +3058,7 @@ function startWorker() {
 
 function runOnMainThread(input) {
   try {
-    return { ok: true, result: inlinePlan(input) };
+    return { ok: true, result: inlinePlan(input, { assignments: state.assignments }) };
   } catch (error) {
     return { ok: false, error: error.message };
   }
@@ -2619,12 +3070,47 @@ function requestPlan(input) {
   const id = ++state.requestId;
   return new Promise((resolve) => {
     pending.set(id, resolve);
-    worker.postMessage({ id, type: 'plan', input });
+    worker.postMessage({ id, type: 'plan', input, assignments: state.assignments });
   }).then((reply) => {
     if (!reply.fallback) return reply;
     setStatus('当前浏览器不允许内联 Worker，已回退到主线程计算。');
     return runOnMainThread(input);
   });
+}
+
+function runSolveOnMainThread(input) {
+  try {
+    return { ok: true, assignments: inlineSolve(input) };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
+function requestSolve(input) {
+  if (workerUnavailable || !worker) return Promise.resolve(runSolveOnMainThread(input));
+
+  const id = ++state.requestId;
+  return new Promise((resolve) => {
+    pending.set(id, resolve);
+    worker.postMessage({ id, type: 'solve', input });
+  }).then((reply) => {
+    if (!reply.fallback) return reply;
+    return runSolveOnMainThread(input);
+  });
+}
+
+/** 取消：直接把 worker 掐掉重建——求解是同步循环，没有协作式中断点。 */
+function cancelSolve() {
+  if (!state.solving) return;
+  const inflight = [...pending.values()];
+  pending.clear();
+  if (worker) {
+    worker.terminate();
+    worker = null;
+  }
+  workerUnavailable = false;
+  startWorker();
+  for (const settle of inflight) settle({ cancelled: true });
 }
 
 // ---------------------------------------------------------------- 指令选择器
@@ -2705,26 +3191,36 @@ function setMapEntry(map, key, choice) {
  * 一天的「指令」单元格：休息日给可改的下拉框，平日只显示本周周指令（不可单独决策）。
  * 休息日只在**真正需要**时才建下拉框——一千多行每行都塞一个二十项的下拉框太重。
  */
+/**
+ * 下拉框该显示什么：使用者指定的优先，其次是求解器排的（**改它就等于指定**），
+ * 再次是全局默认指令。
+ */
+function selectionChoice(day) {
+  const pinned = state.input.dayCommands[day.date];
+  if (pinned !== undefined) return choiceFromCommandId(pinned);
+  const assigned = state.assignments?.dayCommands?.[day.date];
+  if (assigned !== undefined) return choiceFromCommandId(assigned);
+  return state.input.defaultDayCommand ?? UNSET;
+}
+
 function fillCommandCell(cell, day, clubAt) {
   cell.textContent = '';
   if (day.isRestDay) {
     const select = document.createElement('select');
     select.dataset.action = 'day-command';
     select.dataset.date = day.date;
-    fillCommandSelect(select, choiceFromCommandId(state.input.dayCommands[day.date]), {
+    fillCommandSelect(select, selectionChoice(day), {
       commands: commandsAvailableAt(clubAt, day.date),
     });
     cell.append(select);
     return;
   }
-  // 平日不单独决策：这里显示的是本周周指令，由输入推导（空过日的 commandId 本来就是空）
+  // 平日不单独决策：显示本周实际执行的周指令（可能来自使用者的指定，也可能来自求解器）。
   if (day.skipSource === 'week') {
     cell.textContent = '空过';
     return;
   }
-  const pinned = state.input.weekCommands[day.weekStart];
-  const effective = pinned === undefined ? state.input.defaultWeekCommand : pinned;
-  cell.textContent = effective ? (commandNames.get(effective) ?? effective) : '—';
+  cell.textContent = day.commandId ? (commandNames.get(day.commandId) ?? day.commandId) : '—';
 }
 
 /**
@@ -2847,9 +3343,17 @@ function buildWeekRow(week, clubAt) {
   const commandSelect = document.createElement('select');
   commandSelect.dataset.action = 'week-command';
   commandSelect.dataset.week = week.start;
-  fillCommandSelect(commandSelect, choiceFromCommandId(state.input.weekCommands[week.start]), {
-    commands: commandsAvailableAt(clubAt, week.firstDay),
-  });
+  const pinnedWeek = state.input.weekCommands[week.start];
+  const assignedWeek = state.assignments?.weekCommands?.[week.start];
+  fillCommandSelect(
+    commandSelect,
+    choiceFromCommandId(
+      pinnedWeek !== undefined ? pinnedWeek : assignedWeek !== undefined ? assignedWeek : undefined,
+    ),
+    {
+      commands: commandsAvailableAt(clubAt, week.firstDay),
+    },
+  );
   commandFlag.append(document.createTextNode(' 周指令 '), commandSelect);
 
   // 社团只能在周日切换，而每周表头正是那个周日。
@@ -2944,7 +3448,7 @@ function applyCalendar(result) {
     }
     const select = cells[4].querySelector('select');
     if (select) {
-      select.value = choiceFromCommandId(state.input.dayCommands[day.date]);
+      select.value = selectionChoice(day);
     } else {
       fillCommandCell(cells[4], day, clubAt);
     }
@@ -2968,7 +3472,13 @@ function applyCalendar(result) {
     const row = weekRows.get(week.start);
     if (!row) continue;
     const commandSelect = row.querySelector('select[data-action="week-command"]');
-    if (commandSelect) commandSelect.value = choiceFromCommandId(state.input.weekCommands[week.start]);
+    if (commandSelect) {
+      const pinned = state.input.weekCommands[week.start];
+      const assigned = state.assignments?.weekCommands?.[week.start];
+      commandSelect.value = choiceFromCommandId(
+        pinned !== undefined ? pinned : assigned !== undefined ? assigned : undefined,
+      );
+    }
     const clubSelect = row.querySelector('select[data-action="club-change"]');
     if (clubSelect) {
       const value = clubChangeValueAt(week.start);
@@ -3189,14 +3699,14 @@ function wireGoalList({ hostId, listKey, options }) {
     const row = event.target.closest('.goal-row');
     if (!row) return;
     state.input[listKey][Number(row.dataset.index)] = goalFromRow(row, options);
-    runPlan();
+    generate();
   });
   host.addEventListener('click', (event) => {
     if (event.target.dataset.role !== 'remove') return;
     const row = event.target.closest('.goal-row');
     state.input[listKey].splice(Number(row.dataset.index), 1);
     renderGoalEditors();
-    runPlan();
+    generate();
   });
 }
 
@@ -3304,13 +3814,49 @@ function renderResult(result) {
 }
 
 async function runPlan() {
-  setStatus('计算中…');
+  setStatus(state.assignments ? '计算中…' : '尚未生成日程——点「生成」让工具排出一份。');
   const reply = await requestPlan(state.input);
+  if (reply.cancelled) return;
   if (!reply.ok) {
     setStatus(`计算失败：${reply.error}`, true);
     return;
   }
   renderResult(reply.result);
+}
+
+/** 「生成」：先求解出完整日程，再按这份日程规划。 */
+async function generate() {
+  // 求解期间又来的改动不能丢：记下来，这一轮结束后再排一次。
+  if (state.solving) {
+    state.resolveQueued = true;
+    return;
+  }
+  state.solving = true;
+  $('btn-cancel').hidden = false;
+  $('btn-plan').disabled = true;
+  setStatus('求解中…');
+
+  try {
+    const reply = await requestSolve(state.input);
+    if (reply.cancelled) {
+      setStatus('已取消计算。');
+      return;
+    }
+    if (!reply.ok) {
+      setStatus(`求解失败：${reply.error}`, true);
+      return;
+    }
+    state.assignments = reply.assignments;
+    await runPlan();
+  } finally {
+    state.solving = false;
+    $('btn-cancel').hidden = true;
+    $('btn-plan').disabled = false;
+    if (state.resolveQueued) {
+      state.resolveQueued = false;
+      generate();
+    }
+  }
 }
 
 // ---------------------------------------------------------------- JSON
@@ -3336,7 +3882,7 @@ async function importJson(file) {
     return;
   }
   renderForm();
-  await runPlan();
+  await generate();
 }
 
 // ---------------------------------------------------------------- 交互
@@ -3383,7 +3929,7 @@ $('calendar').addEventListener('change', (event) => {
   } else {
     return;
   }
-  runPlan();
+  generate();
 });
 
 startWorker();
@@ -3394,13 +3940,13 @@ for (const list of GOAL_LISTS) wireGoalList(list);
 $('btn-add-global').addEventListener('click', () => {
   state.input.globalConstraints.push({ attribute: attributeLabels[0].id, op: '>=', value: 50 });
   renderGoalEditors();
-  runPlan();
+  generate();
 });
 
 $('btn-add-ending').addEventListener('click', () => {
   state.input.endingGoals.push({ attribute: attributeLabels[0].id, op: '>=', value: 50 });
   renderGoalEditors();
-  runPlan();
+  generate();
 });
 
 $('btn-add-mini').addEventListener('click', () => {
@@ -3411,32 +3957,36 @@ $('btn-add-mini').addEventListener('click', () => {
     value: 50,
   });
   renderGoalEditors();
-  runPlan();
+  generate();
 });
 
 $('start-date').addEventListener('change', (event) => {
   state.input.startDate = event.target.value;
-  runPlan();
+  generate();
 });
 
 $('initial-club').addEventListener('change', (event) => {
   state.input.initialClub = event.target.value === UNSET ? null : event.target.value;
   refreshGlobalCommandSelects();
-  runPlan();
+  generate();
 });
 
 $('default-week-command').addEventListener('change', (event) => {
   state.input.defaultWeekCommand = commandIdFromDefaultChoice(event.target.value);
-  runPlan();
+  generate();
 });
 
 $('default-day-command').addEventListener('change', (event) => {
   state.input.defaultDayCommand = commandIdFromDefaultChoice(event.target.value);
-  runPlan();
+  generate();
 });
 
 $('btn-plan').addEventListener('click', () => {
-  runPlan();
+  generate();
+});
+
+$('btn-cancel').addEventListener('click', () => {
+  cancelSolve();
 });
 
 $('btn-export').addEventListener('click', () => {
@@ -3453,7 +4003,8 @@ $('file-import').addEventListener('change', (event) => {
   if (file) importJson(file);
 });
 
-runPlan();
+// 打开就先排一份，使用者不必先点一次「生成」才看得到东西。
+generate();
 return {  };
 })();
 

@@ -22,7 +22,7 @@ export function createPlanner(rules) {
   const toReal = (values) =>
     Object.fromEntries(Object.entries(values).map(([id, value]) => [id, value / scale]));
 
-  return function plan(input) {
+  return function plan(input, { assignments = null } = {}) {
     if (ruleProblems.length > 0) {
       return { ok: false, status: 'invalid-rules', problems: ruleProblems };
     }
@@ -32,7 +32,7 @@ export function createPlanner(rules) {
       return { ok: false, status: 'invalid-input', problems: inputProblems };
     }
 
-    const calendar = buildCalendar(rules, input);
+    const calendar = buildCalendar(rules, input, assignments);
     const clubAt = createClubLookup(input);
 
     let state = {

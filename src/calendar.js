@@ -26,7 +26,7 @@ function resolveSkipSource(date, isRestDay, weekStart, input, skippedDaySet) {
   return null;
 }
 
-export function buildCalendar(rules, input) {
+export function buildCalendar(rules, input, assignments = null) {
   const { start: timelineStart, end, lastSettlement } = rules.timeline;
   const restDays = new Set(input.restDays);
   const skippedDaySet = new Set(input.skippedDays);
@@ -44,12 +44,20 @@ export function buildCalendar(rules, input) {
     const isTimelineEnd = date === end;
     const isSettled = !isEmpty && !isGameOpening && !isTimelineEnd;
 
-    // 显式指定（含显式 null = 空过）优先；键不存在时才落到全局默认指令。
+    // 使用者显式指定（含显式 null = 空过）最优先；其次才是求解器的填空；
+    // 再次是全局默认指令；都没有就留空（待定）。
     const pinned = isRestDay ? input.dayCommands[date] : input.weekCommands[weekStart];
+    const assigned = isRestDay
+      ? assignments?.dayCommands?.[date]
+      : assignments?.weekCommands?.[weekStart];
     const fallback = isRestDay ? input.defaultDayCommand : input.defaultWeekCommand;
     // 空过就是「指令留空」（见 GLOSSARY）；界面要显示"本来会执行什么"时，
     // 自己从输入推导，而不是让数据模型替界面记住。
-    const commandId = isEmpty ? null : pinned === undefined ? (fallback ?? null) : pinned;
+    const commandId = isEmpty
+      ? null
+      : pinned !== undefined
+        ? pinned
+        : (assigned ?? fallback ?? null);
 
     days.push({
       date,

@@ -65,13 +65,23 @@ export function createSolver(rules) {
    * 诊断阶段也走这里，只不过那时拿到的输入是**副本**（小目标被拿掉若干条）。
    */
   function search(input, { previous = null, fromDate = null } = {}) {
-    /** 该休息日是否已被冻结：早于重算起点，且上一份日程里已经有决定。 */
-    const frozenDay = (date) =>
-      fromDate === null || date >= fromDate ? undefined : previous?.dayCommands?.[date];
+    /**
+     * 该休息日是否已被冻结：早于重算起点，上一份日程里已有决定，**且那条指令现在仍然可用**。
+     * 最后一条不能省：使用者刚把社团换掉时，冻结的旧社团指令会变成不可用、于是不结算，
+     * 那样"冻结的前缀"反倒与上一份日程对不上了。
+     */
+    const frozenDay = (date) => {
+      if (fromDate === null || date >= fromDate) return undefined;
+      const kept = previous?.dayCommands?.[date];
+      return kept !== undefined && candidatesAt(date).includes(kept) ? kept : undefined;
+    };
 
-    /** 该周是否已被冻结。以该周在表里的第一个平日为准。 */
-    const frozenWeek = (date, anchor) =>
-      fromDate === null || date >= fromDate ? undefined : previous?.weekCommands?.[anchor];
+    /** 该周是否已被冻结。以该周在表里的第一个平日为准，同样要求那条指令仍然可用。 */
+    const frozenWeek = (date, anchor) => {
+      if (fromDate === null || date >= fromDate) return undefined;
+      const kept = previous?.weekCommands?.[anchor];
+      return kept !== undefined && candidatesAt(date).includes(kept) ? kept : undefined;
+    };
 
     const calendar = buildCalendar(rules, input);
     const clubAt = createClubLookup(input);

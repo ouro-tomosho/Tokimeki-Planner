@@ -19,3 +19,16 @@ export function weekdayOf(value) {
   const [year, month, day] = value.split('-').map(Number);
   return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
 }
+
+/** 加减天数，返回同样格式的日期字符串。 */
+export function addDays(value, count) {
+  const [year, month, day] = value.split('-').map(Number);
+  const shifted = new Date(Date.UTC(year, month - 1, day) + count * 86400000);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}`;
+}
+
+/** 所在自然周的周日（周锚点）。 */
+export function weekStartOf(value) {
+  return addDays(value, -weekdayOf(value));
+}

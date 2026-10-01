@@ -34,6 +34,8 @@ export function buildHtml() {
     }
   }
 
+  assertTemplateCoversAppIds(template, appSource);
+
   const html = template
     .replace(WORKER_PLACEHOLDER, () => workerSource)
     .replace(APP_PLACEHOLDER, () => appSource);
@@ -42,6 +44,24 @@ export function buildHtml() {
     throw new Error('产物里仍有未替换的占位符');
   }
   return html;
+}
+
+/**
+ * 构建期守卫：应用代码用 `$('id')` 取的元素，模板里必须真的存在。
+ * 这类拼写错不会让测试变红，只会让界面在浏览器里静默失灵，所以在构建期挡掉。
+ */
+export function assertTemplateCoversAppIds(template, appSource) {
+  const declared = new Set([...template.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]));
+  const referenced = [...appSource.matchAll(/\$\('([^']+)'\)/g)].map((m) => m[1]);
+
+  if (referenced.length < 5) {
+    throw new Error(`只从应用代码里解析出 ${referenced.length} 个元素引用，检查 $() 约定是否还在`);
+  }
+
+  const missing = [...new Set(referenced)].filter((id) => !declared.has(id));
+  if (missing.length > 0) {
+    throw new Error(`应用引用了模板里不存在的元素 id：${missing.join('、')}`);
+  }
 }
 
 export function writeBuild() {

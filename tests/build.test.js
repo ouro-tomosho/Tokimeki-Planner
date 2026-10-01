@@ -7,7 +7,26 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { buildHtml, OUTPUT_URL } from '../tools/build.mjs';
+import { buildHtml, assertTemplateCoversAppIds, OUTPUT_URL } from '../tools/build.mjs';
+
+const TEMPLATE = '<div id="one"></div><div id="two"></div>';
+
+test('构建守卫：应用引用了模板里不存在的元素 id 时，构建必须失败', () => {
+  const app = "const a = $('one'); $('two'); $('three'); $('four'); $('five');";
+  assert.throws(() => assertTemplateCoversAppIds(TEMPLATE, app), /不存在的元素 id：three、four、five/);
+});
+
+test('构建守卫：全部引用都存在时放行', () => {
+  const app = "const a = $('one'); $('two'); $('one'); $('two'); $('one');";
+  assert.doesNotThrow(() => assertTemplateCoversAppIds(TEMPLATE, app));
+});
+
+test('构建守卫：解析不到元素引用时自己失败，避免守卫静默失效', () => {
+  assert.throws(
+    () => assertTemplateCoversAppIds(TEMPLATE, 'const a = 1;'),
+    /只从应用代码里解析出 0 个元素引用/,
+  );
+});
 
 test('构建是确定性的：两次构建字节完全相同', () => {
   assert.equal(buildHtml(), buildHtml());

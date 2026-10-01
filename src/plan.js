@@ -1,9 +1,10 @@
 // 规划入口。
 //
 // 预先商定的接缝是 `plan(input) → PlanResult`：规则在**构造时**注入，所以调用方
-// 只传 input。本票只交付骨架——求解器在后续票中接入，因此现在诚实地返回
-// status: 'skeleton'，而不是伪造一份日程。
+// 只传 input。本票交付日历与决策点结构——指令仍全部空过，属性不动；求解器与
+// 单日结算在后续票接入。
 
+import { buildCalendar } from './calendar.js';
 import { validateRules } from './rules.js';
 
 export function createPlanner(rules) {
@@ -14,13 +15,19 @@ export function createPlanner(rules) {
       return { ok: false, status: 'invalid-rules', problems: ruleProblems };
     }
 
+    const calendar = buildCalendar(rules, input);
+
     return {
       ok: true,
-      status: 'skeleton',
-      note: '骨架已就绪：数据、时间轴与内联 Worker 通道均已打通，求解器将在后续票中接入。',
+      status: 'calendar',
+      note: '日历与决策点已就绪。指令仍然是空的，属性不动——求解器将在后续票接入。',
       startDate: input.startDate,
       endDate: rules.timeline.end,
       lastSettlement: rules.timeline.lastSettlement,
+      days: calendar.days,
+      weeks: calendar.weeks,
+      decisionPoints: calendar.decisionPoints,
+      summary: calendar.summary,
       ruleSummary: {
         attributes: rules.attributes.length,
         commands: rules.commands.length,

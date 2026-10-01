@@ -1,9 +1,14 @@
 {
   "name": "tokimeki-planner",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "《心跳回忆·永远属于你》（95 版）日程规划工具",
+  "homepage": "https://ouro-tomosho.github.io/Tokimeki-Planner/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ouro-tomosho/Tokimeki-Planner.git"
+  },
   "scripts": {
     "build": "node tools/build.mjs",
     "test": "node --test 'tests/**/*.test.js'"

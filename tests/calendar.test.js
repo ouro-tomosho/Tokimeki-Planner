@@ -27,6 +27,11 @@ function dayAt(result, date) {
   return day;
 }
 
+/** 把有序事件压成 "日期:种类" 便于逐条比对。 */
+function sequenceOf(result) {
+  return result.sequence.map((entry) => `${entry.date}:${entry.kind}`);
+}
+
 test('终点恒为 1998-03-01：在表中，但不结算', () => {
   const result = planOf();
   assert.equal(result.endDate, '1998-03-01');
@@ -49,7 +54,7 @@ test('起点为 1995-04-04 时，该日留在表里但不结算', () => {
   const result = planOf();
   const opening = dayAt(result, '1995-04-04');
   assert.equal(opening.isSettled, false);
-  assert.equal(opening.isSkipped, false);
+  assert.equal(opening.isEmpty, false);
 
   // 次日照常结算
   assert.equal(dayAt(result, '1995-04-05').isSettled, true);
@@ -89,7 +94,7 @@ test('首周不完整时，只包含从起点到该周周六的实际天数', ()
     input.startDate = '1998-02-20'; // 周五
   });
   const firstWeek = result.weeks[0];
-  assert.equal(firstWeek.start, '1998-02-15'); // 周日
+  assert.equal(firstWeek.start, '1998-02-15'); // 周日，落在起点之前
   assert.deepEqual(firstWeek.days, ['1998-02-20', '1998-02-21']);
   assert.equal(firstWeek.lastDay, '1998-02-21');
 });
@@ -126,12 +131,14 @@ test('跳过某一周，只影响该周的平日，周日不受影响', () => {
     input.weekCommands = { '1998-02-15': null };
   });
 
-  assert.equal(dayAt(result, '1998-02-20').isSkipped, true);
-  assert.equal(dayAt(result, '1998-02-21').isSkipped, true);
-  assert.equal(dayAt(result, '1998-02-20').isSettled, false);
+  const skipped = dayAt(result, '1998-02-20');
+  assert.equal(skipped.isEmpty, true);
+  assert.equal(skipped.skipSource, 'week');
+  assert.equal(skipped.isSettled, false);
+  assert.equal(dayAt(result, '1998-02-21').isEmpty, true);
 
   // 下一周的周日照常休息、照常结算
-  assert.equal(dayAt(result, '1998-02-22').isSkipped, false);
+  assert.equal(dayAt(result, '1998-02-22').isEmpty, false);
   assert.equal(dayAt(result, '1998-02-22').isSettled, true);
 });
 
@@ -141,43 +148,63 @@ test('跳过某一天，不影响同一周的其它天', () => {
     input.skippedDays = ['1998-02-24'];
   });
 
-  assert.equal(dayAt(result, '1998-02-24').isSkipped, true);
-  assert.equal(dayAt(result, '1998-02-24').isSettled, false);
-  assert.equal(dayAt(result, '1998-02-23').isSkipped, false);
-  assert.equal(dayAt(result, '1998-02-25').isSkipped, false);
+  const skipped = dayAt(result, '1998-02-24');
+  assert.equal(skipped.isEmpty, true);
+  assert.equal(skipped.skipSource, 'day');
+  assert.equal(skipped.isSettled, false);
+  assert.equal(dayAt(result, '1998-02-23').isEmpty, false);
+  assert.equal(dayAt(result, '1998-02-25').isEmpty, false);
 });
 
-test('把某个休息日的日指令显式置空，等价于跳过该日', () => {
+test('把某个休息日的日指令显式置空，该日空过', () => {
   const result = planOf((input) => {
     input.startDate = '1998-02-20';
     input.restDays = ['1998-02-24'];
     input.dayCommands = { '1998-02-24': null };
   });
 
-  assert.equal(dayAt(result, '1998-02-24').isSkipped, true);
-  assert.equal(dayAt(result, '1998-02-24').isSettled, false);
+  const day = dayAt(result, '1998-02-24');
+  assert.equal(day.isEmpty, true);
+  assert.equal(day.skipSource, 'day-command');
+  assert.equal(day.isSettled, false);
 });
 
-test('决策点顺序：首周周指令 → 周日日指令 → 本周周指令', () => {
+test('严格按验收标准：周日日指令 → 周日结算 → 本周周指令 → 各平日结算', () => {
+  const result = planOf((input) => {
+    input.startDate = '1998-02-22'; // 周日起步，首周完整
+  });
+
+  assert.deepEqual(sequenceOf(result), [
+    '1998-02-22:day-command',
+    '1998-02-22:settle',
+    '1998-02-22:week-command',
+    '1998-02-23:settle',
+    '1998-02-24:settle',
+    '1998-02-25:settle',
+    '1998-02-26:settle',
+    '1998-02-27:settle',
+    '1998-02-28:settle',
+  ]);
+});
+
+test('首周没有周日时，周指令决策落在首周第一次结算之前', () => {
   const result = planOf((input) => {
     input.startDate = '1998-02-20'; // 周五，首周没有周日落在时间轴内
   });
 
-  assert.deepEqual(result.decisionPoints, [
-    { date: '1998-02-20', kind: 'week-command', order: 0 },
-    { date: '1998-02-22', kind: 'day-command', order: 1 },
-    { date: '1998-02-22', kind: 'week-command', order: 2 },
-  ]);
-});
-
-test('起点是周日时，顺序为 周日日指令 → 周日结算 → 本周周指令', () => {
-  const result = planOf((input) => {
-    input.startDate = '1998-02-22';
-  });
-
-  assert.deepEqual(result.decisionPoints.slice(0, 2), [
-    { date: '1998-02-22', kind: 'day-command', order: 0 },
-    { date: '1998-02-22', kind: 'week-command', order: 1 },
+  assert.deepEqual(sequenceOf(result), [
+    '1998-02-20:week-command',
+    '1998-02-20:settle',
+    '1998-02-21:settle',
+    '1998-02-22:day-command',
+    '1998-02-22:settle',
+    '1998-02-22:week-command',
+    '1998-02-23:settle',
+    '1998-02-24:settle',
+    '1998-02-25:settle',
+    '1998-02-26:settle',
+    '1998-02-27:settle',
+    '1998-02-28:settle',
   ]);
 });
 
@@ -187,36 +214,39 @@ test('被标记为休息日的平日，其日指令决策出现在该日结算�
     input.restDays = ['1998-02-25'];
   });
 
-  const points = result.decisionPoints.map((p) => `${p.order}:${p.date}:${p.kind}`);
-  assert.deepEqual(points, [
-    '0:1998-02-22:day-command',
-    '1:1998-02-22:week-command',
-    '2:1998-02-25:day-command',
+  assert.deepEqual(sequenceOf(result), [
+    '1998-02-22:day-command',
+    '1998-02-22:settle',
+    '1998-02-22:week-command',
+    '1998-02-23:settle',
+    '1998-02-24:settle',
+    '1998-02-25:day-command',
+    '1998-02-25:settle',
+    '1998-02-26:settle',
+    '1998-02-27:settle',
+    '1998-02-28:settle',
   ]);
 });
 
-test('首周没有周日时，周指令决策落在首周第一次结算之前', () => {
+test('空过的日子不产生任何事件', () => {
   const result = planOf((input) => {
-    input.startDate = '1998-02-20';
+    input.startDate = '1998-02-22';
+    input.skippedDays = ['1998-02-24'];
   });
 
-  const weekCommand = result.decisionPoints.find((p) => p.kind === 'week-command');
-  assert.equal(weekCommand.date, '1998-02-20');
-
-  const firstSettled = result.days.find((d) => d.isSettled);
-  assert.equal(firstSettled.date, '1998-02-20');
-  assert.ok(weekCommand.order <= result.decisionPoints[0].order);
+  const forSkipped = result.sequence.filter((entry) => entry.date === '1998-02-24');
+  assert.deepEqual(forSkipped, []);
 });
 
-test('终点所在的最后一周末尾没有可结算的平日，因此不产生周指令决策', () => {
+test('终点所在的最后一周期 1998-03-01 是周日，当天不结算也不产生事件', () => {
   const result = planOf((input) => {
     input.startDate = '1998-02-20';
   });
-  const lastWeek = result.weeks.at(-1);
-  assert.equal(lastWeek.start, '1998-03-01');
-
-  const pointsAtEnd = result.decisionPoints.filter((p) => p.date === '1998-03-01');
-  assert.deepEqual(pointsAtEnd, []);
+  assert.equal(result.weeks.at(-1).start, '1998-03-01');
+  assert.deepEqual(
+    result.sequence.filter((entry) => entry.date === '1998-03-01'),
+    [],
+  );
 });
 
 test('汇总数字与表一致（短时间轴）', () => {
@@ -226,7 +256,7 @@ test('汇总数字与表一致（短时间轴）', () => {
   assert.deepEqual(result.summary, {
     totalDays: 10,
     settledDays: 9,
-    skippedDays: 0,
+    emptyDays: 0,
     restDays: 2,
     weeks: 3,
   });
@@ -239,4 +269,14 @@ test('默认规划覆盖整条时间轴：首尾都在表里，共 1063 天', ()
   assert.equal(result.summary.totalDays, 1063);
   assert.equal(result.days[0].date, '1995-04-04');
   assert.equal(result.days.at(-1).date, '1998-03-01');
+});
+
+test('非法输入不会让 plan 抛错，而是回报问题列表', () => {
+  const input = defaultInput(rules);
+  input.startDate = '1999-01-01'; // 超出时间轴
+  const result = plan(input);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'invalid-input');
+  assert.ok(result.problems.some((p) => p.includes('startDate')));
 });

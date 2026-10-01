@@ -174,7 +174,7 @@
       tr.day-row.is-rest td {
         background: #fff5f5;
       }
-      tr.day-row.is-skipped td {
+      tr.day-row.is-empty td {
         background: #f1f2f4;
         color: #8b93a1;
       }
@@ -282,33 +282,41 @@ const { addDays, weekStartOf, weekdayOf } = __ns["src/dates.js"];
 
 const WEEKDAY_NAMES = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 
+/** 该周的周指令是否被显式置空——该周的平日因此空过。 */
+function isWeekCleared(weekCommands, weekStart) {
+  return weekCommands[weekStart] === null;
+}
+
 /**
- * 空过的三个来源，任一成立该日即为空过：
- *   1. 该日在 input.skippedDays 里（指定某一天空过）
- *   2. 该日是平日，且其周锚点的周指令被显式置空（指定某一周空过）
- *   3. 该日是休息日，且它的日指令被显式置空
+ * 一天的「空过」有三个来源，返回是哪一个（`null` 表示照常结算）：
+ *   'day'          该日在 input.skippedDays 里（指定某一天跳过）
+ *   'day-command'  该休息日的日指令被显式置空
+ *   'week'         该日是平日，且其周锚点的周指令被显式置空
  */
+function resolveSkipSource(date, isRestDay, weekStart, input, skippedDaySet) {
+  if (skippedDaySet.has(date)) return 'day';
+  if (isRestDay && input.dayCommands[date] === null) return 'day-command';
+  if (!isRestDay && isWeekCleared(input.weekCommands, weekStart)) return 'week';
+  return null;
+}
+
 function buildCalendar(rules, input) {
   const { start: timelineStart, end, lastSettlement } = rules.timeline;
   const restDays = new Set(input.restDays);
-  const skippedDays = new Set(input.skippedDays);
-
+  const skippedDaySet = new Set(input.skippedDays);
   const startDayIsGameOpening = input.startDate === timelineStart;
-  const days = [];
 
+  const days = [];
   for (let date = input.startDate; date <= end; date = addDays(date, 1)) {
     const weekday = weekdayOf(date);
     const weekStart = weekStartOf(date);
     const isRestDay = weekday === 0 || restDays.has(date);
 
-    const skippedByDay = skippedDays.has(date);
-    const skippedByWeek = !isRestDay && input.weekCommands[weekStart] === null;
-    const skippedByDayCommand = isRestDay && input.dayCommands[date] === null;
-    const isSkipped = skippedByDay || skippedByWeek || skippedByDayCommand;
-
+    const skipSource = resolveSkipSource(date, isRestDay, weekStart, input, skippedDaySet);
+    const isEmpty = skipSource !== null;
     const isGameOpening = startDayIsGameOpening && date === input.startDate;
     const isTimelineEnd = date === end;
-    const isSettled = !isSkipped && !isGameOpening && !isTimelineEnd;
+    const isSettled = !isEmpty && !isGameOpening && !isTimelineEnd;
 
     const declared = isRestDay ? input.dayCommands[date] : input.weekCommands[weekStart];
 
@@ -318,20 +326,27 @@ function buildCalendar(rules, input) {
       weekdayName: WEEKDAY_NAMES[weekday],
       weekStart,
       isRestDay,
-      isSkipped,
+      isEmpty,
+      skipSource,
       isSettled,
-      commandId: isSkipped ? null : (declared ?? null),
+      commandId: isEmpty ? null : (declared ?? null),
     });
   }
 
+  const clearedWeeks = new Set(
+    Object.keys(input.weekCommands).filter((weekStart) =>
+      isWeekCleared(input.weekCommands, weekStart),
+    ),
+  );
+
   return {
     days,
-    weeks: groupWeeks(days, input),
-    decisionPoints: buildDecisionPoints(days, input.startDate),
+    weeks: groupWeeks(days, clearedWeeks),
+    sequence: buildSequence(days),
     summary: {
       totalDays: days.length,
       settledDays: days.filter((d) => d.isSettled).length,
-      skippedDays: days.filter((d) => d.isSkipped).length,
+      emptyDays: days.filter((d) => d.isEmpty).length,
       restDays: days.filter((d) => d.isRestDay).length,
       weeks: new Set(days.map((d) => d.weekStart)).size,
     },
@@ -339,7 +354,7 @@ function buildCalendar(rules, input) {
   };
 }
 
-function groupWeeks(days, input) {
+function groupWeeks(days, clearedWeeks) {
   const weeks = [];
   let current = null;
 
@@ -348,7 +363,7 @@ function groupWeeks(days, input) {
       current = {
         start: day.weekStart,
         end: addDays(day.weekStart, 6),
-        isSkipped: input.weekCommands[day.weekStart] === null,
+        isCleared: clearedWeeks.has(day.weekStart),
         firstDay: day.date,
         lastDay: day.date,
         days: [],
@@ -361,40 +376,52 @@ function groupWeeks(days, input) {
   return weeks;
 }
 
-function buildDecisionPoints(days, startDate) {
-  const weekHasSettledWeekday = new Map();
+/**
+ * 时间轴上的有序事件。`kind` 取三种值：
+ *   'day-command'   选择某一天的日指令
+ *   'settle'        该日结算
+ *   'week-command'  选择该周的周指令
+ *
+ * 完整周的次序是「周日日指令 → 周日结算 → 本周周指令 → 各平日结算」；被标记为
+ * 休息日的平日，其日指令决策插在该日结算之前；首周没有周日落在时间轴内时，
+ * 周指令决策落在首周第一次结算之前。空过或起止例外的日子不产生任何事件。
+ */
+function buildSequence(days) {
+  // 只有存在「会结算的平日」时，这一周才真的需要一个周指令决策。
+  const weekHasSettledWeekday = new Set();
   for (const day of days) {
-    if (day.weekday !== 0 && day.isSettled) {
-      weekHasSettledWeekday.set(day.weekStart, true);
-    }
+    if (day.weekday !== 0 && day.isSettled) weekHasSettledWeekday.add(day.weekStart);
   }
 
-  const points = [];
+  const entries = [];
   const handledWeek = new Set();
 
   for (const day of days) {
-    const pushing = (kind) => points.push({ date: day.date, kind });
+    const push = (kind) => entries.push({ date: day.date, kind });
+    const needsWeekCommand = weekHasSettledWeekday.has(day.weekStart);
 
     if (!handledWeek.has(day.weekStart)) {
       handledWeek.add(day.weekStart);
 
       if (day.date === day.weekStart) {
-        // 完整周：周日日指令 → 周日结算 → 本周周指令
-        if (day.isSettled) pushing('day-command');
-        if (weekHasSettledWeekday.get(day.weekStart)) pushing('week-command');
+        if (day.isSettled) push('day-command');
+        if (day.isSettled) push('settle');
+        if (needsWeekCommand) push('week-command');
       } else {
         // 首周没有周日落在时间轴内：周指令决策落在首周第一次结算之前
-        if (weekHasSettledWeekday.get(day.weekStart)) pushing('week-command');
-        if (day.isRestDay && day.isSettled) pushing('day-command');
+        if (needsWeekCommand) push('week-command');
+        if (day.isRestDay && day.isSettled) push('day-command');
+        if (day.isSettled) push('settle');
       }
       continue;
     }
 
     // 本周内被标记为休息日的日子，在该日结算之前插入它的日指令决策
-    if (day.isRestDay && day.isSettled) pushing('day-command');
+    if (day.isRestDay && day.isSettled) push('day-command');
+    if (day.isSettled) push('settle');
   }
 
-  return points.map((point, index) => ({ ...point, order: index }));
+  return entries.map((entry, order) => ({ ...entry, order }));
 }
 return { WEEKDAY_NAMES, buildCalendar };
 })();
@@ -449,6 +476,209 @@ function miniGoalProblems(list, label, context) {
   return problems;
 }
 return { goalProblems, miniGoalProblems };
+})();
+__ns["src/lookup.js"] = (() => {
+// 领域对象的查询视图。校验在 rules.js，这里只负责按 id 取用。
+
+function findOrThrow(list, id, label) {
+  const hit = list?.find((x) => x.id === id);
+  if (!hit) throw new Error(`未知${label}：${id}`);
+  return hit;
+}
+
+function attributeById(rules, id) {
+  return findOrThrow(rules.attributes, id, '属性');
+}
+
+function commandById(rules, id) {
+  return findOrThrow(rules.commands, id, '指令');
+}
+
+function attributeIds(rules) {
+  return rules.attributes.map((a) => a.id);
+}
+return { attributeById, commandById, attributeIds };
+})();
+__ns["src/input.js"] = (() => {
+const { isDate, weekdayOf } = __ns["src/dates.js"];
+const { goalProblems, miniGoalProblems } = __ns["src/goals.js"];
+const { attributeIds } = __ns["src/lookup.js"];
+// 使用者输入的形状与校验。JSON 只承载输入，不承载结果。
+//
+// 约定：`weekCommands` 的键是**周锚点**，即该自然周的周日；`dayCommands` 的键是
+// 某个休息日的日期。同一个周日可以既是一个周锚点、又拥有自己的日指令——这两者
+// 并存是正确模型，不是冲突。
+//
+// 用「显式的 null」表示空过，用「键不存在」表示尚未指定（交由求解器决定）。
+// 这两种状态必须能穿过 JSON 往返而不被混淆。
+
+
+
+
+
+const CURRENT_VERSION = 1;
+
+function defaultInput(rules) {
+  return {
+    version: CURRENT_VERSION,
+    startDate: rules.timeline.start,
+    attributes: { ...rules.defaultStart },
+    globalConstraints: structuredClone(rules.defaultGlobalConstraints),
+    endingGoals: structuredClone(rules.defaultEndingGoals),
+    miniGoals: structuredClone(rules.defaultMiniGoals),
+    initialClub: null,
+    clubChanges: [],
+    weekCommands: {},
+    dayCommands: {},
+    restDays: [],
+    skippedDays: [],
+  };
+}
+
+function toJson(input) {
+  return JSON.stringify(input, null, 2);
+}
+
+/** 解析并校验；不合法时抛出带原因的错误。 */
+function fromJson(text, rules) {
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`不是合法的 JSON：${error.message}`);
+  }
+  const problems = validateInput(parsed, rules);
+  if (problems.length > 0) throw new Error(`输入不合法：${problems[0]}`);
+  return parsed;
+}
+
+/** @returns {string[]} 问题列表，空数组表示通过 */
+function validateInput(input, rules) {
+  if (!input || typeof input !== 'object') return ['输入不是对象'];
+
+  const problems = [];
+  const attributeIdSet = new Set(attributeIds(rules));
+  const commandIds = new Set(rules.commands.map((c) => c.id));
+  const clubIds = new Set(rules.clubs.map((c) => c.id));
+  const ceId = rules.clubExperience.id;
+
+  // version 不在票 01 列举的输入字段里，是刻意加的：这份 JSON 会随后续票继续长大，
+  // 没有版本号就无法在格式变化时给出可读的拒绝理由，只能报一堆形状错误。
+  if (input.version !== CURRENT_VERSION) {
+    problems.push(`版本号不受支持：${input.version}`);
+  }
+
+  const { start, lastSettlement } = rules.timeline;
+  const inTimeline = (date) => isDate(date) && date >= start && date <= lastSettlement;
+
+  if (!isDate(input.startDate)) {
+    problems.push(`startDate 格式错误：${input.startDate}`);
+  } else if (!inTimeline(input.startDate)) {
+    problems.push(`startDate 超出时间轴：${input.startDate}`);
+  }
+
+  checkAttributes(input, rules, problems);
+
+  const goalContext = {
+    attributeIds: attributeIdSet,
+    clubExperienceId: ceId,
+    allowClubExperience: false,
+  };
+  problems.push(...goalProblems(input.globalConstraints, 'globalConstraints', goalContext));
+  problems.push(...goalProblems(input.endingGoals, 'endingGoals', goalContext));
+  problems.push(
+    ...miniGoalProblems(input.miniGoals, 'miniGoals', { ...goalContext, allowClubExperience: true }),
+  );
+
+  checkClub(input, clubIds, inTimeline, problems);
+  checkWeekCommands(input.weekCommands, commandIds, inTimeline, problems);
+  checkDayCommands(input.dayCommands, commandIds, inTimeline, problems);
+  checkDayList('restDays', input.restDays, inTimeline, problems);
+  checkDayList('skippedDays', input.skippedDays, inTimeline, problems);
+
+  return problems;
+}
+
+function checkAttributes(input, rules, problems) {
+  const attributes = input.attributes;
+  if (!attributes || typeof attributes !== 'object') {
+    problems.push('缺少 attributes');
+    return;
+  }
+  for (const a of rules.attributes) {
+    const value = attributes[a.id];
+    if (value === undefined) {
+      problems.push(`输入缺少属性 ${a.id}`);
+    } else if (!Number.isInteger(value)) {
+      problems.push(`属性 ${a.id} 的值必须是整数`);
+    } else if (value < a.min || value > a.max) {
+      problems.push(`属性 ${a.id} 的值 ${value} 超出 [${a.min}, ${a.max}]`);
+    }
+  }
+  for (const key of Object.keys(attributes)) {
+    if (!rules.attributes.some((a) => a.id === key)) problems.push(`输入含未知属性 ${key}`);
+  }
+}
+
+function checkClub(input, clubIds, inTimeline, problems) {
+  if (input.initialClub !== null && !clubIds.has(input.initialClub)) {
+    problems.push(`initialClub 引用了未知社团 ${input.initialClub}`);
+  }
+  if (!Array.isArray(input.clubChanges)) {
+    problems.push('clubChanges 必须是数组');
+    return;
+  }
+  for (const change of input.clubChanges) {
+    if (!isDate(change?.date)) problems.push(`clubChanges 的日期格式错误：${change?.date}`);
+    else if (!inTimeline(change.date)) problems.push(`clubChanges 的日期超出时间轴：${change.date}`);
+    if (change?.clubId !== null && !clubIds.has(change?.clubId)) {
+      problems.push(`clubChanges 引用了未知社团 ${change?.clubId}`);
+    }
+  }
+}
+
+function checkWeekCommands(map, commandIds, inTimeline, problems) {
+  if (!map || typeof map !== 'object' || Array.isArray(map)) {
+    problems.push('缺少 weekCommands');
+    return;
+  }
+  for (const [date, commandId] of Object.entries(map)) {
+    if (!isDate(date)) {
+      problems.push(`weekCommands 的键不是日期：${date}`);
+    } else if (!inTimeline(date)) {
+      problems.push(`weekCommands 的日期超出时间轴：${date}`);
+    } else if (weekdayOf(date) !== 0) {
+      problems.push(`weekCommands 的键必须是周日（周锚点）：${date}`);
+    }
+    if (commandId === null) continue;
+    if (!commandIds.has(commandId)) problems.push(`weekCommands 引用了未知指令 ${commandId}`);
+  }
+}
+
+function checkDayCommands(map, commandIds, inTimeline, problems) {
+  if (!map || typeof map !== 'object' || Array.isArray(map)) {
+    problems.push('缺少 dayCommands');
+    return;
+  }
+  for (const [date, commandId] of Object.entries(map)) {
+    if (!isDate(date)) problems.push(`dayCommands 的键不是日期：${date}`);
+    else if (!inTimeline(date)) problems.push(`dayCommands 的日期超出时间轴：${date}`);
+    if (commandId === null) continue;
+    if (!commandIds.has(commandId)) problems.push(`dayCommands 引用了未知指令 ${commandId}`);
+  }
+}
+
+function checkDayList(label, list, inTimeline, problems) {
+  if (!Array.isArray(list)) {
+    problems.push(`${label} 必须是数组`);
+    return;
+  }
+  for (const date of list) {
+    if (!isDate(date)) problems.push(`${label} 含非法日期：${date}`);
+    else if (!inTimeline(date)) problems.push(`${label} 的日期超出时间轴：${date}`);
+  }
+}
+return { CURRENT_VERSION, defaultInput, toJson, fromJson, validateInput };
 })();
 __ns["src/rules.js"] = (() => {
 const { isDate } = __ns["src/dates.js"];
@@ -648,12 +878,14 @@ return { validateRules };
 })();
 __ns["src/plan.js"] = (() => {
 const { buildCalendar } = __ns["src/calendar.js"];
+const { validateInput } = __ns["src/input.js"];
 const { validateRules } = __ns["src/rules.js"];
 // 规划入口。
 //
 // 预先商定的接缝是 `plan(input) → PlanResult`：规则在**构造时**注入，所以调用方
 // 只传 input。本票交付日历与决策点结构——指令仍全部空过，属性不动；求解器与
 // 单日结算在后续票接入。
+
 
 
 
@@ -666,18 +898,22 @@ function createPlanner(rules) {
       return { ok: false, status: 'invalid-rules', problems: ruleProblems };
     }
 
+    const inputProblems = validateInput(input, rules);
+    if (inputProblems.length > 0) {
+      return { ok: false, status: 'invalid-input', problems: inputProblems };
+    }
+
     const calendar = buildCalendar(rules, input);
 
     return {
       ok: true,
       status: 'calendar',
-      note: '日历与决策点已就绪。指令仍然是空的，属性不动——求解器将在后续票接入。',
       startDate: input.startDate,
       endDate: rules.timeline.end,
       lastSettlement: rules.timeline.lastSettlement,
       days: calendar.days,
       weeks: calendar.weeks,
-      decisionPoints: calendar.decisionPoints,
+      sequence: calendar.sequence,
       summary: calendar.summary,
       ruleSummary: {
         attributes: rules.attributes.length,
@@ -1024,33 +1260,41 @@ const { addDays, weekStartOf, weekdayOf } = __ns["src/dates.js"];
 
 const WEEKDAY_NAMES = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 
+/** 该周的周指令是否被显式置空——该周的平日因此空过。 */
+function isWeekCleared(weekCommands, weekStart) {
+  return weekCommands[weekStart] === null;
+}
+
 /**
- * 空过的三个来源，任一成立该日即为空过：
- *   1. 该日在 input.skippedDays 里（指定某一天空过）
- *   2. 该日是平日，且其周锚点的周指令被显式置空（指定某一周空过）
- *   3. 该日是休息日，且它的日指令被显式置空
+ * 一天的「空过」有三个来源，返回是哪一个（`null` 表示照常结算）：
+ *   'day'          该日在 input.skippedDays 里（指定某一天跳过）
+ *   'day-command'  该休息日的日指令被显式置空
+ *   'week'         该日是平日，且其周锚点的周指令被显式置空
  */
+function resolveSkipSource(date, isRestDay, weekStart, input, skippedDaySet) {
+  if (skippedDaySet.has(date)) return 'day';
+  if (isRestDay && input.dayCommands[date] === null) return 'day-command';
+  if (!isRestDay && isWeekCleared(input.weekCommands, weekStart)) return 'week';
+  return null;
+}
+
 function buildCalendar(rules, input) {
   const { start: timelineStart, end, lastSettlement } = rules.timeline;
   const restDays = new Set(input.restDays);
-  const skippedDays = new Set(input.skippedDays);
-
+  const skippedDaySet = new Set(input.skippedDays);
   const startDayIsGameOpening = input.startDate === timelineStart;
-  const days = [];
 
+  const days = [];
   for (let date = input.startDate; date <= end; date = addDays(date, 1)) {
     const weekday = weekdayOf(date);
     const weekStart = weekStartOf(date);
     const isRestDay = weekday === 0 || restDays.has(date);
 
-    const skippedByDay = skippedDays.has(date);
-    const skippedByWeek = !isRestDay && input.weekCommands[weekStart] === null;
-    const skippedByDayCommand = isRestDay && input.dayCommands[date] === null;
-    const isSkipped = skippedByDay || skippedByWeek || skippedByDayCommand;
-
+    const skipSource = resolveSkipSource(date, isRestDay, weekStart, input, skippedDaySet);
+    const isEmpty = skipSource !== null;
     const isGameOpening = startDayIsGameOpening && date === input.startDate;
     const isTimelineEnd = date === end;
-    const isSettled = !isSkipped && !isGameOpening && !isTimelineEnd;
+    const isSettled = !isEmpty && !isGameOpening && !isTimelineEnd;
 
     const declared = isRestDay ? input.dayCommands[date] : input.weekCommands[weekStart];
 
@@ -1060,20 +1304,27 @@ function buildCalendar(rules, input) {
       weekdayName: WEEKDAY_NAMES[weekday],
       weekStart,
       isRestDay,
-      isSkipped,
+      isEmpty,
+      skipSource,
       isSettled,
-      commandId: isSkipped ? null : (declared ?? null),
+      commandId: isEmpty ? null : (declared ?? null),
     });
   }
 
+  const clearedWeeks = new Set(
+    Object.keys(input.weekCommands).filter((weekStart) =>
+      isWeekCleared(input.weekCommands, weekStart),
+    ),
+  );
+
   return {
     days,
-    weeks: groupWeeks(days, input),
-    decisionPoints: buildDecisionPoints(days, input.startDate),
+    weeks: groupWeeks(days, clearedWeeks),
+    sequence: buildSequence(days),
     summary: {
       totalDays: days.length,
       settledDays: days.filter((d) => d.isSettled).length,
-      skippedDays: days.filter((d) => d.isSkipped).length,
+      emptyDays: days.filter((d) => d.isEmpty).length,
       restDays: days.filter((d) => d.isRestDay).length,
       weeks: new Set(days.map((d) => d.weekStart)).size,
     },
@@ -1081,7 +1332,7 @@ function buildCalendar(rules, input) {
   };
 }
 
-function groupWeeks(days, input) {
+function groupWeeks(days, clearedWeeks) {
   const weeks = [];
   let current = null;
 
@@ -1090,7 +1341,7 @@ function groupWeeks(days, input) {
       current = {
         start: day.weekStart,
         end: addDays(day.weekStart, 6),
-        isSkipped: input.weekCommands[day.weekStart] === null,
+        isCleared: clearedWeeks.has(day.weekStart),
         firstDay: day.date,
         lastDay: day.date,
         days: [],
@@ -1103,40 +1354,52 @@ function groupWeeks(days, input) {
   return weeks;
 }
 
-function buildDecisionPoints(days, startDate) {
-  const weekHasSettledWeekday = new Map();
+/**
+ * 时间轴上的有序事件。`kind` 取三种值：
+ *   'day-command'   选择某一天的日指令
+ *   'settle'        该日结算
+ *   'week-command'  选择该周的周指令
+ *
+ * 完整周的次序是「周日日指令 → 周日结算 → 本周周指令 → 各平日结算」；被标记为
+ * 休息日的平日，其日指令决策插在该日结算之前；首周没有周日落在时间轴内时，
+ * 周指令决策落在首周第一次结算之前。空过或起止例外的日子不产生任何事件。
+ */
+function buildSequence(days) {
+  // 只有存在「会结算的平日」时，这一周才真的需要一个周指令决策。
+  const weekHasSettledWeekday = new Set();
   for (const day of days) {
-    if (day.weekday !== 0 && day.isSettled) {
-      weekHasSettledWeekday.set(day.weekStart, true);
-    }
+    if (day.weekday !== 0 && day.isSettled) weekHasSettledWeekday.add(day.weekStart);
   }
 
-  const points = [];
+  const entries = [];
   const handledWeek = new Set();
 
   for (const day of days) {
-    const pushing = (kind) => points.push({ date: day.date, kind });
+    const push = (kind) => entries.push({ date: day.date, kind });
+    const needsWeekCommand = weekHasSettledWeekday.has(day.weekStart);
 
     if (!handledWeek.has(day.weekStart)) {
       handledWeek.add(day.weekStart);
 
       if (day.date === day.weekStart) {
-        // 完整周：周日日指令 → 周日结算 → 本周周指令
-        if (day.isSettled) pushing('day-command');
-        if (weekHasSettledWeekday.get(day.weekStart)) pushing('week-command');
+        if (day.isSettled) push('day-command');
+        if (day.isSettled) push('settle');
+        if (needsWeekCommand) push('week-command');
       } else {
         // 首周没有周日落在时间轴内：周指令决策落在首周第一次结算之前
-        if (weekHasSettledWeekday.get(day.weekStart)) pushing('week-command');
-        if (day.isRestDay && day.isSettled) pushing('day-command');
+        if (needsWeekCommand) push('week-command');
+        if (day.isRestDay && day.isSettled) push('day-command');
+        if (day.isSettled) push('settle');
       }
       continue;
     }
 
     // 本周内被标记为休息日的日子，在该日结算之前插入它的日指令决策
-    if (day.isRestDay && day.isSettled) pushing('day-command');
+    if (day.isRestDay && day.isSettled) push('day-command');
+    if (day.isSettled) push('settle');
   }
 
-  return points.map((point, index) => ({ ...point, order: index }));
+  return entries.map((entry, order) => ({ ...entry, order }));
 }
 return { WEEKDAY_NAMES, buildCalendar };
 })();
@@ -1338,12 +1601,14 @@ return { validateRules };
 })();
 __ns["src/plan.js"] = (() => {
 const { buildCalendar } = __ns["src/calendar.js"];
+const { validateInput } = __ns["src/input.js"];
 const { validateRules } = __ns["src/rules.js"];
 // 规划入口。
 //
 // 预先商定的接缝是 `plan(input) → PlanResult`：规则在**构造时**注入，所以调用方
 // 只传 input。本票交付日历与决策点结构——指令仍全部空过，属性不动；求解器与
 // 单日结算在后续票接入。
+
 
 
 
@@ -1356,18 +1621,22 @@ function createPlanner(rules) {
       return { ok: false, status: 'invalid-rules', problems: ruleProblems };
     }
 
+    const inputProblems = validateInput(input, rules);
+    if (inputProblems.length > 0) {
+      return { ok: false, status: 'invalid-input', problems: inputProblems };
+    }
+
     const calendar = buildCalendar(rules, input);
 
     return {
       ok: true,
       status: 'calendar',
-      note: '日历与决策点已就绪。指令仍然是空的，属性不动——求解器将在后续票接入。',
       startDate: input.startDate,
       endDate: rules.timeline.end,
       lastSettlement: rules.timeline.lastSettlement,
       days: calendar.days,
       weeks: calendar.weeks,
-      decisionPoints: calendar.decisionPoints,
+      sequence: calendar.sequence,
       summary: calendar.summary,
       ruleSummary: {
         attributes: rules.attributes.length,
@@ -1395,7 +1664,7 @@ const { createPlanner } = __ns["src/plan.js"];
 
 
 
-const state = { input: defaultInput(rules), requestId: 0 };
+const state = { input: defaultInput(rules), requestId: 0, daysByDate: new Map() };
 const pending = new Map();
 const inlinePlan = createPlanner(rules);
 const commandNames = new Map(rules.commands.map((c) => [c.id, c.name]));
@@ -1405,6 +1674,14 @@ let workerUnavailable = false;
 let dayRows = new Map();
 let weekRows = new Map();
 let renderedSignature = '';
+
+const COLUMNS = ['日期', '星期', '当天顺序', '结算', '指令', '休息日', '跳过'];
+const SEQUENCE_LABELS = { 'day-command': '日指令', settle: '结算', 'week-command': '周指令' };
+const EMPTY_LABELS = {
+  day: '空过（指定本日）',
+  'day-command': '空过（日指令置空）',
+  week: '空过（本周空过）',
+};
 
 const $ = (id) => document.getElementById(id);
 
@@ -1498,10 +1775,9 @@ function renderForm() {
 // ---------------------------------------------------------------- 日历表
 
 function calendarSignature(result) {
-  return `${result.startDate}|${result.days.length}|${result.days[result.days.length - 1].date}`;
+  const last = result.days[result.days.length - 1];
+  return `${result.startDate}|${result.days.length}|${last ? last.date : ''}`;
 }
-
-const COLUMNS = ['日期', '星期', '结算', '指令', '休息日', '跳过'];
 
 function renderCalendar(result) {
   const host = $('calendar');
@@ -1553,7 +1829,7 @@ function buildWeekRow(week) {
   flag.className = 'week-flag';
   const box = document.createElement('input');
   box.type = 'checkbox';
-  box.checked = week.isSkipped;
+  box.checked = week.isCleared;
   box.dataset.action = 'week-skip';
   box.dataset.week = week.start;
   flag.append(box, document.createTextNode(' 本周平日全部空过'));
@@ -1569,17 +1845,15 @@ function buildDayRow(day) {
   row.className = 'day-row';
   row.dataset.date = day.date;
 
-  const dateCell = document.createElement('td');
-  dateCell.textContent = day.date;
-
-  const weekdayCell = document.createElement('td');
-  weekdayCell.textContent = day.weekdayName;
-
-  const stateCell = document.createElement('td');
-  stateCell.className = 'state';
-
-  const commandCell = document.createElement('td');
-  commandCell.className = 'command';
+  const cells = {};
+  for (const name of ['date', 'weekday', 'sequence', 'state', 'command']) {
+    const cell = document.createElement('td');
+    cells[name] = cell;
+    if (name === 'date') cell.textContent = day.date;
+    if (name === 'weekday') cell.textContent = day.weekdayName;
+    if (name === 'state' || name === 'sequence') cell.className = name === 'state' ? 'state' : '';
+    row.append(cell);
+  }
 
   const restCell = document.createElement('td');
   const restBox = document.createElement('input');
@@ -1596,7 +1870,7 @@ function buildDayRow(day) {
   skipBox.dataset.date = day.date;
   skipCell.append(skipBox);
 
-  row.append(dateCell, weekdayCell, stateCell, commandCell, restCell, skipCell);
+  row.append(restCell, skipCell);
   dayRows.set(day.date, row);
   return row;
 }
@@ -1607,20 +1881,26 @@ function applyCalendar(result) {
     renderCalendar(result);
   }
 
+  const sequenceByDate = new Map();
+  for (const entry of result.sequence) {
+    if (!sequenceByDate.has(entry.date)) sequenceByDate.set(entry.date, []);
+    sequenceByDate.get(entry.date).push(SEQUENCE_LABELS[entry.kind] ?? entry.kind);
+  }
+
   for (const day of result.days) {
     const row = dayRows.get(day.date);
     if (!row) continue;
     row.classList.toggle('is-rest', day.isRestDay);
-    row.classList.toggle('is-skipped', day.isSkipped);
-    row.classList.toggle('is-unsettled', !day.isSettled && !day.isSkipped);
+    row.classList.toggle('is-empty', day.isEmpty);
+    row.classList.toggle('is-unsettled', !day.isSettled && !day.isEmpty);
 
-    row.querySelector('td.state').textContent = day.isSkipped
-      ? '空过'
+    row.children[2].textContent = (sequenceByDate.get(day.date) ?? []).join(' → ');
+    row.children[3].textContent = day.isEmpty
+      ? EMPTY_LABELS[day.skipSource]
       : day.isSettled
         ? '结算'
         : '不结算';
-
-    row.querySelector('td.command').textContent = day.commandId
+    row.children[4].textContent = day.commandId
       ? (commandNames.get(day.commandId) ?? day.commandId)
       : '—';
 
@@ -1628,20 +1908,25 @@ function applyCalendar(result) {
     restBox.checked = day.isRestDay;
     restBox.disabled = day.weekday === 0;
 
-    row.querySelector('input[data-action="skip"]').checked = day.isSkipped;
+    // 「本周空过」由周表头那个勾选框负责，日级的跳过勾选框对它不作声。
+    const skipBox = row.querySelector('input[data-action="skip"]');
+    skipBox.checked = day.isEmpty && day.skipSource !== 'week';
+    skipBox.disabled = day.skipSource === 'week';
   }
 
   for (const week of result.weeks) {
     const box = weekRows.get(week.start)?.querySelector('input[data-action="week-skip"]');
-    if (box) box.checked = week.isSkipped;
+    if (box) box.checked = week.isCleared;
   }
+
+  state.daysByDate = new Map(result.days.map((d) => [d.date, d]));
 }
 
 function renderSummary(result) {
   const s = result.summary;
-  $('summary').innerHTML =
-    `共 <b>${s.totalDays}</b> 天 · 结算 <b>${s.settledDays}</b> · 空过 <b>${s.skippedDays}</b> · ` +
-    `休息日 <b>${s.restDays}</b> · 自然周 <b>${s.weeks}</b>`;
+  $('summary').textContent =
+    `共 ${s.totalDays} 天 · 结算 ${s.settledDays} · 空过 ${s.emptyDays} · ` +
+    `休息日 ${s.restDays} · 自然周 ${s.weeks}`;
 }
 
 function scrollToDate(date) {
@@ -1659,12 +1944,18 @@ function scrollToDate(date) {
 
 function renderResult(result) {
   if (!result.ok) {
-    setStatus(`规则数据有问题：\n${result.problems.join('\n')}`, true);
+    const label = result.status === 'invalid-input' ? '输入有问题' : '规则数据有问题';
+    setStatus(`${label}：\n${result.problems.join('\n')}`, true);
     return;
   }
-  setStatus(`${result.note}\n${result.startDate} → ${result.endDate}（最后结算日 ${result.lastSettlement}）`);
+
+  setStatus(`时间轴 ${result.startDate} → ${result.endDate}（最后结算日 ${result.lastSettlement}）`);
   renderSummary(result);
   applyCalendar(result);
+
+  const jump = $('jump-date');
+  jump.min = result.startDate;
+  jump.max = result.endDate;
 }
 
 async function runPlan() {
@@ -1705,6 +1996,28 @@ async function importJson(file) {
 
 // ---------------------------------------------------------------- 交互
 
+/**
+ * 空过在 JSON 里有三种表示，"跳过"按当天类型写入**该类型的规范形式**：
+ * 休息日写 `dayCommands[date] = null`，平日与周日之外的普通日写 `skippedDays`。
+ * 两种写法都写一遍会留下取消勾选也清不掉的残留，所以每次先清干净再写一种。
+ */
+function setDayEmpty(date, empty) {
+  const day = state.daysByDate.get(date);
+  const isRestDay = Boolean(day && day.isRestDay);
+
+  state.input.skippedDays = state.input.skippedDays.filter((d) => d !== date);
+  delete state.input.dayCommands[date];
+  if (!empty) return;
+
+  if (isRestDay) state.input.dayCommands[date] = null;
+  else state.input.skippedDays = [...state.input.skippedDays, date].sort();
+}
+
+function setWeekCleared(weekStart, cleared) {
+  if (cleared) state.input.weekCommands[weekStart] = null;
+  else delete state.input.weekCommands[weekStart];
+}
+
 function toggleInList(list, value, present) {
   const next = new Set(list);
   if (present) next.add(value);
@@ -1712,22 +2025,16 @@ function toggleInList(list, value, present) {
   return [...next].sort();
 }
 
-function setWeekSkipped(weekStart, skipped) {
-  if (skipped) state.input.weekCommands[weekStart] = null;
-  else delete state.input.weekCommands[weekStart];
-}
-
 $('calendar').addEventListener('change', (event) => {
   const box = event.target;
   const action = box.dataset && box.dataset.action;
-  if (!action) return;
 
   if (action === 'rest') {
     state.input.restDays = toggleInList(state.input.restDays, box.dataset.date, box.checked);
   } else if (action === 'skip') {
-    state.input.skippedDays = toggleInList(state.input.skippedDays, box.dataset.date, box.checked);
+    setDayEmpty(box.dataset.date, box.checked);
   } else if (action === 'week-skip') {
-    setWeekSkipped(box.dataset.week, box.checked);
+    setWeekCleared(box.dataset.week, box.checked);
   } else {
     return;
   }

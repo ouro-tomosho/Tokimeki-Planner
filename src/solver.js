@@ -325,7 +325,12 @@ export function createSolver(rules) {
    *                          之后的重新排。不传就是整份重排。
    */
   return function solve(input, { previous = null, fromDate = null } = {}) {
-    const assignments = search(input, { previous, fromDate });
+    // 历史任何时候都不被改写：重算起点永远不早于「已玩到」。
+    // 这条不变量放在求解器里，而不是指望每个调用方都记得算。
+    const history = input.playedUpTo ?? input.startDate;
+    const effectiveFrom = fromDate === null || fromDate < history ? history : fromDate;
+
+    const assignments = search(input, { previous, fromDate: effectiveFrom });
     if (planner(input, { assignments }).goals.ok) return assignments;
     return { ...assignments, diagnosis: diagnose(input) };
   };

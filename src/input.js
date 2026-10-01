@@ -17,6 +17,9 @@ export function defaultInput(rules) {
   return {
     version: CURRENT_VERSION,
     startDate: rules.timeline.start,
+    // 「已玩到」：这一日之前的算历史。改任何东西都不会动它（见票 07）。
+    // 默认等于时间轴起点，也就是"还没玩过"。
+    playedUpTo: rules.timeline.start,
     attributes: { ...rules.defaultStart },
     globalConstraints: structuredClone(rules.defaultGlobalConstraints),
     endingGoals: structuredClone(rules.defaultEndingGoals),
@@ -74,6 +77,15 @@ export function validateInput(input, rules) {
     problems.push(`startDate 格式错误：${input.startDate}`);
   } else if (!inTimeline(input.startDate)) {
     problems.push(`startDate 超出时间轴：${input.startDate}`);
+  }
+
+  if (input.playedUpTo === undefined || input.playedUpTo === null) {
+    // 老存档没有这个字段：当作"还没玩过"。
+    input.playedUpTo = input.startDate;
+  } else if (!isDate(input.playedUpTo)) {
+    problems.push(`playedUpTo 格式错误：${input.playedUpTo}`);
+  } else if (!inTimeline(input.playedUpTo)) {
+    problems.push(`playedUpTo 超出时间轴：${input.playedUpTo}`);
   }
 
   checkAttributes(input, rules, problems);

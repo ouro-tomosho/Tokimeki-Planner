@@ -282,6 +282,11 @@ function renderForm() {
   startDate.max = rules.timeline.lastSettlement;
   startDate.value = state.input.startDate;
 
+  const playedUpTo = $('played-up-to');
+  playedUpTo.min = rules.timeline.start;
+  playedUpTo.max = rules.timeline.lastSettlement;
+  playedUpTo.value = state.input.playedUpTo ?? state.input.startDate;
+
   const container = $('attributes');
   container.textContent = '';
   for (const id of attributeIds(rules)) {
@@ -300,6 +305,7 @@ function renderForm() {
     input.value = String(state.input.attributes[id]);
     input.addEventListener('change', () => {
       state.input.attributes[id] = Number(input.value);
+      generate({ previous: state.assignments });
     });
 
     label.append(caption, input);
@@ -715,14 +721,14 @@ function wireGoalList({ hostId, listKey, options }) {
     const row = event.target.closest('.goal-row');
     if (!row) return;
     state.input[listKey][Number(row.dataset.index)] = goalFromRow(row, options);
-    generate();
+    generate({ previous: state.assignments });
   });
   host.addEventListener('click', (event) => {
     if (event.target.dataset.role !== 'remove') return;
     const row = event.target.closest('.goal-row');
     state.input[listKey].splice(Number(row.dataset.index), 1);
     renderGoalEditors();
-    generate();
+    generate({ previous: state.assignments });
   });
 }
 
@@ -925,7 +931,7 @@ async function generate({ fromDate = null } = {}) {
   setStatus('求解中…');
 
   // 有重算起点就冻结它之前的部分：使用者之前的安排不该因为改了一处就整体翻新。
-  const options = fromDate === null ? {} : { previous: state.assignments, fromDate };
+  const options = { previous: state.assignments, fromDate };
   try {
     const reply = await requestSolve(state.input, options);
     if (reply.cancelled) {
@@ -973,7 +979,7 @@ async function importJson(file) {
     return;
   }
   renderForm();
-  await generate();
+  await generate({ previous: state.assignments });
 }
 
 // ---------------------------------------------------------------- 交互
@@ -1004,7 +1010,7 @@ $('calendar').addEventListener('change', (event) => {
 
   if (action === 'rest') {
     state.input.restDays = toggleInList(state.input.restDays, control.dataset.date, control.checked);
-    generate({ fromDate: anchorAtOrAfter(control.dataset.date) });
+    generate({ fromDate: (anchorAtOrAfter(control.dataset.date)) });
     return;
   } else if (action === 'skip') {
     state.input.skippedDays = toggleInList(
@@ -1012,7 +1018,7 @@ $('calendar').addEventListener('change', (event) => {
       control.dataset.date,
       control.checked,
     );
-    generate({ fromDate: anchorAtOrAfter(control.dataset.date) });
+    generate({ fromDate: (anchorAtOrAfter(control.dataset.date)) });
     return;
   } else if (action === 'week-command') {
     setMapEntry(state.input.weekCommands, control.dataset.week, control.value);
@@ -1020,7 +1026,7 @@ $('calendar').addEventListener('change', (event) => {
     return;
   } else if (action === 'day-command') {
     setMapEntry(state.input.dayCommands, control.dataset.date, control.value);
-    generate({ fromDate: anchorAtOrAfter(control.dataset.date) });
+    generate({ fromDate: (anchorAtOrAfter(control.dataset.date)) });
     return;
   } else if (action === 'club-change') {
     setClubChange(control.dataset.week, control.value);
@@ -1029,7 +1035,6 @@ $('calendar').addEventListener('change', (event) => {
   } else {
     return;
   }
-  generate();
 });
 
 startWorker();
@@ -1040,13 +1045,13 @@ for (const list of GOAL_LISTS) wireGoalList(list);
 $('btn-add-global').addEventListener('click', () => {
   state.input.globalConstraints.push({ attribute: attributeLabels[0].id, op: '>=', value: 50 });
   renderGoalEditors();
-  generate();
+  generate({ previous: state.assignments });
 });
 
 $('btn-add-ending').addEventListener('click', () => {
   state.input.endingGoals.push({ attribute: attributeLabels[0].id, op: '>=', value: 50 });
   renderGoalEditors();
-  generate();
+  generate({ previous: state.assignments });
 });
 
 $('btn-add-mini').addEventListener('click', () => {
@@ -1057,21 +1062,30 @@ $('btn-add-mini').addEventListener('click', () => {
     value: 50,
   });
   renderGoalEditors();
-  generate();
+  generate({ previous: state.assignments });
 });
 
 $('start-date').addEventListener('change', (event) => {
   state.input.startDate = event.target.value;
-  generate();
+  // 起点动了就等于"我现在在别处"，重算起点跟着它走
+  if (state.input.playedUpTo < state.input.startDate) state.input.playedUpTo = state.input.startDate;
+  $('played-up-to').value = state.input.playedUpTo;
+  generate({ previous: state.assignments });
+});
+
+$('played-up-to').addEventListener('change', (event) => {
+  state.input.playedUpTo = event.target.value;
+  generate({ previous: state.assignments });
 });
 
 $('initial-club').addEventListener('change', (event) => {
   state.input.initialClub = event.target.value === UNSET ? null : event.target.value;
-  generate();
+  generate({ previous: state.assignments });
 });
 
 $('btn-plan').addEventListener('click', () => {
-  generate();
+  // 使用者明确要求"重新生成"：历史仍然不动，其余的整份重排。
+  generate({ previous: state.assignments });
 });
 
 $('btn-cancel').addEventListener('click', () => {

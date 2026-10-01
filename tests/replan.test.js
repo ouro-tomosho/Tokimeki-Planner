@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 
 import { createPlanner } from '../src/plan.js';
 import { createSolver } from '../src/solver.js';
+import { validateInput } from '../src/input.js';
 import { clubInput, dayMap } from './support/fixtures.js';
 import { loadRules } from './support/rules.js';
 
@@ -137,6 +138,59 @@ test('已有结果上再改一处，之前已经排好的历史仍然逐格不�
   // 第一次改动定下的那一周，在第二次改动之后仍然是它
   const pinnedWeekday = after.days.find((day) => day.date > cutOne && !day.isRestDay);
   assert.equal(pinnedWeekday.commandId, 'cmd-chat', '第一次改动定下的安排被第二次改动改写了');
+});
+
+test('「已玩到」之前的决定，改起始属性时也不被改写', () => {
+  const input = clubInput(rules);
+  input.playedUpTo = '1996-06-16';
+  const previous = solve(input);
+  const before = plan(input, { assignments: previous });
+
+  // 不带日期的改动：换了前提。历史里的**决定**不该跟着变。
+  const edited = structuredClone(input);
+  edited.attributes.literature = 55;
+
+  const after = plan(edited, { assignments: solve(edited, { previous }) });
+  const left = dayMap(before);
+  const right = dayMap(after);
+
+  for (const [date, day] of left) {
+    if (date >= '1996-06-16') break;
+    assert.equal(right.get(date).commandId, day.commandId, `${date} 的决定被改写了`);
+    assert.equal(right.get(date).isEmpty, day.isEmpty, `${date} 的空过状态被改写了`);
+  }
+});
+
+test('「已玩到」之后的部分跟随改动', () => {
+  const input = clubInput(rules);
+  input.playedUpTo = '1996-06-16';
+  const previous = solve(input);
+
+  const edited = structuredClone(input);
+  edited.attributes.literature = 55;
+  const after = plan(edited, { assignments: solve(edited, { previous }) });
+
+  const changed = after.days.some(
+    (day, index) =>
+      day.date >= '1996-06-16' &&
+      day.attributes.literature !== plan(input, { assignments: previous }).days[index].attributes.literature,
+  );
+  assert.equal(changed, true, '换了前提，之后的部分必须跟着变');
+});
+
+test('老存档没有「已玩到」时，当作还没玩过', () => {
+  const input = clubInput(rules);
+  delete input.playedUpTo;
+  assert.deepEqual(validateInput(input, rules), []);
+
+  const result = plan(input, { assignments: solve(input) });
+  assert.equal(result.ok, true);
+});
+
+test('「已玩到」超出时间轴时被拒绝', () => {
+  const input = clubInput(rules);
+  input.playedUpTo = '1999-01-01';
+  assert.deepEqual(validateInput(input, rules), ['playedUpTo 超出时间轴：1999-01-01']);
 });
 
 test('硬边界与目标无法同时满足时报告无解，而不是偷偷改掉使用者的指定', () => {

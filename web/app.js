@@ -783,32 +783,34 @@ function buildDiagnosis(diagnosis) {
   title.textContent = '不可达诊断（三项并列）';
   wrap.append(title);
 
+  const cancelled = diagnosis.mustCancel ?? [];
+  const nearest = cancelled[cancelled.length - 1];
+  const blocks = diagnosis.miniGoalsBlocking;
+
   const list = document.createElement('ul');
   list.append(
     goalLine(
       '小目标',
-      diagnosis.miniGoalsBlocking
-        ? `是它在挡路——取消「${describeGoalBriefly(diagnosis.reachableAfterCancelling)}」之后即可达标`
+      blocks
+        ? `是它在挡路——由近至远取消 ${cancelled.length} 条（到「${describeGoalBriefly(nearest)}」为止）即可达标`
         : '不是小目标在挡路',
-      !diagnosis.miniGoalsBlocking,
+      !blocks,
     ),
   );
   list.append(
     goalLine(
       '结局 vs 全局',
-      diagnosis.endingAndGlobalConflict
-        ? '两者冲突——把小目标全删了也达不到'
-        : '彼此不冲突',
+      diagnosis.endingAndGlobalConflict ? '两者冲突——把小目标全删了也达不到' : '彼此不冲突',
       !diagnosis.endingAndGlobalConflict,
     ),
   );
   list.append(
     goalLine(
-      '结局目标本身',
-      diagnosis.endingGoalsAloneUnreachable
-        ? '不可达——连全局约束一起拿掉也达不到'
-        : '可达',
-      !diagnosis.endingGoalsAloneUnreachable,
+      '小目标之外',
+      diagnosis.endingGoalsUnreachable
+        ? '把小目标全部取消仍达不到——问题不在小目标'
+        : '把小目标全部取消即可达标',
+      !diagnosis.endingGoalsUnreachable,
     ),
   );
 

@@ -60,12 +60,7 @@ test('不可达时，三项结论同时给出', () => {
   assert.ok(diagnosis, '不可达必须有诊断');
   assert.deepEqual(
     Object.keys(diagnosis).sort(),
-    [
-      'endingAndGlobalConflict',
-      'endingGoalsAloneUnreachable',
-      'miniGoalsBlocking',
-      'reachableAfterCancelling',
-    ],
+    ['endingAndGlobalConflict', 'endingGoalsUnreachable', 'miniGoalsBlocking', 'mustCancel'],
     '四项结论一并给出，而不是只报第一个命中的原因',
   );
 });
@@ -76,41 +71,76 @@ test('未加入社团时：小目标被指认，结局目标与全局约束不�
 
   assert.equal(diagnosis.miniGoalsBlocking, true);
   assert.equal(diagnosis.endingAndGlobalConflict, false);
-  assert.equal(diagnosis.endingGoalsAloneUnreachable, false);
+  assert.equal(diagnosis.endingGoalsUnreachable, false);
 });
 
-test('诊断指认的那条小目标，取消它真的就可达；只取消另一条则不行', () => {
+test('只有一条病根时，取消它确实可达、只取消另一条确实不行', () => {
   const input = noClubInput();
   const { assignments } = solveAndPlan(input);
-  const blamed = assignments.diagnosis.reachableAfterCancelling;
+  const { mustCancel } = assignments.diagnosis;
 
-  assert.ok(blamed, '应当指认出一条小目标');
-  assert.deepEqual(blamed.attributes, ['clubExperience'], '就是社团经验那条');
+  assert.equal(mustCancel.length, 1, '只有一个病根，取消一条就够');
+  assert.deepEqual(mustCancel[0].attributes, ['clubExperience']);
 
   // 按**序号**取消：诊断给的是副本里的对象，拿它做 indexOf / includes 对不上。
-  const blamedIndex = input.miniGoals.findIndex(
-    (entry) =>
-      entry.deadline === blamed.deadline &&
-      entry.op === blamed.op &&
-      entry.value === blamed.value,
-  );
+  const blamedIndex = input.miniGoals.findIndex((entry) => entry.deadline === mustCancel[0].deadline);
   assert.ok(blamedIndex >= 0, '指认的必须是使用者确实设过的那一条');
 
-  const reachableWithoutIndex = (index) => {
+  const reachableAfterCancelling = (indexes) => {
     const copy = structuredClone(input);
-    copy.miniGoals = copy.miniGoals.filter((_, position) => position !== index);
+    copy.miniGoals = copy.miniGoals.filter((_, position) => !indexes.includes(position));
     return plan(copy, { assignments: solve(copy) }).goals.ok;
   };
 
-  assert.equal(reachableWithoutIndex(blamedIndex), true, '取消它之后确实可达');
+  assert.equal(reachableAfterCancelling([blamedIndex]), true, '取消它之后确实可达');
   for (let index = 0; index < input.miniGoals.length; index += 1) {
     if (index === blamedIndex) continue;
-    assert.equal(
-      reachableWithoutIndex(index),
-      false,
-      `只取消 ${input.miniGoals[index].deadline} 那条并不够`,
-    );
+    assert.equal(reachableAfterCancelling([index]), false, `只取消第 ${index} 条并不够`);
   }
+});
+
+test('两条小目标各自独立地不可达时，报的是**取消到哪一条为止**，不是单条就够', () => {
+  // 两条都不可达：没有社团就攒不出社团经验；属性上限是 999，体力 ≥ 1000 永远达不到。
+  const input = defaultInput(rules);
+  input.miniGoals = [
+    { deadline: '1998-01-02', attributes: ['clubExperience'], op: '>=', value: 380 },
+    { deadline: '1998-02-27', attributes: ['stamina'], op: '>=', value: 1000 },
+  ];
+
+  const { assignments } = solveAndPlan(input);
+  const { mustCancel, miniGoalsBlocking } = assignments.diagnosis;
+
+  assert.equal(miniGoalsBlocking, true);
+  assert.equal(mustCancel.length, 2, '必须两条都取消才可达');
+
+  const reachableAfterCancelling = (count) => {
+    const copy = structuredClone(input);
+    copy.miniGoals = copy.miniGoals.sort((a, b) => (a.deadline < b.deadline ? -1 : 1)).slice(count);
+    return plan(copy, { assignments: solve(copy) }).goals.ok;
+  };
+
+  assert.equal(reachableAfterCancelling(1), false, '只取消最近的那一条不够');
+  assert.equal(reachableAfterCancelling(2), true, '取消到第二条才可达');
+});
+
+test('三条小目标时也能报全——循环上界不能被比较器的参数个数带跑', () => {
+  const input = defaultInput(rules);
+  input.miniGoals = [
+    { deadline: '1998-01-02', attributes: ['clubExperience'], op: '>=', value: 380 },
+    { deadline: '1998-02-01', attributes: ['grit'], op: '>=', value: 999 },
+    { deadline: '1998-02-27', attributes: ['stamina'], op: '>=', value: 1000 },
+  ];
+
+  const { assignments } = solveAndPlan(input);
+  const { mustCancel, miniGoalsBlocking } = assignments.diagnosis;
+
+  assert.equal(miniGoalsBlocking, true);
+  assert.equal(mustCancel.length, 3, '三条都要取消');
+  assert.deepEqual(
+    mustCancel.map((goal) => goal.deadline),
+    ['1998-01-02', '1998-02-01', '1998-02-27'],
+    '按截止日期由近至远',
+  );
 });
 
 test('由近至远逐个取消：指认的是**最早也能解决**的那一条', () => {
@@ -120,7 +150,11 @@ test('由近至远逐个取消：指认的是**最早也能解决**的那一条'
   assert.deepEqual(deadlines, ['1998-01-02', '1998-02-23']);
 
   const { assignments } = solveAndPlan(input);
-  assert.equal(assignments.diagnosis.reachableAfterCancelling.deadline, '1998-01-02');
+  assert.deepEqual(
+    assignments.diagnosis.mustCancel.map((goal) => goal.deadline),
+    ['1998-01-02'],
+    '病根是最近的那一条',
+  );
 });
 
 test('结局目标与全局约束冲突时，明确报告冲突', () => {
@@ -129,9 +163,10 @@ test('结局目标与全局约束冲突时，明确报告冲突', () => {
 
   const { diagnosis } = assignments;
   assert.equal(diagnosis.endingAndGlobalConflict, true, '全局约束与结局目标彼此冲突');
-  assert.equal(diagnosis.endingGoalsAloneUnreachable, false, '结局目标单看是可达的，不该赖它');
   assert.equal(diagnosis.miniGoalsBlocking, false, '与小目标无关');
-  assert.equal(diagnosis.reachableAfterCancelling, null);
+  assert.deepEqual(diagnosis.mustCancel, [], '取消小目标救不了');
+  // 验收标准 4 问的是"全部小目标取消后是否仍不可达"，这里正是
+  assert.equal(diagnosis.endingGoalsUnreachable, true);
 });
 
 test('结局目标本身不可达时，明确报告是它，而不是让小目标背锅', () => {
@@ -142,10 +177,10 @@ test('结局目标本身不可达时，明确报告是它，而不是让小目�
   assert.equal(result.goals.ok, false);
 
   const { diagnosis } = assignments;
-  assert.equal(diagnosis.endingGoalsAloneUnreachable, true);
+  assert.equal(diagnosis.endingGoalsUnreachable, true);
   assert.equal(diagnosis.endingAndGlobalConflict, false, '不是冲突——把全局约束全删了它也达不到');
   assert.equal(diagnosis.miniGoalsBlocking, false);
-  assert.equal(diagnosis.reachableAfterCancelling, null, '取消小目标救不了它');
+  assert.deepEqual(diagnosis.mustCancel, [], '取消小目标救不了它');
 });
 
 test('诊断全程不修改使用者设定的任何目标或约束', () => {

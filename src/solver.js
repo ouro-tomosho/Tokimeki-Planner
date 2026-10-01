@@ -269,17 +269,17 @@ export function createSolver(rules) {
 
     // 三：由近至远逐个取消小目标，看取消到哪一个之后才可达。
     //     全部取消仍不可达时（withGlobalOnly 为假）不必跑：没有哪个前缀能救。
-    let reachableAfterCancelling = null;
+    // 三：由近至远逐个取消。注意这是**前缀**语义——"取消到第 N 条为止才可达"，
+    // 不是"取消某一条就够"。两条小目标各自独立地不可达时，只取消任何一条都救不了。
+    let mustCancel = [];
     if (withGlobalOnly) {
       const ordered = [...input.miniGoals].sort(byDeadline);
-      // 按**序号**取消。不能拿目标对象做 includes——reachableWith 里是 structuredClone，
-      // 副本里的对象引用与原件对不上，一个都取消不掉。
-      for (let count = 1; count <= byDeadline.length; count += 1) {
+      for (let count = 1; count <= ordered.length; count += 1) {
         const ok = reachableWith((copy) => {
           copy.miniGoals = [...copy.miniGoals].sort(byDeadline).slice(count);
         });
         if (ok) {
-          reachableAfterCancelling = ordered[count - 1];
+          mustCancel = ordered.slice(0, count);
           break;
         }
       }
@@ -291,10 +291,11 @@ export function createSolver(rules) {
       miniGoalsBlocking: withGlobalOnly,
       // 得连全局约束也拿掉才可达
       endingAndGlobalConflict: endingAlone && !withGlobalOnly,
-      // 连全局约束一起拿掉也达不到
-      endingGoalsAloneUnreachable: !endingAlone,
-      // 由近至远取消到哪一条小目标才可达；没有这样的前缀就是 null
-      reachableAfterCancelling,
+      // 验收标准 4 问的是"全部小目标取消后是否仍不可达"，不是"结局目标孤零零地是否可达"。
+      // endingAlone 另有用途：它是判定"冲突"的那一半。
+      endingGoalsUnreachable: !withGlobalOnly,
+      // 由近至远需要取消哪几条（前缀）；空数组表示没有可行的前缀
+      mustCancel,
     };
   }
 

@@ -148,3 +148,12 @@ test('全局默认指令不影响「键为 null」所表示的空过', () => {
   input.weekCommands['1996-05-12'] = null;
   assert.deepEqual(validateInput(input, rules), []);
 });
+
+test('缺少全局默认指令字段的旧存档仍能导入（新增字段必须是可选的）', () => {
+  const input = defaultInput(rules);
+  delete input.defaultWeekCommand;
+  delete input.defaultDayCommand;
+
+  assert.deepEqual(validateInput(input, rules), []);
+  assert.doesNotThrow(() => fromJson(JSON.stringify(input), rules));
+});

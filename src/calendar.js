@@ -47,8 +47,9 @@ export function buildCalendar(rules, input) {
     // 显式指定（含显式 null = 空过）优先；键不存在时才落到全局默认指令。
     const pinned = isRestDay ? input.dayCommands[date] : input.weekCommands[weekStart];
     const fallback = isRestDay ? input.defaultDayCommand : input.defaultWeekCommand;
-    // commandId 记的是「本来会执行的指令」，即使这天因为跳过而没结算——界面靠它显示。
-    const commandId = pinned === undefined ? (fallback ?? null) : pinned;
+    // 空过就是「指令留空」（见 GLOSSARY）；界面要显示"本来会执行什么"时，
+    // 自己从输入推导，而不是让数据模型替界面记住。
+    const commandId = isEmpty ? null : pinned === undefined ? (fallback ?? null) : pinned;
 
     days.push({
       date,

@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createPlanner } from '../src/plan.js';
+import { createSettlement } from '../src/settlement.js';
 import { defaultInput } from '../src/input.js';
 import { loadRules } from './support/rules.js';
 
@@ -339,4 +340,40 @@ test('同一输入两次规划，逐日属性完全一致', () => {
     return plan(input);
   };
   assert.deepEqual(build().days, build().days);
+});
+
+test('结果表的逐日属性与逐次调用 settleDay 完全一致（两个接缝必须对得上）', () => {
+  const settleDay = createSettlement(rules);
+  const scale = rules.fixedPointScale;
+
+  const input = defaultInput(rules);
+  input.startDate = '1998-02-20';
+  input.attributes.stress = 50;
+  input.defaultWeekCommand = 'cmd-study-literature';
+  input.defaultDayCommand = 'cmd-rest';
+  input.restDays = ['1998-02-25'];
+  input.skippedDays = ['1998-02-24'];
+  input.weekCommands = { '1998-02-22': null }; // 把这一周平日整体空过
+
+  const result = plan(input);
+  assert.equal(result.ok, true);
+
+  let replayed = {
+    attributes: Object.fromEntries(
+      Object.entries(input.attributes).map(([id, value]) => [id, value * scale]),
+    ),
+    clubExperience: Object.fromEntries(rules.clubs.map((club) => [club.id, 0])),
+  };
+
+  for (const day of result.days) {
+    if (day.isSettled) {
+      replayed = settleDay(replayed, day.commandId, day.isRestDay ? 'restDay' : 'weekday');
+    }
+    for (const [id, value] of Object.entries(replayed.attributes)) {
+      assert.ok(
+        Math.abs(day.attributes[id] - value / scale) < 1e-9,
+        `${day.date} 的 ${id}：表里 ${day.attributes[id]}，重放 ${value / scale}`,
+      );
+    }
+  }
 });

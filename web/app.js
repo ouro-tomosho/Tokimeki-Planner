@@ -45,6 +45,7 @@ const CURVE_COLORS = [
   '#6b7280',
   '#a3541c',
 ];
+const curveColorAt = (index) => CURVE_COLORS[index % CURVE_COLORS.length];
 
 const $ = (id) => document.getElementById(id);
 
@@ -104,26 +105,7 @@ function requestPlan(input) {
 
 // ---------------------------------------------------------------- 指令选择器
 
-/**
- * 全局默认指令只有两态：未指定 / 某条指令。
- * 「空过」是**逐周、逐日**的选择，不做全局默认——否则默认值一填下去整条时间轴都没了。
- */
-function fillDefaultCommandSelect(select, commandId) {
-  select.textContent = '';
-  const entries = [[UNSET, '未指定']];
-  for (const command of rules.commands) entries.push([command.id, command.name]);
-
-  for (const [value, label] of entries) {
-    const option = document.createElement('option');
-    option.value = value;
-    option.textContent = label;
-    select.append(option);
-  }
-  select.value = commandId ?? UNSET;
-}
-
-/** 逐周／逐日的指令选择是三态：未指定（键不存在）／空过（显式 null）／具体指令。 */
-/** 逐周／逐日的三态：未指定（键不存在）／空过（显式 null）／具体指令。 */
+/** 三态选择串与输入值之间的互转：未指定 ↔ 键不存在，空过 ↔ 显式 null。 */
 function commandIdFromChoice(choice) {
   if (choice === EMPTY) return null;
   if (choice === UNSET) return undefined;
@@ -136,14 +118,19 @@ function choiceFromCommandId(commandId) {
   return commandId;
 }
 
-/** 全局默认指令只有两态：未指定 / 某条指令。 */
+/** 全局默认指令只有两态：未指定 / 某条指令——「空过」是逐周逐日的选择，不做全局默认。 */
 function commandIdFromDefaultChoice(choice) {
   return choice === UNSET ? null : choice;
 }
 
-function fillCommandSelect(select, commandId) {
+/**
+ * 填一个指令下拉框。`choice` 是已经归一化过的选择串。
+ * `allowEmpty` 为假时不给「空过」选项——那就是全局默认指令。
+ */
+function fillCommandSelect(select, choice, { allowEmpty = true } = {}) {
   select.textContent = '';
-  const entries = [[UNSET, '未指定'], [EMPTY, '空过']];
+  const entries = [[UNSET, '未指定']];
+  if (allowEmpty) entries.push([EMPTY, '空过']);
   for (const command of rules.commands) entries.push([command.id, command.name]);
 
   for (const [value, label] of entries) {
@@ -152,7 +139,7 @@ function fillCommandSelect(select, commandId) {
     option.textContent = label;
     select.append(option);
   }
-  select.value = choiceFromCommandId(commandId);
+  select.value = choice;
 }
 
 function setMapEntry(map, key, choice) {
@@ -171,15 +158,18 @@ function fillCommandCell(cell, day) {
     const select = document.createElement('select');
     select.dataset.action = 'day-command';
     select.dataset.date = day.date;
-    fillCommandSelect(select, state.input.dayCommands[day.date]);
+    fillCommandSelect(select, choiceFromCommandId(state.input.dayCommands[day.date]));
     cell.append(select);
     return;
   }
-  cell.textContent = day.commandId
-    ? (commandNames.get(day.commandId) ?? day.commandId)
-    : day.skipSource === 'week'
-      ? '空过'
-      : '—';
+  // 平日不单独决策：这里显示的是本周周指令，由输入推导（空过日的 commandId 本来就是空）
+  if (day.skipSource === 'week') {
+    cell.textContent = '空过';
+    return;
+  }
+  const pinned = state.input.weekCommands[day.weekStart];
+  const effective = pinned === undefined ? state.input.defaultWeekCommand : pinned;
+  cell.textContent = effective ? (commandNames.get(effective) ?? effective) : '—';
 }
 
 // ---------------------------------------------------------------- 输入区
@@ -214,8 +204,12 @@ function renderForm() {
     container.append(label);
   }
 
-  fillDefaultCommandSelect($('default-week-command'), state.input.defaultWeekCommand);
-  fillDefaultCommandSelect($('default-day-command'), state.input.defaultDayCommand);
+  fillCommandSelect($('default-week-command'), state.input.defaultWeekCommand ?? UNSET, {
+    allowEmpty: false,
+  });
+  fillCommandSelect($('default-day-command'), state.input.defaultDayCommand ?? UNSET, {
+    allowEmpty: false,
+  });
 }
 
 // ---------------------------------------------------------------- 日历表
@@ -276,7 +270,7 @@ function buildWeekRow(week) {
   const select = document.createElement('select');
   select.dataset.action = 'week-command';
   select.dataset.week = week.start;
-  fillCommandSelect(select, state.input.weekCommands[week.start]);
+  fillCommandSelect(select, choiceFromCommandId(state.input.weekCommands[week.start]));
   flag.append(document.createTextNode(' 周指令 '), select);
 
   cell.append(anchor, flag);
@@ -343,7 +337,7 @@ function applyCalendar(result) {
         ? '不结算'
         : day.commandId
           ? '结算'
-          : '待定（未指定指令）';
+          : '待定';
 
     // 指令单元格只在「是否休息日」改变时才重建
     const restFlag = day.isRestDay ? '1' : '0';
@@ -359,9 +353,9 @@ function applyCalendar(result) {
     restBox.checked = day.isRestDay;
     restBox.disabled = day.weekday === 0;
 
-    row.querySelector('input[data-action="skip"]').checked = state.input.skippedDays.includes(
-      day.date,
-    );
+    // 「跳过」勾选框只代表**逐日跳过**这一个来源；周空过由周表头负责，
+    // 休息日置空由它自己的指令下拉框负责。三者互不冒充。
+    row.querySelector('input[data-action="skip"]').checked = day.skipSource === 'day';
 
     let column = BASE_COLUMNS.length;
     for (const attribute of attributeLabels) {
@@ -419,7 +413,7 @@ function renderCurve(result) {
             `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)} ${y(day.attributes[attribute.id]).toFixed(1)}`,
         )
         .join(' ');
-      const color = CURVE_COLORS[index % CURVE_COLORS.length];
+      const color = curveColorAt(index);
       return `<path d="${points}" fill="none" stroke="${color}" stroke-width="1.4" />`;
     })
     .join('');
@@ -427,7 +421,7 @@ function renderCurve(result) {
   const legend = attributeLabels
     .map(
       (attribute, index) =>
-        `<span><i style="background:${CURVE_COLORS[index % CURVE_COLORS.length]}"></i>${escapeText(attribute.name)}</span>`,
+        `<span><i style="background:${curveColorAt(index)}"></i>${escapeText(attribute.name)}</span>`,
     )
     .join('');
 

@@ -139,7 +139,8 @@ function checkClub(input, clubIds, inTimeline, problems) {
 }
 
 function checkCommandId(label, commandId, commandIds, problems) {
-  if (commandId === null) return;
+  // 缺字段（老存档）与显式 null 同义：都没有全局默认指令。
+  if (commandId === null || commandId === undefined) return;
   if (!commandIds.has(commandId)) problems.push(`${label} 引用了未知指令 ${commandId}`);
 }
 

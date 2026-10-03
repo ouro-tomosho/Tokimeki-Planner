@@ -11,16 +11,20 @@ import { isDate, weekdayOf, weekStartOf } from './dates.js';
 import { goalProblems, miniGoalProblems } from './goals.js';
 import { attributeIds } from './lookup.js';
 
-export const CURRENT_VERSION = 1;
+export const CURRENT_VERSION = 2;
 
 export function defaultInput(rules) {
   return {
     version: CURRENT_VERSION,
-    startDate: rules.timeline.start,
-    // 「已玩到」：这一日之前的算历史。改任何东西都不会动它（见票 07）。
+    // 「已玩到」：使用者已经在游戏里玩到的那一天，同时也是**时间轴的起点**。
+    // 它是状态快照——当天不结算，规划从次日开始（见 ADR-0004）。
     // 默认等于时间轴起点，也就是"还没玩过"。
     playedUpTo: rules.timeline.start,
     attributes: { ...rules.defaultStart },
+    // 起点那一刻各社团已经攒下的经验，`{ clubId: 值 }`；缺席的社团按 0 起算。
+    // 合并起点与已玩到之后，时间轴以内没有历史可供"照旧演一遍"，所以这份状态必须由输入直接承载。
+    // 用映射而不是单个数：社团经验是**每个社团各自一份**，只留当前社团会把别的社团的计数丢掉。
+    clubExperience: {},
     globalConstraints: structuredClone(rules.defaultGlobalConstraints),
     endingGoals: structuredClone(rules.defaultEndingGoals),
     miniGoals: structuredClone(rules.defaultMiniGoals),
@@ -37,6 +41,22 @@ export function toJson(input) {
   return JSON.stringify(input, null, 2);
 }
 
+/**
+ * 把界面手输的值夹进 `[min, max]` 并取整。
+ *
+ * `type=number` 的 min/max 拦不住键盘，而越界值与小数会让整份输入在下次校验时失败；
+ * 那时调用方只剩"丢掉整份存档"这一条路（见 web/session.js），代价不对称，所以落库前先夹住。
+ */
+export function clampToLimits(value, { min, max }) {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+/** 导出的文件名：就用「已玩到」这一天的裸日期，多份文件一眼分得清。 */
+export function exportFileName(input) {
+  return `${input.playedUpTo}.json`;
+}
+
 /** 解析并校验；不合法时抛出带原因的错误。 */
 export function fromJson(text, rules) {
   let parsed;
@@ -45,9 +65,31 @@ export function fromJson(text, rules) {
   } catch (error) {
     throw new Error(`不是合法的 JSON：${error.message}`);
   }
-  const problems = validateInput(parsed, rules);
+  const migrated = migrate(parsed);
+  const problems = validateInput(migrated, rules);
   if (problems.length > 0) throw new Error(`输入不合法：${problems[0]}`);
-  return parsed;
+  return migrated;
+}
+
+/**
+ * v1 → v2：两个日期合成一个。
+ *
+ * v1 允许「起点」早于「已玩到」，于是需要冻结前缀那套机器；v2 里起点恒为已玩到。
+ * 合并时取两者的**较晚者**：宁可少算一段，也不能把已玩过的那天再结算一遍。
+ */
+function migrate(input) {
+  if (!input || typeof input !== 'object') return input;
+  if (input.version !== 1) return input;
+
+  const dates = [input.startDate, input.playedUpTo].filter(isDate).sort();
+  const { startDate, ...rest } = input;
+  return {
+    ...rest,
+    version: CURRENT_VERSION,
+    // v1 没有起点社团经验：历史前缀被删掉之后它才有必要存在，老文件按"全都没攒过"起算。
+    clubExperience: isClubExperienceMap(input.clubExperience) ? input.clubExperience : {},
+    playedUpTo: dates.length > 0 ? dates[dates.length - 1] : input.playedUpTo,
+  };
 }
 
 /** @returns {string[]} 问题列表，空数组表示通过 */
@@ -68,27 +110,20 @@ export function validateInput(input, rules) {
 
   const { start, lastSettlement } = rules.timeline;
   const inTimeline = (date) => isDate(date) && date >= start && date <= lastSettlement;
-  // 周锚点是自然周的周日，可能是**起点前一天或更早**（从周二开始规划时，
-  // 那一周的锚点就在起点之前）。社团切换同理，只发生在周锚点上。
+  // 周锚点是自然周的周日，可能是**已玩到前一天或更早**（从周二开始规划时，
+  // 那一周的锚点就在已玩到之前）。社团切换同理，只发生在周锚点上。
   const firstAnchor = weekStartOf(start);
   const inWeekAnchors = (date) => isDate(date) && date >= firstAnchor && date <= lastSettlement;
 
-  if (!isDate(input.startDate)) {
-    problems.push(`startDate 格式错误：${input.startDate}`);
-  } else if (!inTimeline(input.startDate)) {
-    problems.push(`startDate 超出时间轴：${input.startDate}`);
-  }
-
-  if (input.playedUpTo === undefined || input.playedUpTo === null) {
-    // 老存档没有这个字段：当作"还没玩过"。
-    input.playedUpTo = input.startDate;
-  } else if (!isDate(input.playedUpTo)) {
+  // 起点恒为已玩到：一个日期，既是"玩到哪了"，也是规划区间从这里开始。
+  if (!isDate(input.playedUpTo)) {
     problems.push(`playedUpTo 格式错误：${input.playedUpTo}`);
   } else if (!inTimeline(input.playedUpTo)) {
     problems.push(`playedUpTo 超出时间轴：${input.playedUpTo}`);
   }
 
   checkAttributes(input, rules, problems);
+  checkClubExperience(input, rules, problems, clubIds);
 
   const goalContext = {
     attributeIds: attributeIdSet,
@@ -128,6 +163,33 @@ function checkAttributes(input, rules, problems) {
   }
   for (const key of Object.keys(attributes)) {
     if (!rules.attributes.some((a) => a.id === key)) problems.push(`输入含未知属性 ${key}`);
+  }
+}
+
+function isClubExperienceMap(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** 起点各社团已经攒下的经验：`{ clubId: 值 }`，缺席的社团按 0。 */
+function checkClubExperience(input, rules, problems, clubIds) {
+  const ce = rules.clubExperience;
+  if (input.clubExperience === undefined || input.clubExperience === null) {
+    // 老存档没有这个字段：当作"哪个社团都还没攒过"。
+    input.clubExperience = {};
+    return;
+  }
+  if (!isClubExperienceMap(input.clubExperience)) {
+    problems.push('clubExperience 必须是以社团 id 为键的对象');
+    return;
+  }
+  for (const [clubId, value] of Object.entries(input.clubExperience)) {
+    if (!clubIds.has(clubId)) {
+      problems.push(`clubExperience 引用了未知社团 ${clubId}`);
+    } else if (!Number.isInteger(value)) {
+      problems.push(`clubExperience 的 ${clubId} 必须是整数：${value}`);
+    } else if (value < ce.min || value > ce.max) {
+      problems.push(`clubExperience 的 ${clubId} 超出 [${ce.min}, ${ce.max}]`);
+    }
   }
 }
 

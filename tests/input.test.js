@@ -4,20 +4,28 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { defaultInput, toJson, fromJson, validateInput } from '../src/input.js';
+import {
+  clampToLimits,
+  defaultInput,
+  exportFileName,
+  fromJson,
+  toJson,
+  validateInput,
+} from '../src/input.js';
 import { loadRules } from './support/rules.js';
 
 const rules = loadRules();
 
 test('默认输入取自规则文件里的默认值', () => {
   const input = defaultInput(rules);
-  assert.equal(input.version, 1);
-  assert.equal(input.startDate, '1995-04-04');
+  assert.equal(input.version, 2);
+  assert.equal(input.playedUpTo, '1995-04-04');
   assert.deepEqual(input.attributes, rules.defaultStart);
   assert.deepEqual(input.endingGoals, rules.defaultEndingGoals);
   assert.deepEqual(input.miniGoals, rules.defaultMiniGoals);
   assert.deepEqual(input.globalConstraints, rules.defaultGlobalConstraints);
   assert.equal(input.initialClub, null);
+  assert.deepEqual(input.clubExperience, {});
   assert.deepEqual(input.clubChanges, []);
   assert.deepEqual(input.weekCommands, {});
   assert.deepEqual(input.dayCommands, {});
@@ -29,9 +37,23 @@ test('默认输入通过校验', () => {
   assert.deepEqual(validateInput(defaultInput(rules), rules), []);
 });
 
+test('导出文件名就是已玩到日期的裸日期', () => {
+  const input = defaultInput(rules);
+  input.playedUpTo = '1996-05-01';
+  assert.equal(exportFileName(input), '1996-05-01.json');
+});
+
+test('手输的属性值落库前被夹进上下限并取整', () => {
+  const limits = { min: 0, max: 999 };
+  assert.equal(clampToLimits(1000, limits), 999, '越上界夹到上界');
+  assert.equal(clampToLimits(-5, limits), 0, '越下界夹到下界');
+  assert.equal(clampToLimits(12.6, limits), 13, '小数取整');
+  assert.equal(clampToLimits(Number.NaN, limits), 0, '非数字退回下界');
+});
+
 test('JSON 往返后输入完全相等', () => {
   const input = defaultInput(rules);
-  input.startDate = '1996-05-07';
+  input.playedUpTo = '1996-05-07';
   input.attributes.stamina = 250;
   input.initialClub = 'science-club';
   input.clubChanges = [
@@ -77,6 +99,32 @@ test('未知版本被拒绝', () => {
   assert.throws(() => fromJson(JSON.stringify(input), rules), /版本/);
 });
 
+test('v1 的 JSON 导入时把两个日期合并成一个，取较晚者', () => {
+  const legacy = {
+    ...defaultInput(rules),
+    version: 1,
+    startDate: '1995-06-01',
+    playedUpTo: '1996-05-01',
+  };
+
+  const migrated = fromJson(JSON.stringify(legacy), rules);
+  assert.equal(migrated.version, 2);
+  assert.equal(migrated.playedUpTo, '1996-05-01');
+  assert.equal('startDate' in migrated, false, 'v1 的 startDate 不该留在输入里');
+});
+
+test('v1 里起点晚于已玩到时，取起点', () => {
+  const legacy = {
+    ...defaultInput(rules),
+    version: 1,
+    startDate: '1996-05-01',
+    playedUpTo: '1995-06-01',
+  };
+
+  const migrated = fromJson(JSON.stringify(legacy), rules);
+  assert.equal(migrated.playedUpTo, '1996-05-01');
+});
+
 test('属性越界的输入被拒绝', () => {
   const input = defaultInput(rules);
   input.attributes.stamina = 1000;
@@ -102,6 +150,25 @@ test('缺少属性的输入被拒绝', () => {
   const input = defaultInput(rules);
   delete input.attributes.stress;
   assert.deepEqual(validateInput(input, rules), ['输入缺少属性 stress']);
+});
+
+test('起点社团经验越界被拒绝；缺失时按空映射补上', () => {
+  const over = defaultInput(rules);
+  over.clubExperience = { 'science-club': 1000 };
+  assert.deepEqual(validateInput(over, rules), [
+    'clubExperience 的 science-club 超出 [0, 999]',
+  ]);
+
+  const unknown = defaultInput(rules);
+  unknown.clubExperience = { 'no-such-club': 10 };
+  assert.deepEqual(validateInput(unknown, rules), [
+    'clubExperience 引用了未知社团 no-such-club',
+  ]);
+
+  const legacy = defaultInput(rules);
+  delete legacy.clubExperience;
+  assert.deepEqual(validateInput(legacy, rules), []);
+  assert.deepEqual(legacy.clubExperience, {}, '缺字段的老输入当作哪个社团都没攒过');
 });
 
 test('周锚点必须是周日', () => {

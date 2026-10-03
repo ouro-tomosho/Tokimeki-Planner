@@ -5,7 +5,7 @@
 // 不可用的社团指令不会被结算。指令还没有被"求解"——没有指定时就是待定。
 
 import { buildCalendar } from './calendar.js';
-import { clubBlockReason, createClubLookup } from './clubs.js';
+import { clubBlockReason, createClubLookup, seededClubExperience } from './clubs.js';
 import { evaluateGoals } from './constraints.js';
 import { validateInput } from './input.js';
 import { validateRules } from './rules.js';
@@ -35,9 +35,10 @@ export function createPlanner(rules) {
     const calendar = buildCalendar(rules, input, assignments);
     const clubAt = createClubLookup(input);
 
+    // 起点社团已经攒下的经验由输入直接给出（合并起点与已玩到之后没有历史可重放）。
     let state = {
       attributes: toScaled(input.attributes),
-      clubExperience: Object.fromEntries(rules.clubs.map((club) => [club.id, 0])),
+      clubExperience: seededClubExperience(rules, input, scale),
     };
 
     const days = calendar.days.map((day) => {
@@ -63,7 +64,7 @@ export function createPlanner(rules) {
     return {
       ok: true,
       status: 'planned',
-      startDate: input.startDate,
+      playedUpTo: input.playedUpTo,
       endDate: rules.timeline.end,
       lastSettlement: rules.timeline.lastSettlement,
       days,

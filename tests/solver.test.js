@@ -16,9 +16,21 @@ const rules = loadRules();
 const plan = createPlanner(rules);
 const solve = createSolver(rules);
 
-/** 一套确实有解的输入：加入科学社，沿用数据文件里的默认目标。 */
+/** 只改指定属性的结局目标阈值；其余沿用默认。 */
+function withEndingGoals(input, values) {
+  input.endingGoals = input.endingGoals.map((goal) =>
+    goal.attribute in values ? { ...goal, value: values[goal.attribute] } : goal,
+  );
+  return input;
+}
+
+/**
+ * 一套确实有解的输入：加入科学社，并把两条结局目标放到新系数下确定可达的位置。
+ * 默认目标在换表后差一点点（终点人缘 118.5 < 120、容姿 95.9 < 100），而默认目标不重定，
+ * 所以夹具自己给一组可达的目标——这不是放宽被测行为，是把"有解"这个前提落实。
+ */
 function feasibleInput() {
-  return clubInput(rules);
+  return withEndingGoals(clubInput(rules), { popularity: 119, appearance: 98 });
 }
 
 function solveAndPlan(input) {
@@ -143,12 +155,11 @@ test('求解器绝不自行选择或切换社团', () => {
 });
 
 test('贪心没排好时，终局修补能把收尾的硬约束补上', () => {
-  // Spec 轴审查给的反例：把结局「容姿 ≥ 100」放松到 55（纯放松），
-  // 滚动时域贪心会差一点点，修补阶段从终点往回扫应当收平。
-  const input = defaultInput(rules);
-  input.initialClub = 'science-club';
-  input.endingGoals = input.endingGoals.map((goal) =>
-    goal.attribute === 'appearance' ? { ...goal, value: 55 } : goal,
+  // 这组阈值是**量出来**的：把修补关掉时贪心停在容姿 88.75（比 90 差 1.25），
+  // 修补阶段从终点往回扫能收平。阈值再松就没有紧张感了（见规格 D1-6：默认目标不重定）。
+  const input = withEndingGoals(
+    Object.assign(defaultInput(rules), { initialClub: 'science-club' }),
+    { popularity: 110, appearance: 90 },
   );
 
   const { result } = solveAndPlan(input);

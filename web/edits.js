@@ -5,16 +5,23 @@
 //
 // 「平日的指令就是周指令」这条领域规则在这里落地：给平日指定指令＝给它的周锚点写周指令。
 
-import { weekStartOf, weekdayOf } from '../src/dates.js';
+import { canTakeSnapshot, rollForward } from '../src/frontier.js';
+import { clampToLimits } from '../src/input.js';
+import { isDate, weekStartOf, weekdayOf } from '../src/dates.js';
 import {
   ATTRIBUTES,
   CHOICE_EMPTY,
   CHOICE_NO_CLUB,
+  CLUB_EXPERIENCE,
+  RULES,
   TIMELINE,
   UNSET,
   clampDeadline,
+  clearResult,
   defaultGoal,
   flashWeek,
+  focusDate,
+  hooks,
   inTimeline,
   isRestOn,
   markDirty,
@@ -110,25 +117,61 @@ export function setCommands(dates, choice) {
   for (const weekStart of weeks) flashWeek(weekStart);
 }
 
-/** 「已玩到」：历史是前缀，取到这一天（含）。 */
+/**
+ * 「已玩到」：时间轴的起点。它既是"玩到哪了"，也是规划区间从这里开始——
+ * 起点与已玩到已经合并成同一个日期（见 ADR-0004），所以只此一处入口。
+ *
+ * 往前推且有求解结果时，把那一天的**结算后状态**接过来（属性 / 起始社团 / 各社团经验），
+ * 旧排程随之作废。没有结果、或者往回退时，只能挪日期、状态保持原样：
+ * 历史概念已经作废，往回退没有东西可以重放，"那一天的状态"无从谈起，所以如实说清楚。
+ */
 export function setPlayedUpTo(date) {
-  const clamped = date < state.input.startDate ? state.input.startDate : date;
-  const next = clamped > TIMELINE.lastSettlement ? TIMELINE.lastSettlement : clamped;
+  // 清空日期框会送出空串：那不是一次移动，忽略即可（否则会被当成"早于时间轴起点"）。
+  if (!isDate(date)) return;
+
+  const lower = date < TIMELINE.start ? TIMELINE.start : date;
+  const next = lower > TIMELINE.lastSettlement ? TIMELINE.lastSettlement : lower;
   if (state.input.playedUpTo === next) return;
-  state.input.playedUpTo = next;
-  markDirty();
+
+  const movedBack = next < state.input.playedUpTo;
+  const takeSnapshot = canTakeSnapshot(state.input, state.result, next);
+
+  if (takeSnapshot) {
+    state.input = rollForward(RULES, state.input, state.result, next);
+    clearResult();
+  } else {
+    state.input.playedUpTo = next;
+    // 回退之后旧排程的起点在新起点之后，留着就对不上了。
+    if (movedBack && state.result) clearResult();
+  }
+
+  // 起点变了，视图与选区都跟到那一天——否则日历会停在已经没有格子的旧位置。
+  focusDate(next);
+  markDirty(takeSnapshot && !movedBack ? 0 : 1);
+
+  hooks.notice(
+    takeSnapshot
+      ? `起点已前移到 ${next}：当前属性、社团与社团经验取自那一天的结算结果，点「计算」重排。`
+      : movedBack
+        ? `起点已回退到 ${next}：没有历史可以重放，当前属性、社团与社团经验保持原样，请按当时的实际状态核对。`
+        : `还没有计算结果：只把起点移到 ${next}，当前属性、社团与社团经验保持原样。`,
+  );
 }
 
 // ---------------------------------------------------------------- 左栏输入
 
-export function setStartDate(date) {
-  state.input.startDate = date;
-  if (state.input.playedUpTo < date) state.input.playedUpTo = date;
+export function setAttributeValue(attributeId, value) {
+  const attribute = ATTRIBUTES.find((entry) => entry.id === attributeId);
+  state.input.attributes[attributeId] = clampToLimits(value, attribute);
   markDirty();
 }
 
-export function setAttributeValue(attributeId, value) {
-  state.input.attributes[attributeId] = value;
+/** 某个社团已经攒下的经验——每个社团各自一份，是当前状态的一部分。 */
+export function setClubExperience(clubId, value) {
+  state.input.clubExperience = {
+    ...state.input.clubExperience,
+    [clubId]: clampToLimits(value, CLUB_EXPERIENCE),
+  };
   markDirty();
 }
 
@@ -139,13 +182,22 @@ export function setInitialClub(clubId) {
 
 // ---------------------------------------------------------------- 目标
 
+/** 阈值只认整数（见 validateInput），而 `type=number` 允许手输小数——落库前先取整。 */
+function withIntegerThreshold(goal) {
+  if (!Number.isFinite(goal?.value)) return goal;
+  return { ...goal, value: Math.round(goal.value) };
+}
+
 export function addGlobalConstraint(goal) {
-  state.input.globalConstraints.push(goal ?? defaultGoal());
+  state.input.globalConstraints.push(withIntegerThreshold(goal ?? defaultGoal()));
   markDirty();
 }
 
 export function updateGlobalConstraint(index, patch) {
-  state.input.globalConstraints[index] = { ...state.input.globalConstraints[index], ...patch };
+  state.input.globalConstraints[index] = withIntegerThreshold({
+    ...state.input.globalConstraints[index],
+    ...patch,
+  });
   markDirty();
 }
 
@@ -155,12 +207,15 @@ export function removeGlobalConstraint(index) {
 }
 
 export function addEndingGoal(goal) {
-  state.input.endingGoals.push(goal ?? defaultGoal());
+  state.input.endingGoals.push(withIntegerThreshold(goal ?? defaultGoal()));
   markDirty();
 }
 
 export function updateEndingGoal(index, patch) {
-  state.input.endingGoals[index] = { ...state.input.endingGoals[index], ...patch };
+  state.input.endingGoals[index] = withIntegerThreshold({
+    ...state.input.endingGoals[index],
+    ...patch,
+  });
   markDirty();
 }
 
@@ -170,12 +225,12 @@ export function removeEndingGoal(index) {
 }
 
 export function addMiniGoal(goal) {
-  state.input.miniGoals.push(goal);
+  state.input.miniGoals.push(withIntegerThreshold(goal));
   markDirty();
 }
 
 export function updateMiniGoal(index, goal) {
-  state.input.miniGoals[index] = goal;
+  state.input.miniGoals[index] = withIntegerThreshold(goal);
   markDirty();
 }
 

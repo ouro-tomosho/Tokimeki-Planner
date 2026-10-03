@@ -62,16 +62,17 @@ test('起点为 1995-04-04 时，该日留在表里但不结算', () => {
   assert.equal(dayAt(result, '1995-04-05').isSettled, true);
 });
 
-test('起点不是游戏开局日时，起点当天照常结算', () => {
+test('起点当天永不结算：它是状态快照，不是待决的一天', () => {
   const result = planOf((input) => {
-    input.startDate = '1998-02-20';
+    input.playedUpTo = '1998-02-20';
   });
-  assert.equal(dayAt(result, '1998-02-20').isSettled, true);
+  assert.equal(dayAt(result, '1998-02-20').isSettled, false);
+  assert.equal(dayAt(result, '1998-02-21').isSettled, true);
 });
 
 test('每一天都带有星期与所属自然周的周锚点', () => {
   const result = planOf((input) => {
-    input.startDate = '1998-02-20';
+    input.playedUpTo = '1998-02-20';
   });
   for (const day of result.days) {
     assert.match(day.weekdayName, /^周[日一二三四五六]$/, day.date);
@@ -81,7 +82,7 @@ test('每一天都带有星期与所属自然周的周锚点', () => {
 
 test('周日恒为休息日，且它就是所在自然周的第一天', () => {
   const result = planOf((input) => {
-    input.startDate = '1996-01-01';
+    input.playedUpTo = '1996-01-01';
   });
   const sundays = result.days.filter((d) => d.weekday === 0);
   assert.ok(sundays.length > 100, '时间轴里应当有很多个周日');
@@ -93,7 +94,7 @@ test('周日恒为休息日，且它就是所在自然周的第一天', () => {
 
 test('首周不完整时，只包含从起点到该周周六的实际天数', () => {
   const result = planOf((input) => {
-    input.startDate = '1998-02-20'; // 周五
+    input.playedUpTo = '1998-02-20'; // 周五
   });
   const firstWeek = result.weeks[0];
   assert.equal(firstWeek.start, '1998-02-15'); // 周日，落在起点之前
@@ -103,7 +104,7 @@ test('首周不完整时，只包含从起点到该周周六的实际天数', ()
 
 test('起始日是周日时，首周是完整的一周', () => {
   const result = planOf((input) => {
-    input.startDate = '1998-02-22';
+    input.playedUpTo = '1998-02-22';
   });
   assert.deepEqual(result.weeks[0].days, [
     '1998-02-22',
@@ -118,7 +119,7 @@ test('起始日是周日时，首周是完整的一周', () => {
 
 test('标记某一天为休息日，只有那一天改变', () => {
   const result = planOf((input) => {
-    input.startDate = '1998-02-20';
+    input.playedUpTo = '1998-02-20';
     input.restDays = ['1998-02-24'];
   });
 
@@ -129,7 +130,7 @@ test('标记某一天为休息日，只有那一天改变', () => {
 
 test('跳过某一周，只影响该周的平日，周日不受影响', () => {
   const result = planOf((input) => {
-    input.startDate = '1998-02-20';
+    input.playedUpTo = '1998-02-20';
     input.weekCommands = { '1998-02-15': null };
   });
 
@@ -146,7 +147,7 @@ test('跳过某一周，只影响该周的平日，周日不受影响', () => {
 
 test('跳过某一天，不影响同一周的其它天', () => {
   const result = planOf((input) => {
-    input.startDate = '1998-02-20';
+    input.playedUpTo = '1998-02-20';
     input.skippedDays = ['1998-02-24'];
   });
 
@@ -160,7 +161,7 @@ test('跳过某一天，不影响同一周的其它天', () => {
 
 test('把某个休息日的日指令显式置空，该日空过', () => {
   const result = planOf((input) => {
-    input.startDate = '1998-02-20';
+    input.playedUpTo = '1998-02-20';
     input.restDays = ['1998-02-24'];
     input.dayCommands = { '1998-02-24': null };
   });
@@ -173,12 +174,10 @@ test('把某个休息日的日指令显式置空，该日空过', () => {
 
 test('严格按验收标准：周日日指令 → 周日结算 → 本周周指令 → 各平日结算', () => {
   const result = planOf((input) => {
-    input.startDate = '1998-02-22'; // 周日起步，首周完整
+    input.playedUpTo = '1998-02-22'; // 周日起步，首周完整
   });
 
   assert.deepEqual(sequenceOf(result), [
-    '1998-02-22:day-command',
-    '1998-02-22:settle',
     '1998-02-22:week-command',
     '1998-02-23:settle',
     '1998-02-24:settle',
@@ -191,12 +190,11 @@ test('严格按验收标准：周日日指令 → 周日结算 → 本周周指�
 
 test('首周没有周日时，周指令决策落在首周第一次结算之前', () => {
   const result = planOf((input) => {
-    input.startDate = '1998-02-20'; // 周五，首周没有周日落在时间轴内
+    input.playedUpTo = '1998-02-20'; // 周五：它自己是状态快照，首周没有周日落在时间轴内
   });
 
   assert.deepEqual(sequenceOf(result), [
     '1998-02-20:week-command',
-    '1998-02-20:settle',
     '1998-02-21:settle',
     '1998-02-22:day-command',
     '1998-02-22:settle',
@@ -212,13 +210,11 @@ test('首周没有周日时，周指令决策落在首周第一次结算之前',
 
 test('被标记为休息日的平日，其日指令决策出现在该日结算之前', () => {
   const result = planOf((input) => {
-    input.startDate = '1998-02-22';
+    input.playedUpTo = '1998-02-22';
     input.restDays = ['1998-02-25'];
   });
 
   assert.deepEqual(sequenceOf(result), [
-    '1998-02-22:day-command',
-    '1998-02-22:settle',
     '1998-02-22:week-command',
     '1998-02-23:settle',
     '1998-02-24:settle',
@@ -232,7 +228,7 @@ test('被标记为休息日的平日，其日指令决策出现在该日结算�
 
 test('空过的日子不产生任何事件', () => {
   const result = planOf((input) => {
-    input.startDate = '1998-02-22';
+    input.playedUpTo = '1998-02-22';
     input.skippedDays = ['1998-02-24'];
   });
 
@@ -242,7 +238,7 @@ test('空过的日子不产生任何事件', () => {
 
 test('终点所在的最后一周期 1998-03-01 是周日，当天不结算也不产生事件', () => {
   const result = planOf((input) => {
-    input.startDate = '1998-02-20';
+    input.playedUpTo = '1998-02-20';
   });
   assert.equal(result.weeks.at(-1).start, '1998-03-01');
   assert.deepEqual(
@@ -253,11 +249,11 @@ test('终点所在的最后一周期 1998-03-01 是周日，当天不结算也�
 
 test('汇总数字与表一致（短时间轴）', () => {
   const result = planOf((input) => {
-    input.startDate = '1998-02-20';
+    input.playedUpTo = '1998-02-20';
   });
   assert.deepEqual(result.summary, {
     totalDays: 10,
-    settledDays: 9,
+    settledDays: 8,
     emptyDays: 0,
     restDays: 2,
     weeks: 3,
@@ -275,32 +271,33 @@ test('默认规划覆盖整条时间轴：首尾都在表里，共 1063 天', ()
 
 test('非法输入不会让 plan 抛错，而是回报问题列表', () => {
   const input = defaultInput(rules);
-  input.startDate = '1999-01-01'; // 超出时间轴
+  input.playedUpTo = '1999-01-01'; // 超出时间轴
   const result = plan(input);
 
   assert.equal(result.ok, false);
   assert.equal(result.status, 'invalid-input');
-  assert.ok(result.problems.some((p) => p.includes('startDate')));
+  assert.ok(result.problems.some((p) => p.includes('playedUpTo')));
 });
 
 test('全局默认指令能铺满整条时间轴，逐日属性按期望值演变', () => {
   const result = planOf((input) => {
-    input.startDate = '1998-02-22';
+    input.playedUpTo = '1998-02-22';
     input.attributes.stress = 50;
     fillWeeks(input, rules, 'cmd-rest');
     fillRestDays(input, rules, 'cmd-rest');
   });
 
-  // 02-22 是周日（休息日）：休息指令的体力 +3.1×4、压力 -2.9×4
+  // 02-22 是起点（＝已玩到）：状态快照，不结算，属性就是起始属性
   const sunday = dayAt(result, '1998-02-22');
   assert.equal(sunday.commandId, 'cmd-rest');
-  assert.ok(Math.abs(sunday.attributes.stamina - 112.4) < 1e-5, `${sunday.attributes.stamina}`);
-  assert.ok(Math.abs(sunday.attributes.stress - 38.4) < 1e-5, `${sunday.attributes.stress}`);
+  assert.equal(sunday.isSettled, false);
+  assert.equal(sunday.attributes.stamina, 100);
+  assert.equal(sunday.attributes.stress, 50);
 
-  // 02-23 是平日：体力 +3.1、压力 -2.9
+  // 02-23 是平日：休息指令的体力 +3.76、压力 -3.6
   const monday = dayAt(result, '1998-02-23');
-  assert.ok(Math.abs(monday.attributes.stamina - 115.5) < 1e-5, `${monday.attributes.stamina}`);
-  assert.ok(Math.abs(monday.attributes.stress - 35.5) < 1e-5, `${monday.attributes.stress}`);
+  assert.ok(Math.abs(monday.attributes.stamina - 103.76) < 1e-5, `${monday.attributes.stamina}`);
+  assert.ok(Math.abs(monday.attributes.stress - 46.4) < 1e-5, `${monday.attributes.stress}`);
 
   // 终点当天不结算，属性停在前一天
   assert.deepEqual(dayAt(result, '1998-03-01').attributes, dayAt(result, '1998-02-28').attributes);
@@ -308,7 +305,7 @@ test('全局默认指令能铺满整条时间轴，逐日属性按期望值演�
 
 test('空过日不结算，属性原样带入下一天', () => {
   const result = planOf((input) => {
-    input.startDate = '1998-02-22';
+    input.playedUpTo = '1998-02-22';
     fillWeeks(input, rules, 'cmd-rest');
     input.skippedDays = ['1998-02-24'];
   });
@@ -322,21 +319,21 @@ test('空过日不结算，属性原样带入下一天', () => {
 
 test('显式指定的周指令优先于全局默认', () => {
   const result = planOf((input) => {
-    input.startDate = '1998-02-22';
+    input.playedUpTo = '1998-02-22';
     fillWeeks(input, rules, 'cmd-rest');
     input.weekCommands['1998-02-22'] = 'cmd-exercise';
   });
 
   const monday = dayAt(result, '1998-02-23');
   assert.equal(monday.commandId, 'cmd-exercise');
-  // 运动的运动 +3.3（成功）→ 期望 0.63×3.3 + 0.37×1.65 = 2.6895
-  assert.ok(Math.abs(monday.attributes.sports - 42.6895) < 1e-5, `${monday.attributes.sports}`);
+  // 运动的运动 +4.41（成功）→ 期望 0.63×4.41 + 0.37×2.205 = 3.59415
+  assert.ok(Math.abs(monday.attributes.sports - 43.59415) < 1e-5, `${monday.attributes.sports}`);
 });
 
 test('同一输入两次规划，逐日属性完全一致', () => {
   const build = () => {
     const input = defaultInput(rules);
-    input.startDate = '1998-02-22';
+    input.playedUpTo = '1998-02-22';
     fillWeeks(input, rules, 'cmd-study-literature');
     return plan(input);
   };
@@ -348,7 +345,7 @@ test('结果表的逐日属性与逐次调用 settleDay 完全一致（两个接
   const scale = rules.fixedPointScale;
 
   const input = defaultInput(rules);
-  input.startDate = '1998-02-20';
+  input.playedUpTo = '1998-02-20';
   input.attributes.stress = 50;
   fillWeeks(input, rules, 'cmd-study-literature');
   fillRestDays(input, rules, 'cmd-rest');

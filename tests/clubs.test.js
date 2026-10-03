@@ -28,7 +28,7 @@ function dayAt(result, date) {
 
 test('社团切换自该日起生效：切换之前不可用，当天起可用', () => {
   const result = planOf((input) => {
-    input.startDate = '1995-04-09';
+    input.playedUpTo = '1995-04-09';
     input.initialClub = 'literature-club';
     input.clubChanges = [{ date: '1995-04-16', clubId: 'science-club' }];
     fillWeeks(input, rules, 'cmd-club-science');
@@ -43,7 +43,7 @@ test('社团切换自该日起生效：切换之前不可用，当天起可用',
 test('起点之前没有社团、之后加入：切换记录的顺序不影响结果', () => {
   const build = (changes) =>
     planOf((input) => {
-      input.startDate = '1995-04-09';
+      input.playedUpTo = '1995-04-09';
       input.initialClub = null;
       input.clubChanges = changes;
       fillWeeks(input, rules, 'cmd-club-art');
@@ -110,8 +110,8 @@ test('选定社团后，该社的社团指令照常结算', () => {
 
   const day = dayAt(result, '1995-04-10');
   assert.equal(day.commandBlocked, null);
-  // 科学社 平日：理科成功 +0.9、失败 +0.45 → 期望 0.63×0.9 + 0.37×0.45 = 0.7335
-  assert.ok(Math.abs(day.attributes.science - 40.7335) < 1e-5, `${day.attributes.science}`);
+  // 科学社 平日：理科成功 +1.05、失败 +0.525 → 期望 0.63×1.05 + 0.37×0.525 = 0.85575
+  assert.ok(Math.abs(day.attributes.science - 40.85575) < 1e-5, `${day.attributes.science}`);
 });
 
 test('日常指令不受社团限制', () => {
@@ -127,7 +127,7 @@ test('日常指令不受社团限制', () => {
 
 test('社团切换自该周日起生效，并能影响该周日的日指令', () => {
   const result = planOf((input) => {
-    input.startDate = '1995-04-09';
+    input.playedUpTo = '1995-04-09';
     input.initialClub = null;
     input.clubChanges = [{ date: '1995-04-16', clubId: 'science-club' }];
     input.dayCommands = {
@@ -147,7 +147,7 @@ test('社团切换自该周日起生效，并能影响该周日的日指令', ()
 
 test('社团经验各自独立；切换后旧社团保留、新社团从自己的值继续', () => {
   const result = planOf((input) => {
-    input.startDate = '1995-04-09';
+    input.playedUpTo = '1995-04-09';
     input.initialClub = 'science-club';
     fillWeeks(input, rules, 'cmd-club-science');
     input.clubChanges = [{ date: '1995-04-23', clubId: 'baseball-club' }];
@@ -161,7 +161,7 @@ test('社团经验各自独立；切换后旧社团保留、新社团从自己�
 
 test('社团指令不可用时，该日不结算，属性原样带入下一天', () => {
   const result = planOf((input) => {
-    input.startDate = '1995-04-09';
+    input.playedUpTo = '1995-04-09';
     input.initialClub = null;
     fillWeeks(input, rules, 'cmd-club-science');
   });

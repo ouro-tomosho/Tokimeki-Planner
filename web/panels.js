@@ -1,14 +1,16 @@
-// 达标清单、不可达诊断、右键菜单、小目标弹窗与目标编辑器。
+// 达标清单、右键菜单、小目标弹窗与目标编辑器。
 //
 // 「编辑」与「查看状态」在这里合到一处：每一行既是"达没达到"，也是改它的入口。
 
 import { weekdayOf, weekStartOf } from '../src/dates.js';
+import { goalDisplayOrder } from '../src/goals.js';
 import {
   $,
   ATTRIBUTES,
   CHOICE_EMPTY,
   CHOICE_NO_CLUB,
   CLUBS,
+  RULES,
   TIMELINE,
   UNSET,
   attributeName,
@@ -141,17 +143,15 @@ function columnsRow() {
 }
 
 /**
- * 「未达标的条目排在前」（规格 R14）。排序是稳定的：同一档内保持输入顺序，
- * 因为行的编辑/删除动作靠的是**输入数组里的下标**，不是显示位置。
+ * 达标清单的行序（见 `goalDisplayOrder`）：结局目标与全局约束按属性次序，
+ * 小目标按截止日期。排序**只影响显示**——行的编辑/删除靠输入数组下标。
  */
-function orderedRows(goals, evaluated) {
-  const rank = (entry) => {
-    if (!entry) return 1;
-    return entry.state === 'met' ? 2 : 0;
-  };
-  return goals
-    .map((goal, index) => ({ goal, index, ev: evaluated[index] ?? null }))
-    .sort((a, b) => rank(a.ev) - rank(b.ev) || a.index - b.index);
+function orderedRows(goals, evaluated, kind) {
+  return goalDisplayOrder(RULES, goals, kind).map((index) => ({
+    goal: goals[index],
+    index,
+    ev: evaluated[index] ?? null,
+  }));
 }
 
 function group() {
@@ -196,7 +196,7 @@ export function renderGoals() {
     ),
   );
   if (state.input.endingGoals.length > 0) ending.append(columnsRow());
-  for (const { goal, index, ev } of orderedRows(state.input.endingGoals, endingEval)) {
+  for (const { goal, index, ev } of orderedRows(state.input.endingGoals, endingEval, 'attribute')) {
     ending.append(
       goalRow({
         name: attributeName(goal.attribute),
@@ -225,7 +225,7 @@ export function renderGoals() {
     ),
   );
   if (state.input.miniGoals.length > 0) mini.append(columnsRow());
-  for (const { goal, index, ev } of orderedRows(state.input.miniGoals, miniEval)) {
+  for (const { goal, index, ev } of orderedRows(state.input.miniGoals, miniEval, 'deadline')) {
     mini.append(
       goalRow({
         name: `${goal.deadline} ${miniGoalSummary(goal)}`,
@@ -266,7 +266,7 @@ export function renderGoals() {
     ),
   );
   if (state.input.globalConstraints.length > 0) global.append(columnsRow());
-  for (const { goal, index, ev } of orderedRows(state.input.globalConstraints, globalEval)) {
+  for (const { goal, index, ev } of orderedRows(state.input.globalConstraints, globalEval, 'attribute')) {
     let actual = '—';
     if (ev) {
       if (ev.state === 'met') actual = ev.metOn ? `${ev.metOn} 达成` : '成立';
@@ -288,65 +288,6 @@ export function renderGoals() {
     );
   }
   host.append(global);
-}
-
-// ---------------------------------------------------------------- 诊断
-
-export function renderDiagnosis() {
-  const host = $('diagnosis');
-  host.textContent = '';
-  host.classList.toggle('stale', isStale());
-
-  const diagnosis = state.diagnosis;
-  if (!diagnosis) return;
-
-  const head = document.createElement('div');
-  head.className = 'goals-head';
-  const title = document.createElement('span');
-  title.textContent = '不可达诊断（三项并列）';
-  head.append(title);
-  host.append(head);
-
-  const cards = [];
-  if (diagnosis.miniGoalsBlocking) {
-    const cancelled = diagnosis.mustCancel ?? [];
-    const last = cancelled.length > 0 ? cancelled[cancelled.length - 1] : null;
-    cards.push({
-      title: '小目标 是它在挡路',
-      text: last
-        ? `由近至远取消 ${cancelled.length} 条（到「${last.deadline} ${
-            last.attributes.map((id) => attributeName(id)).join('+')
-          } ${opText(last.op)} ${last.value}」为止）即可达标。`
-        : '取消全部小目标即可达标。',
-    });
-  } else {
-    cards.push({ title: '小目标 不是（唯一的）障碍', text: '只取消小目标不足以达标。' });
-  }
-
-  cards.push({
-    title: '结局 vs 全局',
-    text: diagnosis.endingAndGlobalConflict
-      ? '两者彼此冲突：必须连全局约束也拿掉，结局目标才可达。'
-      : '两者彼此不冲突。',
-  });
-
-  cards.push({
-    title: diagnosis.endingGoalsUnreachable ? '结局目标本身不可达' : '小目标之外',
-    text: diagnosis.endingGoalsUnreachable
-      ? '把小目标全部取消后仍不可达——问题出在结局目标本身。'
-      : '把小目标全部取消即可达标。',
-  });
-
-  for (const card of cards) {
-    const node = document.createElement('div');
-    node.className = 'diag-card';
-    const heading = document.createElement('b');
-    heading.textContent = card.title;
-    const text = document.createElement('p');
-    text.textContent = card.text;
-    node.append(heading, text);
-    host.append(node);
-  }
 }
 
 // ---------------------------------------------------------------- 右键菜单
@@ -428,7 +369,7 @@ function openMenu(clientX, clientY, date) {
   host.append(separator());
   host.append(
     menuItem(`设为已玩到（${state.selection.to}）`, () => setPlayedUpTo(state.selection.to), {
-      title: '历史是前缀，取选区的最后一天',
+      title: '它同时是时间轴的起点；取选区的最后一天',
     }),
   );
 

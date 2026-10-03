@@ -18,6 +18,9 @@ export const $ = (id) => document.getElementById(id);
 
 export const TIMELINE = rules.timeline;
 
+/** 规则文件本身：需要用到「属性次序」这类原始顺序的地方（例如达标清单的行序）。 */
+export const RULES = rules;
+
 export const ATTRIBUTES = rules.attributes.map((attribute) => ({
   id: attribute.id,
   name: attribute.name,
@@ -30,11 +33,20 @@ export const ATTRIBUTES = rules.attributes.map((attribute) => ({
 export const CLUB_EXPERIENCE = {
   id: rules.clubExperience.id,
   name: rules.clubExperience.name,
+  min: rules.clubExperience.min,
+  max: rules.clubExperience.max,
 };
 
-/** 详情条里的 10 项数值：9 项属性 + 当前社团的社团经验。 */
+/** 详情条与左栏共用的 10 项数值：9 项属性 + 当前社团的社团经验。两者形状一致，
+ *  都带 `min` / `max`，所以渲染两侧都不需要按 id 分支（社团经验没有 `direction`，即正向）。 */
 export const VALUE_FIELDS = [
-  ...ATTRIBUTES.map((attribute) => ({ id: attribute.id, name: attribute.name })),
+  ...ATTRIBUTES.map((attribute) => ({
+    id: attribute.id,
+    name: attribute.name,
+    direction: attribute.direction,
+    min: attribute.min,
+    max: attribute.max,
+  })),
   CLUB_EXPERIENCE,
 ];
 
@@ -68,8 +80,6 @@ export const state = {
   assignments: null,
   /** `plan()` 的结果；`null` 表示还没算过。 */
   result: null,
-  /** 求解器给的不可达诊断（排不出达标日程时才存在）。 */
-  diagnosis: null,
   /** 尚未计算的改动数。 */
   pending: 0,
   computing: false,
@@ -85,6 +95,10 @@ export const state = {
 /** app.js 注入的渲染入口；界面模块只管改状态，不互相直接调用渲染。 */
 export const hooks = {
   render() {},
+  /** 输入变了之后要落盘；由 app.js 注入（见 web/session.js）。 */
+  persist() {},
+  /** 给使用者的一句提示（起点已前移、求解失败等）；由 app.js 注入。`null` 表示清空。 */
+  notice() {},
 };
 
 export function commandName(id) {
@@ -195,9 +209,32 @@ export function resolveDayCommand(date) {
 export function setResult(result) {
   state.result = result;
   state.dayByDate = new Map(result.days.map((day) => [day.date, day]));
-  state.diagnosis = null;
   state.computedAt = new Date();
   state.pending = 0;
+}
+
+/**
+ * 排程与结果整个作废，回到「尚未计算」。
+ * 三处会用到：导入换了整套输入、起点前移（旧排程只覆盖旧区间）、以及将来任何"前提换了"的动作。
+ */
+export function clearResult() {
+  state.assignments = null;
+  state.result = null;
+  state.dayByDate = new Map();
+  state.computedAt = null;
+  state.pending = 0;
+}
+
+/** 把视图与选区都挪到某一天：起点前移、导入换了输入、首次挂载，日历都该跟过去。 */
+export function focusDate(date) {
+  state.selection = { from: date, to: date };
+  state.viewMonth = monthOf(date);
+}
+
+/** 起点社团已经攒下的经验；没有加入社团时是 0。 */
+export function initialClubExperience(input = state.input) {
+  const club = input.initialClub;
+  return club ? (input.clubExperience[club] ?? 0) : 0;
 }
 
 export function dayOf(date) {
@@ -211,12 +248,15 @@ export function valueOf(date, id) {
   return id === CLUB_EXPERIENCE.id ? day.clubExperience : day.attributes[id];
 }
 
-/** 当日增量：与前一天结算后的值比较；时间轴第一天与起始属性比较。 */
+/** 当日增量：与前一天结算后的值比较；时间轴第一天（＝已玩到）与起始属性比较。 */
 export function deltaOf(date, id) {
   const day = dayOf(date);
   if (!day) return null;
-  if (date === state.input.startDate) {
-    const base = id === CLUB_EXPERIENCE.id ? 0 : state.input.attributes[id];
+  if (date === state.input.playedUpTo) {
+    // 起点当天的基准就是"起点状态"本身（含社团经验的起点值），不是硬编码的 0，
+    // 否则已玩到那天的社团经验增量会把整个起点值当成当天涨的。
+    const base =
+      id === CLUB_EXPERIENCE.id ? initialClubExperience() : state.input.attributes[id];
     const current = id === CLUB_EXPERIENCE.id ? day.clubExperience : day.attributes[id];
     return current - base;
   }
@@ -232,6 +272,8 @@ export function deltaOf(date, id) {
 export function markDirty(count = 1) {
   state.pending += count;
   hooks.render();
+  // 输入变了就落盘：刷新不丢，是本地保存承诺的全部。
+  hooks.persist();
 }
 
 /** 改完周指令后，把本周全部平日亮一下——"这一改连坐六天"要看得见。 */

@@ -46,22 +46,24 @@ export function resolveCommand(input, assignments, slot) {
 }
 
 export function buildCalendar(rules, input, assignments = null) {
-  const { start: timelineStart, end, lastSettlement } = rules.timeline;
+  const { end, lastSettlement } = rules.timeline;
   const restDays = new Set(input.restDays);
   const skippedDaySet = new Set(input.skippedDays);
-  const startDayIsGameOpening = input.startDate === timelineStart;
+  // 时间轴首日就是已玩到，它是**状态快照**：那一天的结算已经发生在游戏里，所以不结算。
+  // 这条原先是"仅当首日等于时间轴起点"的特例，合并起点与已玩到之后成为通则（见 ADR-0004）。
+  const snapshotDay = input.playedUpTo;
 
   const days = [];
-  for (let date = input.startDate; date <= end; date = addDays(date, 1)) {
+  for (let date = input.playedUpTo; date <= end; date = addDays(date, 1)) {
     const weekday = weekdayOf(date);
     const weekStart = weekStartOf(date);
     const isRestDay = weekday === 0 || restDays.has(date);
 
     const skipSource = resolveSkipSource(date, isRestDay, weekStart, input, skippedDaySet);
     const isEmpty = skipSource !== null;
-    const isGameOpening = startDayIsGameOpening && date === input.startDate;
+    const isSnapshot = date === snapshotDay;
     const isTimelineEnd = date === end;
-    const isSettled = !isEmpty && !isGameOpening && !isTimelineEnd;
+    const isSettled = !isEmpty && !isSnapshot && !isTimelineEnd;
 
     // 使用者显式指定（含显式 null = 空过）最优先；其次才是求解器的填空；都没有就留空（待定）。
     // 空过就是「指令留空」（见 GLOSSARY）；界面要显示"本来会执行什么"时走同一个解析，

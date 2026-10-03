@@ -65,7 +65,7 @@ test('起点未满足的全局约束，按「尽快满足」处理，不直接�
 
 test('硬不变量被破坏时，逐日报出违例的日期', () => {
   const result = planOf((input) => {
-    input.startDate = '1998-02-22';
+    input.playedUpTo = '1998-02-22';
     input.globalConstraints = [{ attribute: 'stamina', op: '>=', value: 99 }];
     fillWeeks(input, rules, 'cmd-exercise'); // 每天扣体力
   });
@@ -86,7 +86,7 @@ test('硬不变量被破坏时，逐日报出违例的日期', () => {
 
 test('空过的天不参与全局约束的判定', () => {
   const result = planOf((input) => {
-    input.startDate = '1998-02-22';
+    input.playedUpTo = '1998-02-22';
     input.globalConstraints = [{ attribute: 'stamina', op: '>=', value: 99 }];
     fillWeeks(input, rules, 'cmd-exercise');
     input.skippedDays = ['1998-02-24'];
@@ -106,7 +106,7 @@ test('空过的天不参与全局约束的判定', () => {
 
 test('尽快满足：真正被抬上去时，报出首次达成的日期', () => {
   const result = planOf((input) => {
-    input.startDate = '1998-02-22';
+    input.playedUpTo = '1998-02-22';
     input.globalConstraints = [{ attribute: 'stamina', op: '>=', value: 105 }];
     fillWeeks(input, rules, 'cmd-rest');
   });
@@ -133,7 +133,7 @@ test('小目标：阈值作用于属性集合的求和', () => {
 
 test('小目标达标时报出达成与评估日', () => {
   const result = planOf((input) => {
-    input.startDate = '1998-02-20';
+    input.playedUpTo = '1998-02-20';
     fillWeeks(input, rules, 'cmd-study-literature');
     input.miniGoals = [{ deadline: '1998-02-28', attributes: ['literature'], op: '>=', value: 42 }];
   });
@@ -146,7 +146,7 @@ test('小目标达标时报出达成与评估日', () => {
 
 test('小目标的属性集合可以包含社团经验，指向当前社团的那一份', () => {
   const result = planOf((input) => {
-    input.startDate = '1998-02-20';
+    input.playedUpTo = '1998-02-20';
     input.initialClub = 'science-club';
     fillWeeks(input, rules, 'cmd-club-science');
     input.miniGoals = [
@@ -181,7 +181,7 @@ test('全部硬约束达标时，整体判定为达标', () => {
 
 test('目标函数第一层：硬约束优先于属性总和', () => {
   const clearAll = (input) => {
-    input.startDate = '1998-02-22';
+    input.playedUpTo = '1998-02-22';
     input.globalConstraints = [];
     input.miniGoals = [];
     input.endingGoals = [];
@@ -204,7 +204,7 @@ test('目标函数第一层：硬约束优先于属性总和', () => {
 
 test('目标函数第二层：都达标时，正向等权总和大的更优', () => {
   const prepare = (input) => {
-    input.startDate = '1998-02-22';
+    input.playedUpTo = '1998-02-22';
     input.globalConstraints = [];
     input.miniGoals = [];
     input.endingGoals = [];

@@ -27,7 +27,6 @@
         --cell: #fffdf5;
         --cell-sun: #f0e2c6;
         --cell-off: #e9dec4;
-        --cell-hist: #e2d8c2;
         --raise: inset 1px 1px 0 #fffdf6, inset -1px -1px 0 #cdb896;
         --sink: inset -1px -1px 0 #fffdf6, inset 1px 1px 0 #cdb896;
         --font-ui: system-ui, -apple-system, "Segoe UI", "Noto Sans CJK SC", sans-serif;
@@ -351,9 +350,6 @@
       .legend .k-empty i {
         background: repeating-linear-gradient(135deg, #e2d6ba 0 3px, #c6b795 3px 4px);
       }
-      .legend .k-hist i {
-        background: var(--cell-hist);
-      }
       .legend .k-flag i {
         background: var(--rose);
         border-color: var(--rose-deep);
@@ -464,16 +460,17 @@
       .cell.is-sun {
         background: var(--cell-sun);
       }
+      /* 周日与休息日的日期数字用星期栏「日」的同一个红：一周里哪几天要单独下指令，一眼可见。 */
+      .cell.is-sun .dn,
+      .cell.is-rest .dn {
+        color: var(--rose-deep);
+      }
       .cell.is-rest {
         background: var(--rose-soft);
         border-color: var(--rose-line);
       }
       .cell.is-empty {
         background: repeating-linear-gradient(135deg, #e2d6ba 0 4px, #c6b795 4px 5px);
-      }
-      .cell.is-history {
-        background: var(--cell-hist);
-        color: var(--ink-2);
       }
       .cell.is-ovf {
         background: var(--cell-off);
@@ -767,24 +764,6 @@
       .row-actions .btn {
         padding: 2px 6px;
       }
-      .diagnosis {
-        margin-top: 8px;
-      }
-      .diag-card {
-        border: 1px solid var(--line-2);
-        border-left: 3px solid var(--amber);
-        background: #fffaf5;
-        padding: 6px 9px;
-        font-size: 12px;
-        margin-bottom: 6px;
-      }
-      .diag-card b {
-        color: var(--amber);
-      }
-      .diag-card p {
-        margin: 2px 0 0;
-        color: var(--ink-2);
-      }
       .foot {
         display: flex;
         gap: 8px;
@@ -956,14 +935,11 @@
         </button>
 
         <div class="panel">
-          <h2>起点</h2>
-          <label class="field"
-            ><span>当前日期</span><input id="rail-start-date" type="date"
-          /></label>
+          <h2>已玩到</h2>
           <label class="field"
             ><span>已玩到</span><input id="rail-played-up-to" type="date"
           /></label>
-          <p class="hint">这一日之前的日程算历史；也可在日历上右键设置。</p>
+          <p class="hint">它同时是时间轴的起点：规划从这一天往后排，当天不结算。也可在日历上右键设置。</p>
         </div>
 
         <div class="panel">
@@ -1000,7 +976,6 @@
             <span class="k-rest"><i></i>休息日</span>
             <span class="k-empty"><i></i>空过</span>
             <span class="k-flag"><i></i>小目标截止</span>
-            <span class="k-hist"><i></i>历史</span>
             <span class="k-played"><i></i>已玩到</span>
           </div>
           <div id="calendar" class="calendar"></div>
@@ -1019,7 +994,6 @@
             <span id="stale-note" class="stale-note"></span>
           </div>
           <div id="goals" class="goals"></div>
-          <div id="diagnosis" class="diagnosis"></div>
           <div class="foot">
             <button id="btn-export-foot" class="btn" type="button">导出 JSON</button>
             <label class="btn file-btn"
@@ -1045,7 +1019,7 @@
 
     <script id="worker-source" type="text/plain">
 const __ns = {};
-__ns["data/rules.json"] = {"timeline":{"start":"1995-04-04","end":"1998-03-01","lastSettlement":"1998-02-28"},"clubUnlockDate":"1995-04-09","fixedPointScale":1000000,"restDayBonus":{"daily":4,"club":6,"restCommandNegative":4},"clubExperienceGain":{"weekday":1,"restDay":6},"clubExperience":{"id":"clubExperience","name":"社团经验","min":0,"max":999},"attributes":[{"id":"stamina","name":"体力","direction":"up","min":0,"max":999},{"id":"literature","name":"文科","direction":"up","min":0,"max":999},{"id":"science","name":"理科","direction":"up","min":0,"max":999},{"id":"art","name":"艺术","direction":"up","min":0,"max":999},{"id":"sports","name":"运动","direction":"up","min":0,"max":999},{"id":"popularity","name":"人缘","direction":"up","min":0,"max":999},{"id":"appearance","name":"容姿","direction":"up","min":0,"max":999},{"id":"grit","name":"毅力","direction":"up","min":0,"max":999},{"id":"stress","name":"压力","direction":"down","min":0,"max":999}],"clubs":[{"id":"literature-club","name":"文艺社"},{"id":"drama-club","name":"演剧社"},{"id":"science-club","name":"科学社"},{"id":"computer-club","name":"电脑社"},{"id":"art-club","name":"美术社"},{"id":"brass-band-club","name":"管乐社"},{"id":"baseball-club","name":"棒球社"},{"id":"soccer-club","name":"足球社"},{"id":"tennis-club","name":"网球社"},{"id":"swimming-club","name":"游泳社"},{"id":"basketball-club","name":"篮球社"}],"commands":[{"id":"cmd-study-literature","name":"研读文科","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.9,"science":0.1,"art":0.1,"sports":-0.4,"popularity":0.3,"appearance":-0.3,"grit":-0.1,"stress":0.8}},{"id":"cmd-study-science","name":"研读理科","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.1,"science":0.9,"art":0.1,"sports":-0.8,"popularity":0.1,"appearance":-0.4,"grit":0.3,"stress":0.3}},{"id":"cmd-practice-art","name":"培养艺术气质","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.1,"science":0.1,"art":0.9,"sports":-0.4,"popularity":0.1,"appearance":-0.1,"grit":-0.1,"stress":-0.3}},{"id":"cmd-exercise","name":"运动","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-2.4,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":3.3,"popularity":0.1,"appearance":-0.4,"grit":1.4,"stress":0.1}},{"id":"cmd-chat","name":"和同学闲聊","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.2,"literature":-0.3,"science":-0.3,"art":-0.3,"sports":0.2,"popularity":1.5,"appearance":0.8,"grit":-0.4,"stress":-0.9}},{"id":"cmd-groom","name":"整理仪容","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.6,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":-0.1,"popularity":0.5,"appearance":2.1,"grit":-0.6,"stress":0.1}},{"id":"cmd-rest","name":"休息","kind":"daily","clubId":null,"isRestCommand":true,"successRate":1,"effects":{"stamina":3.1,"literature":0,"science":0,"art":0,"sports":0,"popularity":-0.6,"appearance":-0.8,"grit":-0.1,"stress":-2.9}},{"id":"cmd-club-literature","name":"文艺社","kind":"club","clubId":"literature-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.8,"science":0.3,"art":0.1,"sports":0,"popularity":0.1,"appearance":-0.3,"grit":-0.1,"stress":1.1}},{"id":"cmd-club-drama","name":"演剧社","kind":"club","clubId":"drama-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.9,"literature":0.9,"science":0,"art":0.4,"sports":0.1,"popularity":0.1,"appearance":-0.1,"grit":0.1,"stress":1.1}},{"id":"cmd-club-science","name":"科学社","kind":"club","clubId":"science-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.1,"science":0.9,"art":0.3,"sports":0,"popularity":0.1,"appearance":-0.3,"grit":0.3,"stress":1.4}},{"id":"cmd-club-computer","name":"电脑社","kind":"club","clubId":"computer-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.1,"science":0.7,"art":0.3,"sports":0,"popularity":0.2,"appearance":-0.4,"grit":0.2,"stress":1.8}},{"id":"cmd-club-art","name":"美术社","kind":"club","clubId":"art-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.9,"literature":0.1,"science":0,"art":0.9,"sports":0.1,"popularity":0.1,"appearance":-0.1,"grit":-0.1,"stress":0.9}},{"id":"cmd-club-brass-band","name":"管乐社","kind":"club","clubId":"brass-band-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.9,"literature":0.1,"science":0.1,"art":0.9,"sports":0.2,"popularity":0.1,"appearance":-0.2,"grit":0.1,"stress":0.9}},{"id":"cmd-club-baseball","name":"棒球社","kind":"club","clubId":"baseball-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.9,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":0.9,"popularity":0.1,"appearance":-0.3,"grit":0.3,"stress":0.2}},{"id":"cmd-club-soccer","name":"足球社","kind":"club","clubId":"soccer-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.9,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":0.9,"popularity":0.1,"appearance":-0.2,"grit":0.7,"stress":0.3}},{"id":"cmd-club-tennis","name":"网球社","kind":"club","clubId":"tennis-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.6,"literature":-0.1,"science":-0.1,"art":0,"sports":0.8,"popularity":0.1,"appearance":-0.1,"grit":0.6,"stress":0.5}},{"id":"cmd-club-swimming","name":"游泳社","kind":"club","clubId":"swimming-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.9,"literature":-0.1,"science":-0.1,"art":0,"sports":0.9,"popularity":0,"appearance":-0.1,"grit":0.7,"stress":0.2}},{"id":"cmd-club-basketball","name":"篮球社","kind":"club","clubId":"basketball-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.8,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":0.9,"popularity":-0.1,"appearance":-0.2,"grit":0.6,"stress":0.4}}],"defaultStart":{"stamina":100,"literature":40,"science":40,"art":40,"sports":40,"popularity":32,"appearance":60,"grit":5,"stress":0},"defaultGlobalConstraints":[{"attribute":"stamina","op":">=","value":20},{"attribute":"popularity","op":">=","value":100},{"attribute":"appearance","op":">=","value":35},{"attribute":"stress","op":"<","value":70}],"defaultEndingGoals":[{"attribute":"stamina","op":">=","value":50},{"attribute":"literature","op":">=","value":130},{"attribute":"science","op":">=","value":130},{"attribute":"art","op":">=","value":130},{"attribute":"sports","op":">=","value":130},{"attribute":"popularity","op":">=","value":120},{"attribute":"appearance","op":">=","value":100},{"attribute":"grit","op":">=","value":100},{"attribute":"stress","op":"<","value":50}],"defaultMiniGoals":[{"deadline":"1998-02-23","attributes":["literature","science","art"],"op":">=","value":561},{"deadline":"1998-01-02","attributes":["clubExperience"],"op":">=","value":380}]};
+__ns["data/rules.json"] = {"timeline":{"start":"1995-04-04","end":"1998-03-01","lastSettlement":"1998-02-28"},"clubUnlockDate":"1995-04-09","fixedPointScale":1000000,"restDayBonus":{"daily":4,"club":6,"restCommandNegative":4},"clubExperienceGain":{"weekday":1,"restDay":6},"clubExperience":{"id":"clubExperience","name":"社团经验","min":0,"max":999},"attributes":[{"id":"stamina","name":"体力","direction":"up","min":0,"max":999},{"id":"literature","name":"文科","direction":"up","min":0,"max":999},{"id":"science","name":"理科","direction":"up","min":0,"max":999},{"id":"art","name":"艺术","direction":"up","min":0,"max":999},{"id":"sports","name":"运动","direction":"up","min":0,"max":999},{"id":"popularity","name":"人缘","direction":"up","min":0,"max":999},{"id":"appearance","name":"容姿","direction":"up","min":0,"max":999},{"id":"grit","name":"毅力","direction":"up","min":0,"max":999},{"id":"stress","name":"压力","direction":"down","min":0,"max":999}],"clubs":[{"id":"literature-club","name":"文艺社"},{"id":"drama-club","name":"演剧社"},{"id":"science-club","name":"科学社"},{"id":"computer-club","name":"电脑社"},{"id":"art-club","name":"美术社"},{"id":"brass-band-club","name":"管乐社"},{"id":"baseball-club","name":"棒球社"},{"id":"soccer-club","name":"足球社"},{"id":"tennis-club","name":"网球社"},{"id":"swimming-club","name":"游泳社"},{"id":"basketball-club","name":"篮球社"}],"commands":[{"id":"cmd-study-literature","name":"研读文科","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.81,"literature":1.26,"science":0.04,"art":0.04,"sports":-0.43,"popularity":0.32,"appearance":-0.29,"grit":-0.05,"stress":0.77}},{"id":"cmd-study-science","name":"研读理科","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.81,"literature":0.04,"science":1.26,"art":0.04,"sports":-0.81,"popularity":0.16,"appearance":-0.48,"grit":0.32,"stress":0.34}},{"id":"cmd-practice-art","name":"培养艺术气质","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.81,"literature":0.04,"science":0.04,"art":1.26,"sports":-0.48,"popularity":0.08,"appearance":-0.15,"grit":-0.05,"stress":-0.33}},{"id":"cmd-exercise","name":"运动","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-2.48,"literature":-0.15,"science":-0.15,"art":-0.15,"sports":4.41,"popularity":0.08,"appearance":-0.48,"grit":1.88,"stress":-0.14}},{"id":"cmd-chat","name":"和同学闲聊","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.24,"literature":-0.29,"science":-0.29,"art":-0.29,"sports":0.2,"popularity":1.92,"appearance":0.94,"grit":-0.2,"stress":0.72}},{"id":"cmd-groom","name":"整理仪容","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.67,"literature":-0.15,"science":-0.15,"art":-0.1,"sports":-0.1,"popularity":0.61,"appearance":2.41,"grit":-0.34,"stress":0.01}},{"id":"cmd-rest","name":"休息","kind":"daily","clubId":null,"isRestCommand":true,"successRate":1,"effects":{"stamina":3.76,"literature":0,"science":0,"art":0,"sports":0,"popularity":-0.67,"appearance":-0.81,"grit":-0.05,"stress":-3.6}},{"id":"cmd-club-literature","name":"文艺社","kind":"club","clubId":"literature-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.81,"literature":0.81,"science":0.27,"art":0.13,"sports":0,"popularity":0.06,"appearance":-0.29,"grit":-0.05,"stress":1.1}},{"id":"cmd-club-drama","name":"演剧社","kind":"club","clubId":"drama-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.91,"literature":0.95,"science":0,"art":0.4,"sports":0.13,"popularity":0.06,"appearance":-0.15,"grit":0.06,"stress":1.05}},{"id":"cmd-club-science","name":"科学社","kind":"club","clubId":"science-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.86,"literature":0.06,"science":1.05,"art":0.27,"sports":0,"popularity":0.06,"appearance":-0.29,"grit":0.3,"stress":1.24}},{"id":"cmd-club-computer","name":"电脑社","kind":"club","clubId":"computer-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.86,"literature":0.06,"science":1.02,"art":0.44,"sports":0,"popularity":0.3,"appearance":-0.43,"grit":0.3,"stress":1.48}},{"id":"cmd-club-art","name":"美术社","kind":"club","clubId":"art-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.91,"literature":0.13,"science":0,"art":1.02,"sports":0.06,"popularity":0.06,"appearance":-0.1,"grit":-0.1,"stress":1.01}},{"id":"cmd-club-brass-band","name":"管乐社","kind":"club","clubId":"brass-band-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.91,"literature":0.03,"science":0.03,"art":0.81,"sports":0.17,"popularity":0.13,"appearance":-0.24,"grit":0.06,"stress":0.91}},{"id":"cmd-club-baseball","name":"棒球社","kind":"club","clubId":"baseball-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.96,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":0.88,"popularity":0.06,"appearance":-0.29,"grit":0.78,"stress":-0.04}},{"id":"cmd-club-soccer","name":"足球社","kind":"club","clubId":"soccer-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.96,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":0.95,"popularity":0.13,"appearance":-0.24,"grit":0.71,"stress":0.01}},{"id":"cmd-club-tennis","name":"网球社","kind":"club","clubId":"tennis-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.67,"literature":-0.1,"science":-0.1,"art":0,"sports":0.81,"popularity":0.13,"appearance":-0.1,"grit":0.64,"stress":0.39}},{"id":"cmd-club-swimming","name":"游泳社","kind":"club","clubId":"swimming-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-2.05,"literature":-0.1,"science":-0.1,"art":0,"sports":0.95,"popularity":0,"appearance":-0.15,"grit":0.71,"stress":-0.04}},{"id":"cmd-club-basketball","name":"篮球社","kind":"club","clubId":"basketball-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.91,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":0.88,"popularity":0.06,"appearance":-0.24,"grit":0.68,"stress":0.2}}],"defaultStart":{"stamina":100,"literature":40,"science":40,"art":40,"sports":40,"popularity":32,"appearance":60,"grit":5,"stress":0},"defaultGlobalConstraints":[{"attribute":"stamina","op":">=","value":20},{"attribute":"popularity","op":">=","value":100},{"attribute":"appearance","op":">=","value":35},{"attribute":"stress","op":"<","value":70}],"defaultEndingGoals":[{"attribute":"stamina","op":">=","value":50},{"attribute":"literature","op":">=","value":130},{"attribute":"science","op":">=","value":130},{"attribute":"art","op":">=","value":130},{"attribute":"sports","op":">=","value":130},{"attribute":"popularity","op":">=","value":120},{"attribute":"appearance","op":">=","value":100},{"attribute":"grit","op":">=","value":100},{"attribute":"stress","op":"<","value":50}],"defaultMiniGoals":[{"deadline":"1998-02-23","attributes":["literature","science","art"],"op":">=","value":561},{"deadline":"1998-01-02","attributes":["clubExperience"],"op":">=","value":380}]};
 __ns["src/dates.js"] = (() => {
 // 日期表示：全项目统一用 `YYYY-MM-DD` 字符串，字典序即时间序。
 //
@@ -1133,22 +1107,24 @@ function resolveCommand(input, assignments, slot) {
 }
 
 function buildCalendar(rules, input, assignments = null) {
-  const { start: timelineStart, end, lastSettlement } = rules.timeline;
+  const { end, lastSettlement } = rules.timeline;
   const restDays = new Set(input.restDays);
   const skippedDaySet = new Set(input.skippedDays);
-  const startDayIsGameOpening = input.startDate === timelineStart;
+  // 时间轴首日就是已玩到，它是**状态快照**：那一天的结算已经发生在游戏里，所以不结算。
+  // 这条原先是"仅当首日等于时间轴起点"的特例，合并起点与已玩到之后成为通则（见 ADR-0004）。
+  const snapshotDay = input.playedUpTo;
 
   const days = [];
-  for (let date = input.startDate; date <= end; date = addDays(date, 1)) {
+  for (let date = input.playedUpTo; date <= end; date = addDays(date, 1)) {
     const weekday = weekdayOf(date);
     const weekStart = weekStartOf(date);
     const isRestDay = weekday === 0 || restDays.has(date);
 
     const skipSource = resolveSkipSource(date, isRestDay, weekStart, input, skippedDaySet);
     const isEmpty = skipSource !== null;
-    const isGameOpening = startDayIsGameOpening && date === input.startDate;
+    const isSnapshot = date === snapshotDay;
     const isTimelineEnd = date === end;
-    const isSettled = !isEmpty && !isGameOpening && !isTimelineEnd;
+    const isSettled = !isEmpty && !isSnapshot && !isTimelineEnd;
 
     // 使用者显式指定（含显式 null = 空过）最优先；其次才是求解器的填空；都没有就留空（待定）。
     // 空过就是「指令留空」（见 GLOSSARY）；界面要显示"本来会执行什么"时走同一个解析，
@@ -1268,6 +1244,19 @@ __ns["src/clubs.js"] = (() => {
 // 社团切换只在周日发生、自该周日起生效，所以某一天的社团 = 不晚于该日的最后一次切换结果。
 // 工具从不自行选择或切换社团。
 
+/**
+ * 起点那一刻各社团的经验值，按 `scale` 转成定点整数。
+ * 每个社团各自一份，由输入直接给出（`clubExperience` 是 `{ clubId: 值 }`），缺席的按 0 起算。
+ *
+ * 规划与求解都以它为初始状态，所以只此一处口径。
+ */
+function seededClubExperience(rules, input, scale) {
+  const seeded = input.clubExperience ?? {};
+  return Object.fromEntries(
+    rules.clubs.map((club) => [club.id, (seeded[club.id] ?? 0) * scale]),
+  );
+}
+
 /** @returns {(date: string) => string | null} */
 function createClubLookup(input) {
   const changes = [...input.clubChanges].sort((a, b) =>
@@ -1304,7 +1293,7 @@ function availableCommandIds(rules, club, date) {
     .filter((command) => clubBlockReason(rules, command, club, date) === null)
     .map((command) => command.id);
 }
-return { createClubLookup, clubBlockReason, availableCommandIds };
+return { seededClubExperience, createClubLookup, clubBlockReason, availableCommandIds };
 })();
 __ns["src/constraints.js"] = (() => {
 // 约束判定与目标函数。
@@ -1452,6 +1441,40 @@ function goalProblems(list, label, context) {
   return problems;
 }
 
+/**
+ * 达标清单的**显示顺序**（只影响显示，输入数组原样不动）。
+ *
+ *   'attribute' 结局目标与全局约束：按属性在 `rules.attributes` 里的次序，
+ *               也就是出厂默认目标书写的那套顺序（体力→…→压力）；
+ *   'deadline'  小目标：按截止日期从早到晚。
+ *
+ * 同一键内保持**录入顺序**，因为行的编辑与删除动作靠的是输入数组的下标，
+ * 不是显示位置。返回的是下标序列。
+ */
+function goalDisplayOrder(rules, goals, kind) {
+  // 每个 kind 一个取键函数：口味写在一张表里，校验与取键就不会各写一份、然后悄悄分叉。
+  const keyOf = {
+    attribute: () => {
+      const rank = new Map(rules.attributes.map((attribute, index) => [attribute.id, index]));
+      return (goal) => rank.get(goal.attribute) ?? rules.attributes.length;
+    },
+    deadline: () => (goal) => goal.deadline ?? '',
+  }[kind];
+  if (!keyOf) throw new Error(`未知的行序口径：${kind}`);
+
+  const key = keyOf();
+  return goals
+    .map((goal, index) => ({ goal, index }))
+    .sort((a, b) => {
+      const left = key(a.goal);
+      const right = key(b.goal);
+      if (left < right) return -1;
+      if (left > right) return 1;
+      return a.index - b.index;
+    })
+    .map((entry) => entry.index);
+}
+
 /** 带截止日期、阈值作用于属性集合求和的小目标。 */
 function miniGoalProblems(list, label, context) {
   if (!Array.isArray(list)) return [`${label} 必须是数组`];
@@ -1473,7 +1496,7 @@ function miniGoalProblems(list, label, context) {
   }
   return problems;
 }
-return { goalProblems, miniGoalProblems };
+return { goalProblems, goalDisplayOrder, miniGoalProblems };
 })();
 __ns["src/lookup.js"] = (() => {
 // 领域对象的查询视图。校验在 rules.js，这里只负责按 id 取用。
@@ -1514,16 +1537,20 @@ const { attributeIds } = __ns["src/lookup.js"];
 
 
 
-const CURRENT_VERSION = 1;
+const CURRENT_VERSION = 2;
 
 function defaultInput(rules) {
   return {
     version: CURRENT_VERSION,
-    startDate: rules.timeline.start,
-    // 「已玩到」：这一日之前的算历史。改任何东西都不会动它（见票 07）。
+    // 「已玩到」：使用者已经在游戏里玩到的那一天，同时也是**时间轴的起点**。
+    // 它是状态快照——当天不结算，规划从次日开始（见 ADR-0004）。
     // 默认等于时间轴起点，也就是"还没玩过"。
     playedUpTo: rules.timeline.start,
     attributes: { ...rules.defaultStart },
+    // 起点那一刻各社团已经攒下的经验，`{ clubId: 值 }`；缺席的社团按 0 起算。
+    // 合并起点与已玩到之后，时间轴以内没有历史可供"照旧演一遍"，所以这份状态必须由输入直接承载。
+    // 用映射而不是单个数：社团经验是**每个社团各自一份**，只留当前社团会把别的社团的计数丢掉。
+    clubExperience: {},
     globalConstraints: structuredClone(rules.defaultGlobalConstraints),
     endingGoals: structuredClone(rules.defaultEndingGoals),
     miniGoals: structuredClone(rules.defaultMiniGoals),
@@ -1540,6 +1567,22 @@ function toJson(input) {
   return JSON.stringify(input, null, 2);
 }
 
+/**
+ * 把界面手输的值夹进 `[min, max]` 并取整。
+ *
+ * `type=number` 的 min/max 拦不住键盘，而越界值与小数会让整份输入在下次校验时失败；
+ * 那时调用方只剩"丢掉整份存档"这一条路（见 web/session.js），代价不对称，所以落库前先夹住。
+ */
+function clampToLimits(value, { min, max }) {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+/** 导出的文件名：就用「已玩到」这一天的裸日期，多份文件一眼分得清。 */
+function exportFileName(input) {
+  return `${input.playedUpTo}.json`;
+}
+
 /** 解析并校验；不合法时抛出带原因的错误。 */
 function fromJson(text, rules) {
   let parsed;
@@ -1548,9 +1591,31 @@ function fromJson(text, rules) {
   } catch (error) {
     throw new Error(`不是合法的 JSON：${error.message}`);
   }
-  const problems = validateInput(parsed, rules);
+  const migrated = migrate(parsed);
+  const problems = validateInput(migrated, rules);
   if (problems.length > 0) throw new Error(`输入不合法：${problems[0]}`);
-  return parsed;
+  return migrated;
+}
+
+/**
+ * v1 → v2：两个日期合成一个。
+ *
+ * v1 允许「起点」早于「已玩到」，于是需要冻结前缀那套机器；v2 里起点恒为已玩到。
+ * 合并时取两者的**较晚者**：宁可少算一段，也不能把已玩过的那天再结算一遍。
+ */
+function migrate(input) {
+  if (!input || typeof input !== 'object') return input;
+  if (input.version !== 1) return input;
+
+  const dates = [input.startDate, input.playedUpTo].filter(isDate).sort();
+  const { startDate, ...rest } = input;
+  return {
+    ...rest,
+    version: CURRENT_VERSION,
+    // v1 没有起点社团经验：历史前缀被删掉之后它才有必要存在，老文件按"全都没攒过"起算。
+    clubExperience: isClubExperienceMap(input.clubExperience) ? input.clubExperience : {},
+    playedUpTo: dates.length > 0 ? dates[dates.length - 1] : input.playedUpTo,
+  };
 }
 
 /** @returns {string[]} 问题列表，空数组表示通过 */
@@ -1571,27 +1636,20 @@ function validateInput(input, rules) {
 
   const { start, lastSettlement } = rules.timeline;
   const inTimeline = (date) => isDate(date) && date >= start && date <= lastSettlement;
-  // 周锚点是自然周的周日，可能是**起点前一天或更早**（从周二开始规划时，
-  // 那一周的锚点就在起点之前）。社团切换同理，只发生在周锚点上。
+  // 周锚点是自然周的周日，可能是**已玩到前一天或更早**（从周二开始规划时，
+  // 那一周的锚点就在已玩到之前）。社团切换同理，只发生在周锚点上。
   const firstAnchor = weekStartOf(start);
   const inWeekAnchors = (date) => isDate(date) && date >= firstAnchor && date <= lastSettlement;
 
-  if (!isDate(input.startDate)) {
-    problems.push(`startDate 格式错误：${input.startDate}`);
-  } else if (!inTimeline(input.startDate)) {
-    problems.push(`startDate 超出时间轴：${input.startDate}`);
-  }
-
-  if (input.playedUpTo === undefined || input.playedUpTo === null) {
-    // 老存档没有这个字段：当作"还没玩过"。
-    input.playedUpTo = input.startDate;
-  } else if (!isDate(input.playedUpTo)) {
+  // 起点恒为已玩到：一个日期，既是"玩到哪了"，也是规划区间从这里开始。
+  if (!isDate(input.playedUpTo)) {
     problems.push(`playedUpTo 格式错误：${input.playedUpTo}`);
   } else if (!inTimeline(input.playedUpTo)) {
     problems.push(`playedUpTo 超出时间轴：${input.playedUpTo}`);
   }
 
   checkAttributes(input, rules, problems);
+  checkClubExperience(input, rules, problems, clubIds);
 
   const goalContext = {
     attributeIds: attributeIdSet,
@@ -1631,6 +1689,33 @@ function checkAttributes(input, rules, problems) {
   }
   for (const key of Object.keys(attributes)) {
     if (!rules.attributes.some((a) => a.id === key)) problems.push(`输入含未知属性 ${key}`);
+  }
+}
+
+function isClubExperienceMap(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** 起点各社团已经攒下的经验：`{ clubId: 值 }`，缺席的社团按 0。 */
+function checkClubExperience(input, rules, problems, clubIds) {
+  const ce = rules.clubExperience;
+  if (input.clubExperience === undefined || input.clubExperience === null) {
+    // 老存档没有这个字段：当作"哪个社团都还没攒过"。
+    input.clubExperience = {};
+    return;
+  }
+  if (!isClubExperienceMap(input.clubExperience)) {
+    problems.push('clubExperience 必须是以社团 id 为键的对象');
+    return;
+  }
+  for (const [clubId, value] of Object.entries(input.clubExperience)) {
+    if (!clubIds.has(clubId)) {
+      problems.push(`clubExperience 引用了未知社团 ${clubId}`);
+    } else if (!Number.isInteger(value)) {
+      problems.push(`clubExperience 的 ${clubId} 必须是整数：${value}`);
+    } else if (value < ce.min || value > ce.max) {
+      problems.push(`clubExperience 的 ${clubId} 超出 [${ce.min}, ${ce.max}]`);
+    }
   }
 }
 
@@ -1697,7 +1782,7 @@ function checkDayList(label, list, inTimeline, problems) {
     else if (!inTimeline(date)) problems.push(`${label} 的日期超出时间轴：${date}`);
   }
 }
-return { CURRENT_VERSION, defaultInput, toJson, fromJson, validateInput };
+return { CURRENT_VERSION, defaultInput, toJson, clampToLimits, exportFileName, fromJson, validateInput };
 })();
 __ns["src/rules.js"] = (() => {
 const { isDate } = __ns["src/dates.js"];
@@ -1906,6 +1991,17 @@ __ns["src/settlement.js"] = (() => {
 const WEEKDAY = 'weekday';
 const REST_DAY = 'restDay';
 
+/**
+ * 这条指令在这一天给它的社团加多少经验；非社团指令为 0。
+ *
+ * 导出是因为除了逐日结算，还有第二处要用它：`rollForward` 重放求解结果来补齐
+ * 各社团在起点上的计数（求解结果每天只暴露"当前社团"那一份）。两处共用一个口径。
+ */
+function clubExperienceGain(rules, command, dayKind) {
+  if (!command || command.kind !== 'club') return 0;
+  return dayKind === REST_DAY ? rules.clubExperienceGain.restDay : rules.clubExperienceGain.weekday;
+}
+
 function createSettlement(rules) {
   const scale = rules.fixedPointScale;
   const attributeIds = rules.attributes.map((a) => a.id);
@@ -1976,11 +2072,6 @@ function createSettlement(rules) {
     return out;
   }
 
-  function clubExperienceEarned(command, dayKind) {
-    if (command.kind !== 'club') return 0;
-    return dayKind === REST_DAY ? rules.clubExperienceGain.restDay : rules.clubExperienceGain.weekday;
-  }
-
   return function settleDay(state, commandId, dayKind) {
     const attributes = { ...state.attributes };
     const clubExperience = { ...state.clubExperience };
@@ -1997,7 +2088,7 @@ function createSettlement(rules) {
       attributes[id] = clampScaled(attributes[id] + expected[id] * scale, limit.min, limit.max);
     }
 
-    const earned = clubExperienceEarned(command, dayKind);
+    const earned = clubExperienceGain(rules, command, dayKind);
     if (earned > 0) {
       const clubId = command.clubId;
       const current = clubExperience[clubId] ?? 0;
@@ -2011,11 +2102,11 @@ function createSettlement(rules) {
     return { attributes, clubExperience };
   };
 }
-return { WEEKDAY, REST_DAY, createSettlement };
+return { WEEKDAY, REST_DAY, clubExperienceGain, createSettlement };
 })();
 __ns["src/plan.js"] = (() => {
 const { buildCalendar } = __ns["src/calendar.js"];
-const { clubBlockReason, createClubLookup } = __ns["src/clubs.js"];
+const { clubBlockReason, createClubLookup, seededClubExperience } = __ns["src/clubs.js"];
 const { evaluateGoals } = __ns["src/constraints.js"];
 const { validateInput } = __ns["src/input.js"];
 const { validateRules } = __ns["src/rules.js"];
@@ -2057,9 +2148,10 @@ function createPlanner(rules) {
     const calendar = buildCalendar(rules, input, assignments);
     const clubAt = createClubLookup(input);
 
+    // 起点社团已经攒下的经验由输入直接给出（合并起点与已玩到之后没有历史可重放）。
     let state = {
       attributes: toScaled(input.attributes),
-      clubExperience: Object.fromEntries(rules.clubs.map((club) => [club.id, 0])),
+      clubExperience: seededClubExperience(rules, input, scale),
     };
 
     const days = calendar.days.map((day) => {
@@ -2085,7 +2177,7 @@ function createPlanner(rules) {
     return {
       ok: true,
       status: 'planned',
-      startDate: input.startDate,
+      playedUpTo: input.playedUpTo,
       endDate: rules.timeline.end,
       lastSettlement: rules.timeline.lastSettlement,
       days,
@@ -2108,7 +2200,7 @@ return { createPlanner };
 __ns["src/solver.js"] = (() => {
 const { buildCalendar } = __ns["src/calendar.js"];
 const { createPlanner } = __ns["src/plan.js"];
-const { clubBlockReason, createClubLookup, availableCommandIds } = __ns["src/clubs.js"];
+const { availableCommandIds, clubBlockReason, createClubLookup, seededClubExperience } = __ns["src/clubs.js"];
 const { meets } = __ns["src/constraints.js"];
 const { REST_DAY, WEEKDAY, createSettlement } = __ns["src/settlement.js"];
 // 求解器：把使用者**没有指定**的那些槽位填满。
@@ -2161,41 +2253,19 @@ function createSolver(rules) {
   // 必须在这里建：下面的 return 之后就再也执行不到了（函数声明会提升，const 不会）。
   const planner = createPlanner(rules);
 
-  /** 由近至远：小目标的截止日期越早，越先被怀疑是它卡住了。 */
-  const byDeadline = (a, b) => (a.deadline < b.deadline ? -1 : a.deadline > b.deadline ? 1 : 0);
-
   function initialState(input) {
     return {
       attributes: Object.fromEntries(
         Object.entries(input.attributes).map(([id, value]) => [id, value * scale]),
       ),
-      clubExperience: Object.fromEntries(rules.clubs.map((club) => [club.id, 0])),
+      clubExperience: seededClubExperience(rules, input, scale),
     };
   }
 
   /**
    * 排一份日程：滚动时域贪心，不达标再收尾。
-   * 诊断阶段也走这里，只不过那时拿到的输入是**副本**（小目标被拿掉若干条）。
    */
-  function search(input, { previous = null, fromDate = null } = {}) {
-    /**
-     * 该休息日是否已被冻结：早于重算起点，上一份日程里已有决定，**且那条指令现在仍然可用**。
-     * 最后一条不能省：使用者刚把社团换掉时，冻结的旧社团指令会变成不可用、于是不结算，
-     * 那样"冻结的前缀"反倒与上一份日程对不上了。
-     */
-    const frozenDay = (date) => {
-      if (fromDate === null || date >= fromDate) return undefined;
-      const kept = previous?.dayCommands?.[date];
-      return kept !== undefined && candidatesAt(date).includes(kept) ? kept : undefined;
-    };
-
-    /** 该周是否已被冻结。以该周在表里的第一个平日为准，同样要求那条指令仍然可用。 */
-    const frozenWeek = (date, anchor) => {
-      if (fromDate === null || date >= fromDate) return undefined;
-      const kept = previous?.weekCommands?.[anchor];
-      return kept !== undefined && candidatesAt(date).includes(kept) ? kept : undefined;
-    };
-
+  function search(input) {
     const calendar = buildCalendar(rules, input);
     const clubAt = createClubLookup(input);
     const dayByDate = new Map(calendar.days.map((day) => [day.date, day]));
@@ -2345,8 +2415,7 @@ function createSolver(rules) {
         const pinned = input.dayCommands[day.date];
         let chosen = pinned;
         if (chosen === undefined) {
-          const kept = frozenDay(day.date);
-          chosen = kept ?? pick(state, [day], candidatesAt(day.date), clubAt(day.date), day.date);
+          chosen = pick(state, [day], candidatesAt(day.date), clubAt(day.date), day.date);
           dayCommands[day.date] = chosen;
         }
         state = simulate(state, [day], chosen).state;
@@ -2357,8 +2426,7 @@ function createSolver(rules) {
         let chosen = pinned;
         if (chosen === undefined) {
           const date = workdays[0].date;
-          const kept = frozenWeek(date, week.start);
-          chosen = kept ?? pick(state, workdays, candidatesAt(date), clubAt(date), date);
+          chosen = pick(state, workdays, candidatesAt(date), clubAt(date), date);
           weekCommands[week.start] = chosen;
         }
         state = simulate(state, workdays, chosen).state;
@@ -2370,82 +2438,15 @@ function createSolver(rules) {
     // 滚动时域贪心对"终点长什么样"没有直接视野，只靠加权引导。
     // 没达标就再收一次尾：从后往前逐个槽位试遍候选，只接受让整份规划更好的改动。
     if (planner(input, { assignments }).goals.ok) return assignments;
-    return repair(input, assignments, fromDate);
+    return repair(input, assignments);
   }
 
   /**
-   * 不可达诊断：三项结论**并列**给出，不只报第一个命中的原因。
-   * 全程在输入的深拷贝上做，绝不改动使用者设定的任何目标或约束。
+   * 排一份日程。合并起点与已玩到之后，求解器不再需要上一份日程、
+   * 也不再需要在某个日期之前冻结前缀：每次都是从已玩到（含）往后整份重排。
    */
-  function diagnose(input) {
-    /** 在输入的深拷贝上改条件再排一次；绝不碰使用者设定的东西。 */
-    const reachableWith = (mutate) => {
-      const copy = structuredClone(input);
-      mutate(copy);
-      return planner(copy, { assignments: search(copy) }).goals.ok;
-    };
-
-    // 一：把全部小目标拿掉，只留结局目标与全局约束。
-    const withGlobalOnly = reachableWith((copy) => {
-      copy.miniGoals = [];
-    });
-
-    // 二：连全局约束也拿掉，只剩结局目标。
-    //     用来把"结局目标与全局约束冲突"和"结局目标本身不可达"分开——
-    //     后者怎么删约束都没救，前者只删小目标也没救。withGlobalOnly 为真时不必再跑。
-    const endingAlone = withGlobalOnly
-      ? true
-      : reachableWith((copy) => {
-          copy.miniGoals = [];
-          copy.globalConstraints = [];
-        });
-
-    // 三：由近至远逐个取消小目标，看取消到哪一个之后才可达。
-    //     全部取消仍不可达时（withGlobalOnly 为假）不必跑：没有哪个前缀能救。
-    // 三：由近至远逐个取消。注意这是**前缀**语义——"取消到第 N 条为止才可达"，
-    // 不是"取消某一条就够"。两条小目标各自独立地不可达时，只取消任何一条都救不了。
-    let mustCancel = [];
-    if (withGlobalOnly) {
-      const ordered = [...input.miniGoals].sort(byDeadline);
-      for (let count = 1; count <= ordered.length; count += 1) {
-        const ok = reachableWith((copy) => {
-          copy.miniGoals = [...copy.miniGoals].sort(byDeadline).slice(count);
-        });
-        if (ok) {
-          mustCancel = ordered.slice(0, count);
-          break;
-        }
-      }
-    }
-
-    // 三个字段都只描述**测到了什么**，结论留给界面去说——名字里带结论容易在别处被误读。
-    return {
-      // 拿掉全部小目标就可达
-      miniGoalsBlocking: withGlobalOnly,
-      // 得连全局约束也拿掉才可达
-      endingAndGlobalConflict: endingAlone && !withGlobalOnly,
-      // 验收标准 4 问的是"全部小目标取消后是否仍不可达"，不是"结局目标孤零零地是否可达"。
-      // endingAlone 另有用途：它是判定"冲突"的那一半。
-      endingGoalsUnreachable: !withGlobalOnly,
-      // 由近至远需要取消哪几条（前缀）；空数组表示没有可行的前缀
-      mustCancel,
-    };
-  }
-
-  /**
-   * @param options.previous  上一份日程；配合 fromDate 用来冻结前缀
-   * @param options.fromDate  重算起点（含）。这一天之前的决定原样保留，
-   *                          之后的重新排。不传就是整份重排。
-   */
-  return function solve(input, { previous = null, fromDate = null } = {}) {
-    // 历史任何时候都不被改写：重算起点永远不早于「已玩到」。
-    // 这条不变量放在求解器里，而不是指望每个调用方都记得算。
-    const history = input.playedUpTo ?? input.startDate;
-    const effectiveFrom = fromDate === null || fromDate < history ? history : fromDate;
-
-    const assignments = search(input, { previous, fromDate: effectiveFrom });
-    if (planner(input, { assignments }).goals.ok) return assignments;
-    return { ...assignments, diagnosis: diagnose(input) };
+  return function solve(input) {
+    return search(input);
   };
 
   /** 一份日程的好坏：先看达标，再看还差多少，最后才是正向总和与压力。 */
@@ -2463,7 +2464,7 @@ function createSolver(rules) {
     return score;
   }
 
-  function repair(input, assignments, fromDate = null) {
+  function repair(input, assignments) {
     const clubAt = createClubLookup(input);
     const calendar = buildCalendar(rules, input, assignments);
     const dayByDate = new Map(calendar.days.map((day) => [day.date, day]));
@@ -2483,8 +2484,7 @@ function createSolver(rules) {
         const workdays = days.filter((day) => !day.isRestDay);
 
         const weekDate = workdays[0]?.date;
-        const weekFrozen = fromDate !== null && weekDate !== undefined && weekDate < fromDate;
-        if (workdays.length > 0 && !weekFrozen && input.weekCommands[week.start] === undefined) {
+        if (workdays.length > 0 && weekDate !== undefined && input.weekCommands[week.start] === undefined) {
           const date = workdays[0].date;
           const original = assignments.weekCommands[week.start];
           for (const id of candidatesAt(date)) {
@@ -2502,7 +2502,6 @@ function createSolver(rules) {
 
         for (const day of days) {
           if (!day.isRestDay || !day.isSettled) continue;
-          if (fromDate !== null && day.date < fromDate) continue;
           if (input.dayCommands[day.date] !== undefined) continue;
           const original = assignments.dayCommands[day.date];
           for (const id of candidatesAt(day.date)) {
@@ -2549,10 +2548,7 @@ self.onmessage = (event) => {
     }
     if (message.type === 'solve') {
       // 求解很慢，先把中间结论交出去也没意义——一次性把日程交回，由主线程再规划一次。
-      const assignments = solve(message.input, {
-        previous: message.previous,
-        fromDate: message.fromDate,
-      });
+      const assignments = solve(message.input);
       self.postMessage({ id, ok: true, assignments });
       return;
     }
@@ -2568,7 +2564,7 @@ return {  };
 
     <script>
 const __ns = {};
-__ns["data/rules.json"] = {"timeline":{"start":"1995-04-04","end":"1998-03-01","lastSettlement":"1998-02-28"},"clubUnlockDate":"1995-04-09","fixedPointScale":1000000,"restDayBonus":{"daily":4,"club":6,"restCommandNegative":4},"clubExperienceGain":{"weekday":1,"restDay":6},"clubExperience":{"id":"clubExperience","name":"社团经验","min":0,"max":999},"attributes":[{"id":"stamina","name":"体力","direction":"up","min":0,"max":999},{"id":"literature","name":"文科","direction":"up","min":0,"max":999},{"id":"science","name":"理科","direction":"up","min":0,"max":999},{"id":"art","name":"艺术","direction":"up","min":0,"max":999},{"id":"sports","name":"运动","direction":"up","min":0,"max":999},{"id":"popularity","name":"人缘","direction":"up","min":0,"max":999},{"id":"appearance","name":"容姿","direction":"up","min":0,"max":999},{"id":"grit","name":"毅力","direction":"up","min":0,"max":999},{"id":"stress","name":"压力","direction":"down","min":0,"max":999}],"clubs":[{"id":"literature-club","name":"文艺社"},{"id":"drama-club","name":"演剧社"},{"id":"science-club","name":"科学社"},{"id":"computer-club","name":"电脑社"},{"id":"art-club","name":"美术社"},{"id":"brass-band-club","name":"管乐社"},{"id":"baseball-club","name":"棒球社"},{"id":"soccer-club","name":"足球社"},{"id":"tennis-club","name":"网球社"},{"id":"swimming-club","name":"游泳社"},{"id":"basketball-club","name":"篮球社"}],"commands":[{"id":"cmd-study-literature","name":"研读文科","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.9,"science":0.1,"art":0.1,"sports":-0.4,"popularity":0.3,"appearance":-0.3,"grit":-0.1,"stress":0.8}},{"id":"cmd-study-science","name":"研读理科","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.1,"science":0.9,"art":0.1,"sports":-0.8,"popularity":0.1,"appearance":-0.4,"grit":0.3,"stress":0.3}},{"id":"cmd-practice-art","name":"培养艺术气质","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.1,"science":0.1,"art":0.9,"sports":-0.4,"popularity":0.1,"appearance":-0.1,"grit":-0.1,"stress":-0.3}},{"id":"cmd-exercise","name":"运动","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-2.4,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":3.3,"popularity":0.1,"appearance":-0.4,"grit":1.4,"stress":0.1}},{"id":"cmd-chat","name":"和同学闲聊","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.2,"literature":-0.3,"science":-0.3,"art":-0.3,"sports":0.2,"popularity":1.5,"appearance":0.8,"grit":-0.4,"stress":-0.9}},{"id":"cmd-groom","name":"整理仪容","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.6,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":-0.1,"popularity":0.5,"appearance":2.1,"grit":-0.6,"stress":0.1}},{"id":"cmd-rest","name":"休息","kind":"daily","clubId":null,"isRestCommand":true,"successRate":1,"effects":{"stamina":3.1,"literature":0,"science":0,"art":0,"sports":0,"popularity":-0.6,"appearance":-0.8,"grit":-0.1,"stress":-2.9}},{"id":"cmd-club-literature","name":"文艺社","kind":"club","clubId":"literature-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.8,"science":0.3,"art":0.1,"sports":0,"popularity":0.1,"appearance":-0.3,"grit":-0.1,"stress":1.1}},{"id":"cmd-club-drama","name":"演剧社","kind":"club","clubId":"drama-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.9,"literature":0.9,"science":0,"art":0.4,"sports":0.1,"popularity":0.1,"appearance":-0.1,"grit":0.1,"stress":1.1}},{"id":"cmd-club-science","name":"科学社","kind":"club","clubId":"science-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.1,"science":0.9,"art":0.3,"sports":0,"popularity":0.1,"appearance":-0.3,"grit":0.3,"stress":1.4}},{"id":"cmd-club-computer","name":"电脑社","kind":"club","clubId":"computer-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.8,"literature":0.1,"science":0.7,"art":0.3,"sports":0,"popularity":0.2,"appearance":-0.4,"grit":0.2,"stress":1.8}},{"id":"cmd-club-art","name":"美术社","kind":"club","clubId":"art-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.9,"literature":0.1,"science":0,"art":0.9,"sports":0.1,"popularity":0.1,"appearance":-0.1,"grit":-0.1,"stress":0.9}},{"id":"cmd-club-brass-band","name":"管乐社","kind":"club","clubId":"brass-band-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.9,"literature":0.1,"science":0.1,"art":0.9,"sports":0.2,"popularity":0.1,"appearance":-0.2,"grit":0.1,"stress":0.9}},{"id":"cmd-club-baseball","name":"棒球社","kind":"club","clubId":"baseball-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.9,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":0.9,"popularity":0.1,"appearance":-0.3,"grit":0.3,"stress":0.2}},{"id":"cmd-club-soccer","name":"足球社","kind":"club","clubId":"soccer-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.9,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":0.9,"popularity":0.1,"appearance":-0.2,"grit":0.7,"stress":0.3}},{"id":"cmd-club-tennis","name":"网球社","kind":"club","clubId":"tennis-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.6,"literature":-0.1,"science":-0.1,"art":0,"sports":0.8,"popularity":0.1,"appearance":-0.1,"grit":0.6,"stress":0.5}},{"id":"cmd-club-swimming","name":"游泳社","kind":"club","clubId":"swimming-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.9,"literature":-0.1,"science":-0.1,"art":0,"sports":0.9,"popularity":0,"appearance":-0.1,"grit":0.7,"stress":0.2}},{"id":"cmd-club-basketball","name":"篮球社","kind":"club","clubId":"basketball-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.8,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":0.9,"popularity":-0.1,"appearance":-0.2,"grit":0.6,"stress":0.4}}],"defaultStart":{"stamina":100,"literature":40,"science":40,"art":40,"sports":40,"popularity":32,"appearance":60,"grit":5,"stress":0},"defaultGlobalConstraints":[{"attribute":"stamina","op":">=","value":20},{"attribute":"popularity","op":">=","value":100},{"attribute":"appearance","op":">=","value":35},{"attribute":"stress","op":"<","value":70}],"defaultEndingGoals":[{"attribute":"stamina","op":">=","value":50},{"attribute":"literature","op":">=","value":130},{"attribute":"science","op":">=","value":130},{"attribute":"art","op":">=","value":130},{"attribute":"sports","op":">=","value":130},{"attribute":"popularity","op":">=","value":120},{"attribute":"appearance","op":">=","value":100},{"attribute":"grit","op":">=","value":100},{"attribute":"stress","op":"<","value":50}],"defaultMiniGoals":[{"deadline":"1998-02-23","attributes":["literature","science","art"],"op":">=","value":561},{"deadline":"1998-01-02","attributes":["clubExperience"],"op":">=","value":380}]};
+__ns["data/rules.json"] = {"timeline":{"start":"1995-04-04","end":"1998-03-01","lastSettlement":"1998-02-28"},"clubUnlockDate":"1995-04-09","fixedPointScale":1000000,"restDayBonus":{"daily":4,"club":6,"restCommandNegative":4},"clubExperienceGain":{"weekday":1,"restDay":6},"clubExperience":{"id":"clubExperience","name":"社团经验","min":0,"max":999},"attributes":[{"id":"stamina","name":"体力","direction":"up","min":0,"max":999},{"id":"literature","name":"文科","direction":"up","min":0,"max":999},{"id":"science","name":"理科","direction":"up","min":0,"max":999},{"id":"art","name":"艺术","direction":"up","min":0,"max":999},{"id":"sports","name":"运动","direction":"up","min":0,"max":999},{"id":"popularity","name":"人缘","direction":"up","min":0,"max":999},{"id":"appearance","name":"容姿","direction":"up","min":0,"max":999},{"id":"grit","name":"毅力","direction":"up","min":0,"max":999},{"id":"stress","name":"压力","direction":"down","min":0,"max":999}],"clubs":[{"id":"literature-club","name":"文艺社"},{"id":"drama-club","name":"演剧社"},{"id":"science-club","name":"科学社"},{"id":"computer-club","name":"电脑社"},{"id":"art-club","name":"美术社"},{"id":"brass-band-club","name":"管乐社"},{"id":"baseball-club","name":"棒球社"},{"id":"soccer-club","name":"足球社"},{"id":"tennis-club","name":"网球社"},{"id":"swimming-club","name":"游泳社"},{"id":"basketball-club","name":"篮球社"}],"commands":[{"id":"cmd-study-literature","name":"研读文科","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.81,"literature":1.26,"science":0.04,"art":0.04,"sports":-0.43,"popularity":0.32,"appearance":-0.29,"grit":-0.05,"stress":0.77}},{"id":"cmd-study-science","name":"研读理科","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.81,"literature":0.04,"science":1.26,"art":0.04,"sports":-0.81,"popularity":0.16,"appearance":-0.48,"grit":0.32,"stress":0.34}},{"id":"cmd-practice-art","name":"培养艺术气质","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.81,"literature":0.04,"science":0.04,"art":1.26,"sports":-0.48,"popularity":0.08,"appearance":-0.15,"grit":-0.05,"stress":-0.33}},{"id":"cmd-exercise","name":"运动","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-2.48,"literature":-0.15,"science":-0.15,"art":-0.15,"sports":4.41,"popularity":0.08,"appearance":-0.48,"grit":1.88,"stress":-0.14}},{"id":"cmd-chat","name":"和同学闲聊","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.24,"literature":-0.29,"science":-0.29,"art":-0.29,"sports":0.2,"popularity":1.92,"appearance":0.94,"grit":-0.2,"stress":0.72}},{"id":"cmd-groom","name":"整理仪容","kind":"daily","clubId":null,"isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.67,"literature":-0.15,"science":-0.15,"art":-0.1,"sports":-0.1,"popularity":0.61,"appearance":2.41,"grit":-0.34,"stress":0.01}},{"id":"cmd-rest","name":"休息","kind":"daily","clubId":null,"isRestCommand":true,"successRate":1,"effects":{"stamina":3.76,"literature":0,"science":0,"art":0,"sports":0,"popularity":-0.67,"appearance":-0.81,"grit":-0.05,"stress":-3.6}},{"id":"cmd-club-literature","name":"文艺社","kind":"club","clubId":"literature-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.81,"literature":0.81,"science":0.27,"art":0.13,"sports":0,"popularity":0.06,"appearance":-0.29,"grit":-0.05,"stress":1.1}},{"id":"cmd-club-drama","name":"演剧社","kind":"club","clubId":"drama-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.91,"literature":0.95,"science":0,"art":0.4,"sports":0.13,"popularity":0.06,"appearance":-0.15,"grit":0.06,"stress":1.05}},{"id":"cmd-club-science","name":"科学社","kind":"club","clubId":"science-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.86,"literature":0.06,"science":1.05,"art":0.27,"sports":0,"popularity":0.06,"appearance":-0.29,"grit":0.3,"stress":1.24}},{"id":"cmd-club-computer","name":"电脑社","kind":"club","clubId":"computer-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.86,"literature":0.06,"science":1.02,"art":0.44,"sports":0,"popularity":0.3,"appearance":-0.43,"grit":0.3,"stress":1.48}},{"id":"cmd-club-art","name":"美术社","kind":"club","clubId":"art-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.91,"literature":0.13,"science":0,"art":1.02,"sports":0.06,"popularity":0.06,"appearance":-0.1,"grit":-0.1,"stress":1.01}},{"id":"cmd-club-brass-band","name":"管乐社","kind":"club","clubId":"brass-band-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-0.91,"literature":0.03,"science":0.03,"art":0.81,"sports":0.17,"popularity":0.13,"appearance":-0.24,"grit":0.06,"stress":0.91}},{"id":"cmd-club-baseball","name":"棒球社","kind":"club","clubId":"baseball-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.96,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":0.88,"popularity":0.06,"appearance":-0.29,"grit":0.78,"stress":-0.04}},{"id":"cmd-club-soccer","name":"足球社","kind":"club","clubId":"soccer-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.96,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":0.95,"popularity":0.13,"appearance":-0.24,"grit":0.71,"stress":0.01}},{"id":"cmd-club-tennis","name":"网球社","kind":"club","clubId":"tennis-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.67,"literature":-0.1,"science":-0.1,"art":0,"sports":0.81,"popularity":0.13,"appearance":-0.1,"grit":0.64,"stress":0.39}},{"id":"cmd-club-swimming","name":"游泳社","kind":"club","clubId":"swimming-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-2.05,"literature":-0.1,"science":-0.1,"art":0,"sports":0.95,"popularity":0,"appearance":-0.15,"grit":0.71,"stress":-0.04}},{"id":"cmd-club-basketball","name":"篮球社","kind":"club","clubId":"basketball-club","isRestCommand":false,"successRate":0.63,"effects":{"stamina":-1.91,"literature":-0.1,"science":-0.1,"art":-0.1,"sports":0.88,"popularity":0.06,"appearance":-0.24,"grit":0.68,"stress":0.2}}],"defaultStart":{"stamina":100,"literature":40,"science":40,"art":40,"sports":40,"popularity":32,"appearance":60,"grit":5,"stress":0},"defaultGlobalConstraints":[{"attribute":"stamina","op":">=","value":20},{"attribute":"popularity","op":">=","value":100},{"attribute":"appearance","op":">=","value":35},{"attribute":"stress","op":"<","value":70}],"defaultEndingGoals":[{"attribute":"stamina","op":">=","value":50},{"attribute":"literature","op":">=","value":130},{"attribute":"science","op":">=","value":130},{"attribute":"art","op":">=","value":130},{"attribute":"sports","op":">=","value":130},{"attribute":"popularity","op":">=","value":120},{"attribute":"appearance","op":">=","value":100},{"attribute":"grit","op":">=","value":100},{"attribute":"stress","op":"<","value":50}],"defaultMiniGoals":[{"deadline":"1998-02-23","attributes":["literature","science","art"],"op":">=","value":561},{"deadline":"1998-01-02","attributes":["clubExperience"],"op":">=","value":380}]};
 __ns["src/dates.js"] = (() => {
 // 日期表示：全项目统一用 `YYYY-MM-DD` 字符串，字典序即时间序。
 //
@@ -2656,22 +2652,24 @@ function resolveCommand(input, assignments, slot) {
 }
 
 function buildCalendar(rules, input, assignments = null) {
-  const { start: timelineStart, end, lastSettlement } = rules.timeline;
+  const { end, lastSettlement } = rules.timeline;
   const restDays = new Set(input.restDays);
   const skippedDaySet = new Set(input.skippedDays);
-  const startDayIsGameOpening = input.startDate === timelineStart;
+  // 时间轴首日就是已玩到，它是**状态快照**：那一天的结算已经发生在游戏里，所以不结算。
+  // 这条原先是"仅当首日等于时间轴起点"的特例，合并起点与已玩到之后成为通则（见 ADR-0004）。
+  const snapshotDay = input.playedUpTo;
 
   const days = [];
-  for (let date = input.startDate; date <= end; date = addDays(date, 1)) {
+  for (let date = input.playedUpTo; date <= end; date = addDays(date, 1)) {
     const weekday = weekdayOf(date);
     const weekStart = weekStartOf(date);
     const isRestDay = weekday === 0 || restDays.has(date);
 
     const skipSource = resolveSkipSource(date, isRestDay, weekStart, input, skippedDaySet);
     const isEmpty = skipSource !== null;
-    const isGameOpening = startDayIsGameOpening && date === input.startDate;
+    const isSnapshot = date === snapshotDay;
     const isTimelineEnd = date === end;
-    const isSettled = !isEmpty && !isGameOpening && !isTimelineEnd;
+    const isSettled = !isEmpty && !isSnapshot && !isTimelineEnd;
 
     // 使用者显式指定（含显式 null = 空过）最优先；其次才是求解器的填空；都没有就留空（待定）。
     // 空过就是「指令留空」（见 GLOSSARY）；界面要显示"本来会执行什么"时走同一个解析，
@@ -2791,6 +2789,19 @@ __ns["src/clubs.js"] = (() => {
 // 社团切换只在周日发生、自该周日起生效，所以某一天的社团 = 不晚于该日的最后一次切换结果。
 // 工具从不自行选择或切换社团。
 
+/**
+ * 起点那一刻各社团的经验值，按 `scale` 转成定点整数。
+ * 每个社团各自一份，由输入直接给出（`clubExperience` 是 `{ clubId: 值 }`），缺席的按 0 起算。
+ *
+ * 规划与求解都以它为初始状态，所以只此一处口径。
+ */
+function seededClubExperience(rules, input, scale) {
+  const seeded = input.clubExperience ?? {};
+  return Object.fromEntries(
+    rules.clubs.map((club) => [club.id, (seeded[club.id] ?? 0) * scale]),
+  );
+}
+
 /** @returns {(date: string) => string | null} */
 function createClubLookup(input) {
   const changes = [...input.clubChanges].sort((a, b) =>
@@ -2827,7 +2838,7 @@ function availableCommandIds(rules, club, date) {
     .filter((command) => clubBlockReason(rules, command, club, date) === null)
     .map((command) => command.id);
 }
-return { createClubLookup, clubBlockReason, availableCommandIds };
+return { seededClubExperience, createClubLookup, clubBlockReason, availableCommandIds };
 })();
 __ns["src/constraints.js"] = (() => {
 // 约束判定与目标函数。
@@ -2975,6 +2986,40 @@ function goalProblems(list, label, context) {
   return problems;
 }
 
+/**
+ * 达标清单的**显示顺序**（只影响显示，输入数组原样不动）。
+ *
+ *   'attribute' 结局目标与全局约束：按属性在 `rules.attributes` 里的次序，
+ *               也就是出厂默认目标书写的那套顺序（体力→…→压力）；
+ *   'deadline'  小目标：按截止日期从早到晚。
+ *
+ * 同一键内保持**录入顺序**，因为行的编辑与删除动作靠的是输入数组的下标，
+ * 不是显示位置。返回的是下标序列。
+ */
+function goalDisplayOrder(rules, goals, kind) {
+  // 每个 kind 一个取键函数：口味写在一张表里，校验与取键就不会各写一份、然后悄悄分叉。
+  const keyOf = {
+    attribute: () => {
+      const rank = new Map(rules.attributes.map((attribute, index) => [attribute.id, index]));
+      return (goal) => rank.get(goal.attribute) ?? rules.attributes.length;
+    },
+    deadline: () => (goal) => goal.deadline ?? '',
+  }[kind];
+  if (!keyOf) throw new Error(`未知的行序口径：${kind}`);
+
+  const key = keyOf();
+  return goals
+    .map((goal, index) => ({ goal, index }))
+    .sort((a, b) => {
+      const left = key(a.goal);
+      const right = key(b.goal);
+      if (left < right) return -1;
+      if (left > right) return 1;
+      return a.index - b.index;
+    })
+    .map((entry) => entry.index);
+}
+
 /** 带截止日期、阈值作用于属性集合求和的小目标。 */
 function miniGoalProblems(list, label, context) {
   if (!Array.isArray(list)) return [`${label} 必须是数组`];
@@ -2996,7 +3041,7 @@ function miniGoalProblems(list, label, context) {
   }
   return problems;
 }
-return { goalProblems, miniGoalProblems };
+return { goalProblems, goalDisplayOrder, miniGoalProblems };
 })();
 __ns["src/lookup.js"] = (() => {
 // 领域对象的查询视图。校验在 rules.js，这里只负责按 id 取用。
@@ -3037,16 +3082,20 @@ const { attributeIds } = __ns["src/lookup.js"];
 
 
 
-const CURRENT_VERSION = 1;
+const CURRENT_VERSION = 2;
 
 function defaultInput(rules) {
   return {
     version: CURRENT_VERSION,
-    startDate: rules.timeline.start,
-    // 「已玩到」：这一日之前的算历史。改任何东西都不会动它（见票 07）。
+    // 「已玩到」：使用者已经在游戏里玩到的那一天，同时也是**时间轴的起点**。
+    // 它是状态快照——当天不结算，规划从次日开始（见 ADR-0004）。
     // 默认等于时间轴起点，也就是"还没玩过"。
     playedUpTo: rules.timeline.start,
     attributes: { ...rules.defaultStart },
+    // 起点那一刻各社团已经攒下的经验，`{ clubId: 值 }`；缺席的社团按 0 起算。
+    // 合并起点与已玩到之后，时间轴以内没有历史可供"照旧演一遍"，所以这份状态必须由输入直接承载。
+    // 用映射而不是单个数：社团经验是**每个社团各自一份**，只留当前社团会把别的社团的计数丢掉。
+    clubExperience: {},
     globalConstraints: structuredClone(rules.defaultGlobalConstraints),
     endingGoals: structuredClone(rules.defaultEndingGoals),
     miniGoals: structuredClone(rules.defaultMiniGoals),
@@ -3063,6 +3112,22 @@ function toJson(input) {
   return JSON.stringify(input, null, 2);
 }
 
+/**
+ * 把界面手输的值夹进 `[min, max]` 并取整。
+ *
+ * `type=number` 的 min/max 拦不住键盘，而越界值与小数会让整份输入在下次校验时失败；
+ * 那时调用方只剩"丢掉整份存档"这一条路（见 web/session.js），代价不对称，所以落库前先夹住。
+ */
+function clampToLimits(value, { min, max }) {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+/** 导出的文件名：就用「已玩到」这一天的裸日期，多份文件一眼分得清。 */
+function exportFileName(input) {
+  return `${input.playedUpTo}.json`;
+}
+
 /** 解析并校验；不合法时抛出带原因的错误。 */
 function fromJson(text, rules) {
   let parsed;
@@ -3071,9 +3136,31 @@ function fromJson(text, rules) {
   } catch (error) {
     throw new Error(`不是合法的 JSON：${error.message}`);
   }
-  const problems = validateInput(parsed, rules);
+  const migrated = migrate(parsed);
+  const problems = validateInput(migrated, rules);
   if (problems.length > 0) throw new Error(`输入不合法：${problems[0]}`);
-  return parsed;
+  return migrated;
+}
+
+/**
+ * v1 → v2：两个日期合成一个。
+ *
+ * v1 允许「起点」早于「已玩到」，于是需要冻结前缀那套机器；v2 里起点恒为已玩到。
+ * 合并时取两者的**较晚者**：宁可少算一段，也不能把已玩过的那天再结算一遍。
+ */
+function migrate(input) {
+  if (!input || typeof input !== 'object') return input;
+  if (input.version !== 1) return input;
+
+  const dates = [input.startDate, input.playedUpTo].filter(isDate).sort();
+  const { startDate, ...rest } = input;
+  return {
+    ...rest,
+    version: CURRENT_VERSION,
+    // v1 没有起点社团经验：历史前缀被删掉之后它才有必要存在，老文件按"全都没攒过"起算。
+    clubExperience: isClubExperienceMap(input.clubExperience) ? input.clubExperience : {},
+    playedUpTo: dates.length > 0 ? dates[dates.length - 1] : input.playedUpTo,
+  };
 }
 
 /** @returns {string[]} 问题列表，空数组表示通过 */
@@ -3094,27 +3181,20 @@ function validateInput(input, rules) {
 
   const { start, lastSettlement } = rules.timeline;
   const inTimeline = (date) => isDate(date) && date >= start && date <= lastSettlement;
-  // 周锚点是自然周的周日，可能是**起点前一天或更早**（从周二开始规划时，
-  // 那一周的锚点就在起点之前）。社团切换同理，只发生在周锚点上。
+  // 周锚点是自然周的周日，可能是**已玩到前一天或更早**（从周二开始规划时，
+  // 那一周的锚点就在已玩到之前）。社团切换同理，只发生在周锚点上。
   const firstAnchor = weekStartOf(start);
   const inWeekAnchors = (date) => isDate(date) && date >= firstAnchor && date <= lastSettlement;
 
-  if (!isDate(input.startDate)) {
-    problems.push(`startDate 格式错误：${input.startDate}`);
-  } else if (!inTimeline(input.startDate)) {
-    problems.push(`startDate 超出时间轴：${input.startDate}`);
-  }
-
-  if (input.playedUpTo === undefined || input.playedUpTo === null) {
-    // 老存档没有这个字段：当作"还没玩过"。
-    input.playedUpTo = input.startDate;
-  } else if (!isDate(input.playedUpTo)) {
+  // 起点恒为已玩到：一个日期，既是"玩到哪了"，也是规划区间从这里开始。
+  if (!isDate(input.playedUpTo)) {
     problems.push(`playedUpTo 格式错误：${input.playedUpTo}`);
   } else if (!inTimeline(input.playedUpTo)) {
     problems.push(`playedUpTo 超出时间轴：${input.playedUpTo}`);
   }
 
   checkAttributes(input, rules, problems);
+  checkClubExperience(input, rules, problems, clubIds);
 
   const goalContext = {
     attributeIds: attributeIdSet,
@@ -3154,6 +3234,33 @@ function checkAttributes(input, rules, problems) {
   }
   for (const key of Object.keys(attributes)) {
     if (!rules.attributes.some((a) => a.id === key)) problems.push(`输入含未知属性 ${key}`);
+  }
+}
+
+function isClubExperienceMap(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** 起点各社团已经攒下的经验：`{ clubId: 值 }`，缺席的社团按 0。 */
+function checkClubExperience(input, rules, problems, clubIds) {
+  const ce = rules.clubExperience;
+  if (input.clubExperience === undefined || input.clubExperience === null) {
+    // 老存档没有这个字段：当作"哪个社团都还没攒过"。
+    input.clubExperience = {};
+    return;
+  }
+  if (!isClubExperienceMap(input.clubExperience)) {
+    problems.push('clubExperience 必须是以社团 id 为键的对象');
+    return;
+  }
+  for (const [clubId, value] of Object.entries(input.clubExperience)) {
+    if (!clubIds.has(clubId)) {
+      problems.push(`clubExperience 引用了未知社团 ${clubId}`);
+    } else if (!Number.isInteger(value)) {
+      problems.push(`clubExperience 的 ${clubId} 必须是整数：${value}`);
+    } else if (value < ce.min || value > ce.max) {
+      problems.push(`clubExperience 的 ${clubId} 超出 [${ce.min}, ${ce.max}]`);
+    }
   }
 }
 
@@ -3220,7 +3327,7 @@ function checkDayList(label, list, inTimeline, problems) {
     else if (!inTimeline(date)) problems.push(`${label} 的日期超出时间轴：${date}`);
   }
 }
-return { CURRENT_VERSION, defaultInput, toJson, fromJson, validateInput };
+return { CURRENT_VERSION, defaultInput, toJson, clampToLimits, exportFileName, fromJson, validateInput };
 })();
 __ns["src/rules.js"] = (() => {
 const { isDate } = __ns["src/dates.js"];
@@ -3429,6 +3536,17 @@ __ns["src/settlement.js"] = (() => {
 const WEEKDAY = 'weekday';
 const REST_DAY = 'restDay';
 
+/**
+ * 这条指令在这一天给它的社团加多少经验；非社团指令为 0。
+ *
+ * 导出是因为除了逐日结算，还有第二处要用它：`rollForward` 重放求解结果来补齐
+ * 各社团在起点上的计数（求解结果每天只暴露"当前社团"那一份）。两处共用一个口径。
+ */
+function clubExperienceGain(rules, command, dayKind) {
+  if (!command || command.kind !== 'club') return 0;
+  return dayKind === REST_DAY ? rules.clubExperienceGain.restDay : rules.clubExperienceGain.weekday;
+}
+
 function createSettlement(rules) {
   const scale = rules.fixedPointScale;
   const attributeIds = rules.attributes.map((a) => a.id);
@@ -3499,11 +3617,6 @@ function createSettlement(rules) {
     return out;
   }
 
-  function clubExperienceEarned(command, dayKind) {
-    if (command.kind !== 'club') return 0;
-    return dayKind === REST_DAY ? rules.clubExperienceGain.restDay : rules.clubExperienceGain.weekday;
-  }
-
   return function settleDay(state, commandId, dayKind) {
     const attributes = { ...state.attributes };
     const clubExperience = { ...state.clubExperience };
@@ -3520,7 +3633,7 @@ function createSettlement(rules) {
       attributes[id] = clampScaled(attributes[id] + expected[id] * scale, limit.min, limit.max);
     }
 
-    const earned = clubExperienceEarned(command, dayKind);
+    const earned = clubExperienceGain(rules, command, dayKind);
     if (earned > 0) {
       const clubId = command.clubId;
       const current = clubExperience[clubId] ?? 0;
@@ -3534,11 +3647,11 @@ function createSettlement(rules) {
     return { attributes, clubExperience };
   };
 }
-return { WEEKDAY, REST_DAY, createSettlement };
+return { WEEKDAY, REST_DAY, clubExperienceGain, createSettlement };
 })();
 __ns["src/plan.js"] = (() => {
 const { buildCalendar } = __ns["src/calendar.js"];
-const { clubBlockReason, createClubLookup } = __ns["src/clubs.js"];
+const { clubBlockReason, createClubLookup, seededClubExperience } = __ns["src/clubs.js"];
 const { evaluateGoals } = __ns["src/constraints.js"];
 const { validateInput } = __ns["src/input.js"];
 const { validateRules } = __ns["src/rules.js"];
@@ -3580,9 +3693,10 @@ function createPlanner(rules) {
     const calendar = buildCalendar(rules, input, assignments);
     const clubAt = createClubLookup(input);
 
+    // 起点社团已经攒下的经验由输入直接给出（合并起点与已玩到之后没有历史可重放）。
     let state = {
       attributes: toScaled(input.attributes),
-      clubExperience: Object.fromEntries(rules.clubs.map((club) => [club.id, 0])),
+      clubExperience: seededClubExperience(rules, input, scale),
     };
 
     const days = calendar.days.map((day) => {
@@ -3608,7 +3722,7 @@ function createPlanner(rules) {
     return {
       ok: true,
       status: 'planned',
-      startDate: input.startDate,
+      playedUpTo: input.playedUpTo,
       endDate: rules.timeline.end,
       lastSettlement: rules.timeline.lastSettlement,
       days,
@@ -3631,7 +3745,7 @@ return { createPlanner };
 __ns["src/solver.js"] = (() => {
 const { buildCalendar } = __ns["src/calendar.js"];
 const { createPlanner } = __ns["src/plan.js"];
-const { clubBlockReason, createClubLookup, availableCommandIds } = __ns["src/clubs.js"];
+const { availableCommandIds, clubBlockReason, createClubLookup, seededClubExperience } = __ns["src/clubs.js"];
 const { meets } = __ns["src/constraints.js"];
 const { REST_DAY, WEEKDAY, createSettlement } = __ns["src/settlement.js"];
 // 求解器：把使用者**没有指定**的那些槽位填满。
@@ -3684,41 +3798,19 @@ function createSolver(rules) {
   // 必须在这里建：下面的 return 之后就再也执行不到了（函数声明会提升，const 不会）。
   const planner = createPlanner(rules);
 
-  /** 由近至远：小目标的截止日期越早，越先被怀疑是它卡住了。 */
-  const byDeadline = (a, b) => (a.deadline < b.deadline ? -1 : a.deadline > b.deadline ? 1 : 0);
-
   function initialState(input) {
     return {
       attributes: Object.fromEntries(
         Object.entries(input.attributes).map(([id, value]) => [id, value * scale]),
       ),
-      clubExperience: Object.fromEntries(rules.clubs.map((club) => [club.id, 0])),
+      clubExperience: seededClubExperience(rules, input, scale),
     };
   }
 
   /**
    * 排一份日程：滚动时域贪心，不达标再收尾。
-   * 诊断阶段也走这里，只不过那时拿到的输入是**副本**（小目标被拿掉若干条）。
    */
-  function search(input, { previous = null, fromDate = null } = {}) {
-    /**
-     * 该休息日是否已被冻结：早于重算起点，上一份日程里已有决定，**且那条指令现在仍然可用**。
-     * 最后一条不能省：使用者刚把社团换掉时，冻结的旧社团指令会变成不可用、于是不结算，
-     * 那样"冻结的前缀"反倒与上一份日程对不上了。
-     */
-    const frozenDay = (date) => {
-      if (fromDate === null || date >= fromDate) return undefined;
-      const kept = previous?.dayCommands?.[date];
-      return kept !== undefined && candidatesAt(date).includes(kept) ? kept : undefined;
-    };
-
-    /** 该周是否已被冻结。以该周在表里的第一个平日为准，同样要求那条指令仍然可用。 */
-    const frozenWeek = (date, anchor) => {
-      if (fromDate === null || date >= fromDate) return undefined;
-      const kept = previous?.weekCommands?.[anchor];
-      return kept !== undefined && candidatesAt(date).includes(kept) ? kept : undefined;
-    };
-
+  function search(input) {
     const calendar = buildCalendar(rules, input);
     const clubAt = createClubLookup(input);
     const dayByDate = new Map(calendar.days.map((day) => [day.date, day]));
@@ -3868,8 +3960,7 @@ function createSolver(rules) {
         const pinned = input.dayCommands[day.date];
         let chosen = pinned;
         if (chosen === undefined) {
-          const kept = frozenDay(day.date);
-          chosen = kept ?? pick(state, [day], candidatesAt(day.date), clubAt(day.date), day.date);
+          chosen = pick(state, [day], candidatesAt(day.date), clubAt(day.date), day.date);
           dayCommands[day.date] = chosen;
         }
         state = simulate(state, [day], chosen).state;
@@ -3880,8 +3971,7 @@ function createSolver(rules) {
         let chosen = pinned;
         if (chosen === undefined) {
           const date = workdays[0].date;
-          const kept = frozenWeek(date, week.start);
-          chosen = kept ?? pick(state, workdays, candidatesAt(date), clubAt(date), date);
+          chosen = pick(state, workdays, candidatesAt(date), clubAt(date), date);
           weekCommands[week.start] = chosen;
         }
         state = simulate(state, workdays, chosen).state;
@@ -3893,82 +3983,15 @@ function createSolver(rules) {
     // 滚动时域贪心对"终点长什么样"没有直接视野，只靠加权引导。
     // 没达标就再收一次尾：从后往前逐个槽位试遍候选，只接受让整份规划更好的改动。
     if (planner(input, { assignments }).goals.ok) return assignments;
-    return repair(input, assignments, fromDate);
+    return repair(input, assignments);
   }
 
   /**
-   * 不可达诊断：三项结论**并列**给出，不只报第一个命中的原因。
-   * 全程在输入的深拷贝上做，绝不改动使用者设定的任何目标或约束。
+   * 排一份日程。合并起点与已玩到之后，求解器不再需要上一份日程、
+   * 也不再需要在某个日期之前冻结前缀：每次都是从已玩到（含）往后整份重排。
    */
-  function diagnose(input) {
-    /** 在输入的深拷贝上改条件再排一次；绝不碰使用者设定的东西。 */
-    const reachableWith = (mutate) => {
-      const copy = structuredClone(input);
-      mutate(copy);
-      return planner(copy, { assignments: search(copy) }).goals.ok;
-    };
-
-    // 一：把全部小目标拿掉，只留结局目标与全局约束。
-    const withGlobalOnly = reachableWith((copy) => {
-      copy.miniGoals = [];
-    });
-
-    // 二：连全局约束也拿掉，只剩结局目标。
-    //     用来把"结局目标与全局约束冲突"和"结局目标本身不可达"分开——
-    //     后者怎么删约束都没救，前者只删小目标也没救。withGlobalOnly 为真时不必再跑。
-    const endingAlone = withGlobalOnly
-      ? true
-      : reachableWith((copy) => {
-          copy.miniGoals = [];
-          copy.globalConstraints = [];
-        });
-
-    // 三：由近至远逐个取消小目标，看取消到哪一个之后才可达。
-    //     全部取消仍不可达时（withGlobalOnly 为假）不必跑：没有哪个前缀能救。
-    // 三：由近至远逐个取消。注意这是**前缀**语义——"取消到第 N 条为止才可达"，
-    // 不是"取消某一条就够"。两条小目标各自独立地不可达时，只取消任何一条都救不了。
-    let mustCancel = [];
-    if (withGlobalOnly) {
-      const ordered = [...input.miniGoals].sort(byDeadline);
-      for (let count = 1; count <= ordered.length; count += 1) {
-        const ok = reachableWith((copy) => {
-          copy.miniGoals = [...copy.miniGoals].sort(byDeadline).slice(count);
-        });
-        if (ok) {
-          mustCancel = ordered.slice(0, count);
-          break;
-        }
-      }
-    }
-
-    // 三个字段都只描述**测到了什么**，结论留给界面去说——名字里带结论容易在别处被误读。
-    return {
-      // 拿掉全部小目标就可达
-      miniGoalsBlocking: withGlobalOnly,
-      // 得连全局约束也拿掉才可达
-      endingAndGlobalConflict: endingAlone && !withGlobalOnly,
-      // 验收标准 4 问的是"全部小目标取消后是否仍不可达"，不是"结局目标孤零零地是否可达"。
-      // endingAlone 另有用途：它是判定"冲突"的那一半。
-      endingGoalsUnreachable: !withGlobalOnly,
-      // 由近至远需要取消哪几条（前缀）；空数组表示没有可行的前缀
-      mustCancel,
-    };
-  }
-
-  /**
-   * @param options.previous  上一份日程；配合 fromDate 用来冻结前缀
-   * @param options.fromDate  重算起点（含）。这一天之前的决定原样保留，
-   *                          之后的重新排。不传就是整份重排。
-   */
-  return function solve(input, { previous = null, fromDate = null } = {}) {
-    // 历史任何时候都不被改写：重算起点永远不早于「已玩到」。
-    // 这条不变量放在求解器里，而不是指望每个调用方都记得算。
-    const history = input.playedUpTo ?? input.startDate;
-    const effectiveFrom = fromDate === null || fromDate < history ? history : fromDate;
-
-    const assignments = search(input, { previous, fromDate: effectiveFrom });
-    if (planner(input, { assignments }).goals.ok) return assignments;
-    return { ...assignments, diagnosis: diagnose(input) };
+  return function solve(input) {
+    return search(input);
   };
 
   /** 一份日程的好坏：先看达标，再看还差多少，最后才是正向总和与压力。 */
@@ -3986,7 +4009,7 @@ function createSolver(rules) {
     return score;
   }
 
-  function repair(input, assignments, fromDate = null) {
+  function repair(input, assignments) {
     const clubAt = createClubLookup(input);
     const calendar = buildCalendar(rules, input, assignments);
     const dayByDate = new Map(calendar.days.map((day) => [day.date, day]));
@@ -4006,8 +4029,7 @@ function createSolver(rules) {
         const workdays = days.filter((day) => !day.isRestDay);
 
         const weekDate = workdays[0]?.date;
-        const weekFrozen = fromDate !== null && weekDate !== undefined && weekDate < fromDate;
-        if (workdays.length > 0 && !weekFrozen && input.weekCommands[week.start] === undefined) {
+        if (workdays.length > 0 && weekDate !== undefined && input.weekCommands[week.start] === undefined) {
           const date = workdays[0].date;
           const original = assignments.weekCommands[week.start];
           for (const id of candidatesAt(date)) {
@@ -4025,7 +4047,6 @@ function createSolver(rules) {
 
         for (const day of days) {
           if (!day.isRestDay || !day.isSettled) continue;
-          if (fromDate !== null && day.date < fromDate) continue;
           if (input.dayCommands[day.date] !== undefined) continue;
           const original = assignments.dayCommands[day.date];
           for (const id of candidatesAt(day.date)) {
@@ -4075,6 +4096,9 @@ const $ = (id) => document.getElementById(id);
 
 const TIMELINE = rules.timeline;
 
+/** 规则文件本身：需要用到「属性次序」这类原始顺序的地方（例如达标清单的行序）。 */
+const RULES = rules;
+
 const ATTRIBUTES = rules.attributes.map((attribute) => ({
   id: attribute.id,
   name: attribute.name,
@@ -4087,11 +4111,20 @@ const ATTRIBUTES = rules.attributes.map((attribute) => ({
 const CLUB_EXPERIENCE = {
   id: rules.clubExperience.id,
   name: rules.clubExperience.name,
+  min: rules.clubExperience.min,
+  max: rules.clubExperience.max,
 };
 
-/** 详情条里的 10 项数值：9 项属性 + 当前社团的社团经验。 */
+/** 详情条与左栏共用的 10 项数值：9 项属性 + 当前社团的社团经验。两者形状一致，
+ *  都带 `min` / `max`，所以渲染两侧都不需要按 id 分支（社团经验没有 `direction`，即正向）。 */
 const VALUE_FIELDS = [
-  ...ATTRIBUTES.map((attribute) => ({ id: attribute.id, name: attribute.name })),
+  ...ATTRIBUTES.map((attribute) => ({
+    id: attribute.id,
+    name: attribute.name,
+    direction: attribute.direction,
+    min: attribute.min,
+    max: attribute.max,
+  })),
   CLUB_EXPERIENCE,
 ];
 
@@ -4125,8 +4158,6 @@ const state = {
   assignments: null,
   /** `plan()` 的结果；`null` 表示还没算过。 */
   result: null,
-  /** 求解器给的不可达诊断（排不出达标日程时才存在）。 */
-  diagnosis: null,
   /** 尚未计算的改动数。 */
   pending: 0,
   computing: false,
@@ -4142,6 +4173,10 @@ const state = {
 /** app.js 注入的渲染入口；界面模块只管改状态，不互相直接调用渲染。 */
 const hooks = {
   render() {},
+  /** 输入变了之后要落盘；由 app.js 注入（见 web/session.js）。 */
+  persist() {},
+  /** 给使用者的一句提示（起点已前移、求解失败等）；由 app.js 注入。`null` 表示清空。 */
+  notice() {},
 };
 
 function commandName(id) {
@@ -4252,9 +4287,32 @@ function resolveDayCommand(date) {
 function setResult(result) {
   state.result = result;
   state.dayByDate = new Map(result.days.map((day) => [day.date, day]));
-  state.diagnosis = null;
   state.computedAt = new Date();
   state.pending = 0;
+}
+
+/**
+ * 排程与结果整个作废，回到「尚未计算」。
+ * 三处会用到：导入换了整套输入、起点前移（旧排程只覆盖旧区间）、以及将来任何"前提换了"的动作。
+ */
+function clearResult() {
+  state.assignments = null;
+  state.result = null;
+  state.dayByDate = new Map();
+  state.computedAt = null;
+  state.pending = 0;
+}
+
+/** 把视图与选区都挪到某一天：起点前移、导入换了输入、首次挂载，日历都该跟过去。 */
+function focusDate(date) {
+  state.selection = { from: date, to: date };
+  state.viewMonth = monthOf(date);
+}
+
+/** 起点社团已经攒下的经验；没有加入社团时是 0。 */
+function initialClubExperience(input = state.input) {
+  const club = input.initialClub;
+  return club ? (input.clubExperience[club] ?? 0) : 0;
 }
 
 function dayOf(date) {
@@ -4268,12 +4326,15 @@ function valueOf(date, id) {
   return id === CLUB_EXPERIENCE.id ? day.clubExperience : day.attributes[id];
 }
 
-/** 当日增量：与前一天结算后的值比较；时间轴第一天与起始属性比较。 */
+/** 当日增量：与前一天结算后的值比较；时间轴第一天（＝已玩到）与起始属性比较。 */
 function deltaOf(date, id) {
   const day = dayOf(date);
   if (!day) return null;
-  if (date === state.input.startDate) {
-    const base = id === CLUB_EXPERIENCE.id ? 0 : state.input.attributes[id];
+  if (date === state.input.playedUpTo) {
+    // 起点当天的基准就是"起点状态"本身（含社团经验的起点值），不是硬编码的 0，
+    // 否则已玩到那天的社团经验增量会把整个起点值当成当天涨的。
+    const base =
+      id === CLUB_EXPERIENCE.id ? initialClubExperience() : state.input.attributes[id];
     const current = id === CLUB_EXPERIENCE.id ? day.clubExperience : day.attributes[id];
     return current - base;
   }
@@ -4289,6 +4350,8 @@ function deltaOf(date, id) {
 function markDirty(count = 1) {
   state.pending += count;
   hooks.render();
+  // 输入变了就落盘：刷新不丢，是本地保存承诺的全部。
+  hooks.persist();
 }
 
 /** 改完周指令后，把本周全部平日亮一下——"这一改连坐六天"要看得见。 */
@@ -4385,7 +4448,7 @@ function pickedAttributes(host) {
     .filter((box) => box.checked)
     .map((box) => box.value);
 }
-return { UNSET, CHOICE_EMPTY, CHOICE_NO_CLUB, $, TIMELINE, ATTRIBUTES, CLUB_EXPERIENCE, VALUE_FIELDS, CLUBS, COMMANDS, SOURCE_LABELS, SKIP_LABELS, BLOCK_LABELS, state, hooks, commandName, attributeName, opText, fmt1, isStale, defaultGoal, clampDeadline, clubAt, selectedDates, isRangeSelection, inTimeline, monthOf, monthLabel, shiftMonth, monthCells, commandsAvailableAt, isRestOn, resolveDayCommand, setResult, dayOf, valueOf, deltaOf, markDirty, flashWeek, openModal, closeModal, modalIsOpen, field, numberInput, selectOf, attributePicker, pickedAttributes };
+return { UNSET, CHOICE_EMPTY, CHOICE_NO_CLUB, $, TIMELINE, RULES, ATTRIBUTES, CLUB_EXPERIENCE, VALUE_FIELDS, CLUBS, COMMANDS, SOURCE_LABELS, SKIP_LABELS, BLOCK_LABELS, state, hooks, commandName, attributeName, opText, fmt1, isStale, defaultGoal, clampDeadline, clubAt, selectedDates, isRangeSelection, inTimeline, monthOf, monthLabel, shiftMonth, monthCells, commandsAvailableAt, isRestOn, resolveDayCommand, setResult, clearResult, focusDate, initialClubExperience, dayOf, valueOf, deltaOf, markDirty, flashWeek, openModal, closeModal, modalIsOpen, field, numberInput, selectOf, attributePicker, pickedAttributes };
 })();
 __ns["web/calendar.js"] = (() => {
 const { addDays, weekStartOf, weekdayOf } = __ns["src/dates.js"];
@@ -4431,12 +4494,10 @@ function buildCell(date) {
   const weekday = weekdayOf(date);
   const inRange = inTimeline(date);
   const rest = isRestOn(date);
-  const history = state.input.playedUpTo ? date < state.input.playedUpTo : false;
 
   if (weekday === 0) cell.classList.add('is-sun');
   else cell.classList.add('is-wd');
   if (rest && weekday !== 0) cell.classList.add('is-rest');
-  if (history) cell.classList.add('is-history');
 
   const skipSource = inRange ? skipSourceOn(date, rest) : null;
   if (skipSource) cell.classList.add('is-empty');
@@ -4456,6 +4517,9 @@ function buildCell(date) {
   command.className = 'dcmd';
   if (skipSource) {
     command.textContent = '空过';
+  } else if (date === state.input.playedUpTo) {
+    // 状态快照：按 ADR-0004，起点当天不结算，写"要执行的指令"会骗人。
+    command.textContent = '起点';
   } else if (inRange) {
     const resolved = resolveDayCommand(date);
     command.textContent = resolved.commandId ? commandName(resolved.commandId) : '待定';
@@ -4536,7 +4600,7 @@ function buildMonth(key) {
       cell.setAttribute('aria-disabled', 'true');
       cell.tabIndex = -1;
       // 溢出格是"另一个月的那一天"，不该携带本月的任何标记——包括终点的底边与「终点」标签。
-      cell.classList.remove('is-empty', 'is-rest', 'is-history', 'is-end', 'is-played');
+      cell.classList.remove('is-empty', 'is-rest', 'is-end', 'is-played');
       cell.querySelector('.dcmd').textContent = '—';
       const flags = cell.querySelector('.flags');
       if (flags) flags.remove();
@@ -4611,7 +4675,7 @@ function renderDetail() {
   const weekNo =
     Math.round(
       (Date.parse(`${weekStart}T00:00:00Z`) -
-        Date.parse(`${weekStartOf(state.input.startDate)}T00:00:00Z`)) /
+        Date.parse(`${weekStartOf(state.input.playedUpTo)}T00:00:00Z`)) /
         604800000,
     ) + 1;
   const weekText = document.createElement('span');
@@ -4786,15 +4850,109 @@ function wireCalendar() {
 }
 return { renderCalendar, renderDetail, setSelection, selectDate, goToMonth, jumpToDate, cellFor, wireCalendar };
 })();
+__ns["src/frontier.js"] = (() => {
+const { createClubLookup } = __ns["src/clubs.js"];
+const { addDays } = __ns["src/dates.js"];
+const { REST_DAY, WEEKDAY, clubExperienceGain } = __ns["src/settlement.js"];
+// 「设为已玩到」的领域语义：把时间轴起点推到那一天（见 ADR-0004）。
+//
+// 合并起点与已玩到之后，这一个动作同时是三件事：
+//   1. 起点前移到 date；
+//   2. 当前属性、起始社团、社团经验换成**求解结果在那一天的结算后状态**——
+//      那一天在新区间里是起点快照（不结算，见 src/calendar.js），所以接过来不会重复计入；
+//   3. 该日之前的显式指定清掉：它们在新区间之外，留着只会让人以为还生效。
+//
+// 属性按游戏口径**向下取整**（与约束判定 meets 的取整一致），因为输入里的属性必须是整数。
+
+
+
+
+
+/** 只保留键满足 `keep` 的那些项。 */
+function keepEntries(map, keep) {
+  return Object.fromEntries(Object.entries(map).filter(([key]) => keep(key)));
+}
+
+/**
+ * date 那一刻**各社团**的经验：从旧起点往后重放求解结果里社团指令的执行。
+ *
+ * 求解结果每天只暴露"当前社团"那一份计数，所以光看那一天答不出"我离开 A 时 A 攒到了几"——
+ * 而输入里的映射只有上一次快照的值。社团经验是每个社团各自一份，漏掉哪一份，
+ * "设为已玩到"拿到的就不是完整的状态快照（见 ADR-0004 与规格 D5）。
+ */
+function clubExperienceAt(rules, input, planResult, date) {
+  const experience = { ...input.clubExperience };
+  const commands = new Map(rules.commands.map((command) => [command.id, command]));
+  const limits = rules.clubExperience;
+
+  for (const day of planResult.days) {
+    // 只重放"旧起点之后、date 之前（含）"这一段：旧起点当天的状态已经在映射里。
+    if (day.date <= input.playedUpTo || day.date > date) continue;
+    if (!day.isSettled || !day.commandId || day.commandBlocked) continue;
+
+    const earned = clubExperienceGain(
+      rules,
+      commands.get(day.commandId),
+      day.isRestDay ? REST_DAY : WEEKDAY,
+    );
+    if (earned === 0) continue;
+    const clubId = commands.get(day.commandId).clubId;
+    experience[clubId] = Math.min(limits.max, Math.max(limits.min, (experience[clubId] ?? 0) + earned));
+  }
+  return experience;
+}
+
+/**
+ * 能不能从那一天取到状态快照？只有**往后推**、并且求解结果覆盖那一天时才行。
+ * 往回退没有历史可以重放，只能把日期挪回去、状态保持原样（调用方负责说清楚）。
+ */
+function canTakeSnapshot(input, planResult, date) {
+  return date > input.playedUpTo && Boolean(planResult?.days?.some((entry) => entry.date === date));
+}
+
+/**
+ * @param rules      规则（社团经验的增速与上限从这里取）
+ * @param input      当前输入
+ * @param planResult `plan()` 的结果；没有它就只能移动日期（调用方负责判断）
+ * @param date       新的已玩到日期
+ */
+function rollForward(rules, input, planResult, date) {
+  const day = planResult?.days?.find((entry) => entry.date === date);
+  if (!day) return { ...input, playedUpTo: date };
+
+  const club = createClubLookup(input)(date);
+  return {
+    ...input,
+    playedUpTo: date,
+    attributes: Object.fromEntries(
+      Object.entries(day.attributes).map(([id, value]) => [id, Math.floor(value)]),
+    ),
+    clubExperience: clubExperienceAt(rules, input, planResult, date),
+    initialClub: club ?? null,
+    // 起点当天已经折算进 initialClub，所以保留下来的切换都严格晚于它。
+    clubChanges: input.clubChanges.filter((change) => change.date > date),
+    restDays: input.restDays.filter((entry) => entry >= date),
+    skippedDays: input.skippedDays.filter((entry) => entry >= date),
+    dayCommands: keepEntries(input.dayCommands, (key) => key >= date),
+    // 周指令以周锚点为键：跨过起点的那个自然周还剩几天，那一周的周指令就还有效。
+    weekCommands: keepEntries(input.weekCommands, (key) => addDays(key, 6) >= date),
+  };
+}
+return { canTakeSnapshot, rollForward };
+})();
 __ns["web/edits.js"] = (() => {
-const { weekStartOf, weekdayOf } = __ns["src/dates.js"];
-const { ATTRIBUTES, CHOICE_EMPTY, CHOICE_NO_CLUB, TIMELINE, UNSET, clampDeadline, defaultGoal, flashWeek, inTimeline, isRestOn, markDirty, state } = __ns["web/ui.js"];
+const { canTakeSnapshot, rollForward } = __ns["src/frontier.js"];
+const { clampToLimits } = __ns["src/input.js"];
+const { isDate, weekStartOf, weekdayOf } = __ns["src/dates.js"];
+const { ATTRIBUTES, CHOICE_EMPTY, CHOICE_NO_CLUB, CLUB_EXPERIENCE, RULES, TIMELINE, UNSET, clampDeadline, clearResult, defaultGoal, flashWeek, focusDate, hooks, inTimeline, isRestOn, markDirty, state } = __ns["web/ui.js"];
 // 编辑动作：把界面上的操作写进 `input`，并登记"待计算"。
 //
 // 一条硬规则：**这里从不改求解器给出的 assignments**。使用者显式指定的内容进 input，
 // 求解器的填空只是填空（见 src/calendar.js 的 resolveCommand）。
 //
 // 「平日的指令就是周指令」这条领域规则在这里落地：给平日指定指令＝给它的周锚点写周指令。
+
+
 
 
 
@@ -4888,25 +5046,61 @@ function setCommands(dates, choice) {
   for (const weekStart of weeks) flashWeek(weekStart);
 }
 
-/** 「已玩到」：历史是前缀，取到这一天（含）。 */
+/**
+ * 「已玩到」：时间轴的起点。它既是"玩到哪了"，也是规划区间从这里开始——
+ * 起点与已玩到已经合并成同一个日期（见 ADR-0004），所以只此一处入口。
+ *
+ * 往前推且有求解结果时，把那一天的**结算后状态**接过来（属性 / 起始社团 / 各社团经验），
+ * 旧排程随之作废。没有结果、或者往回退时，只能挪日期、状态保持原样：
+ * 历史概念已经作废，往回退没有东西可以重放，"那一天的状态"无从谈起，所以如实说清楚。
+ */
 function setPlayedUpTo(date) {
-  const clamped = date < state.input.startDate ? state.input.startDate : date;
-  const next = clamped > TIMELINE.lastSettlement ? TIMELINE.lastSettlement : clamped;
+  // 清空日期框会送出空串：那不是一次移动，忽略即可（否则会被当成"早于时间轴起点"）。
+  if (!isDate(date)) return;
+
+  const lower = date < TIMELINE.start ? TIMELINE.start : date;
+  const next = lower > TIMELINE.lastSettlement ? TIMELINE.lastSettlement : lower;
   if (state.input.playedUpTo === next) return;
-  state.input.playedUpTo = next;
-  markDirty();
+
+  const movedBack = next < state.input.playedUpTo;
+  const takeSnapshot = canTakeSnapshot(state.input, state.result, next);
+
+  if (takeSnapshot) {
+    state.input = rollForward(RULES, state.input, state.result, next);
+    clearResult();
+  } else {
+    state.input.playedUpTo = next;
+    // 回退之后旧排程的起点在新起点之后，留着就对不上了。
+    if (movedBack && state.result) clearResult();
+  }
+
+  // 起点变了，视图与选区都跟到那一天——否则日历会停在已经没有格子的旧位置。
+  focusDate(next);
+  markDirty(takeSnapshot && !movedBack ? 0 : 1);
+
+  hooks.notice(
+    takeSnapshot
+      ? `起点已前移到 ${next}：当前属性、社团与社团经验取自那一天的结算结果，点「计算」重排。`
+      : movedBack
+        ? `起点已回退到 ${next}：没有历史可以重放，当前属性、社团与社团经验保持原样，请按当时的实际状态核对。`
+        : `还没有计算结果：只把起点移到 ${next}，当前属性、社团与社团经验保持原样。`,
+  );
 }
 
 // ---------------------------------------------------------------- 左栏输入
 
-function setStartDate(date) {
-  state.input.startDate = date;
-  if (state.input.playedUpTo < date) state.input.playedUpTo = date;
+function setAttributeValue(attributeId, value) {
+  const attribute = ATTRIBUTES.find((entry) => entry.id === attributeId);
+  state.input.attributes[attributeId] = clampToLimits(value, attribute);
   markDirty();
 }
 
-function setAttributeValue(attributeId, value) {
-  state.input.attributes[attributeId] = value;
+/** 某个社团已经攒下的经验——每个社团各自一份，是当前状态的一部分。 */
+function setClubExperience(clubId, value) {
+  state.input.clubExperience = {
+    ...state.input.clubExperience,
+    [clubId]: clampToLimits(value, CLUB_EXPERIENCE),
+  };
   markDirty();
 }
 
@@ -4917,13 +5111,22 @@ function setInitialClub(clubId) {
 
 // ---------------------------------------------------------------- 目标
 
+/** 阈值只认整数（见 validateInput），而 `type=number` 允许手输小数——落库前先取整。 */
+function withIntegerThreshold(goal) {
+  if (!Number.isFinite(goal?.value)) return goal;
+  return { ...goal, value: Math.round(goal.value) };
+}
+
 function addGlobalConstraint(goal) {
-  state.input.globalConstraints.push(goal ?? defaultGoal());
+  state.input.globalConstraints.push(withIntegerThreshold(goal ?? defaultGoal()));
   markDirty();
 }
 
 function updateGlobalConstraint(index, patch) {
-  state.input.globalConstraints[index] = { ...state.input.globalConstraints[index], ...patch };
+  state.input.globalConstraints[index] = withIntegerThreshold({
+    ...state.input.globalConstraints[index],
+    ...patch,
+  });
   markDirty();
 }
 
@@ -4933,12 +5136,15 @@ function removeGlobalConstraint(index) {
 }
 
 function addEndingGoal(goal) {
-  state.input.endingGoals.push(goal ?? defaultGoal());
+  state.input.endingGoals.push(withIntegerThreshold(goal ?? defaultGoal()));
   markDirty();
 }
 
 function updateEndingGoal(index, patch) {
-  state.input.endingGoals[index] = { ...state.input.endingGoals[index], ...patch };
+  state.input.endingGoals[index] = withIntegerThreshold({
+    ...state.input.endingGoals[index],
+    ...patch,
+  });
   markDirty();
 }
 
@@ -4948,12 +5154,12 @@ function removeEndingGoal(index) {
 }
 
 function addMiniGoal(goal) {
-  state.input.miniGoals.push(goal);
+  state.input.miniGoals.push(withIntegerThreshold(goal));
   markDirty();
 }
 
 function updateMiniGoal(index, goal) {
-  state.input.miniGoals[index] = goal;
+  state.input.miniGoals[index] = withIntegerThreshold(goal);
   markDirty();
 }
 
@@ -4986,16 +5192,18 @@ function setClubChange(date, choice) {
   }
   markDirty();
 }
-return { choiceToCommandId, commandIdToChoice, setRestDays, setSkipped, setCommands, setPlayedUpTo, setStartDate, setAttributeValue, setInitialClub, addGlobalConstraint, updateGlobalConstraint, removeGlobalConstraint, addEndingGoal, updateEndingGoal, removeEndingGoal, addMiniGoal, updateMiniGoal, removeMiniGoal, draftMiniGoal, setClubChange };
+return { choiceToCommandId, commandIdToChoice, setRestDays, setSkipped, setCommands, setPlayedUpTo, setAttributeValue, setClubExperience, setInitialClub, addGlobalConstraint, updateGlobalConstraint, removeGlobalConstraint, addEndingGoal, updateEndingGoal, removeEndingGoal, addMiniGoal, updateMiniGoal, removeMiniGoal, draftMiniGoal, setClubChange };
 })();
 __ns["web/panels.js"] = (() => {
 const { weekdayOf, weekStartOf } = __ns["src/dates.js"];
-const { $, ATTRIBUTES, CHOICE_EMPTY, CHOICE_NO_CLUB, CLUBS, TIMELINE, UNSET, attributeName, attributePicker, clampDeadline, closeModal, clubAt, commandsAvailableAt, defaultGoal, field, fmt1, isRestOn, isStale, modalIsOpen, numberInput, opText, openModal, pickedAttributes, selectOf, selectedDates, isRangeSelection, state } = __ns["web/ui.js"];
+const { goalDisplayOrder } = __ns["src/goals.js"];
+const { $, ATTRIBUTES, CHOICE_EMPTY, CHOICE_NO_CLUB, CLUBS, RULES, TIMELINE, UNSET, attributeName, attributePicker, clampDeadline, closeModal, clubAt, commandsAvailableAt, defaultGoal, field, fmt1, isRestOn, isStale, modalIsOpen, numberInput, opText, openModal, pickedAttributes, selectOf, selectedDates, isRangeSelection, state } = __ns["web/ui.js"];
 const { addEndingGoal, addGlobalConstraint, addMiniGoal, commandIdToChoice, draftMiniGoal, removeEndingGoal, removeGlobalConstraint, removeMiniGoal, setClubChange, setCommands, setPlayedUpTo, setRestDays, setSkipped, updateEndingGoal, updateGlobalConstraint, updateMiniGoal } = __ns["web/edits.js"];
 const { jumpToDate, selectDate } = __ns["web/calendar.js"];
-// 达标清单、不可达诊断、右键菜单、小目标弹窗与目标编辑器。
+// 达标清单、右键菜单、小目标弹窗与目标编辑器。
 //
 // 「编辑」与「查看状态」在这里合到一处：每一行既是"达没达到"，也是改它的入口。
+
 
 
 
@@ -5091,17 +5299,15 @@ function columnsRow() {
 }
 
 /**
- * 「未达标的条目排在前」（规格 R14）。排序是稳定的：同一档内保持输入顺序，
- * 因为行的编辑/删除动作靠的是**输入数组里的下标**，不是显示位置。
+ * 达标清单的行序（见 `goalDisplayOrder`）：结局目标与全局约束按属性次序，
+ * 小目标按截止日期。排序**只影响显示**——行的编辑/删除靠输入数组下标。
  */
-function orderedRows(goals, evaluated) {
-  const rank = (entry) => {
-    if (!entry) return 1;
-    return entry.state === 'met' ? 2 : 0;
-  };
-  return goals
-    .map((goal, index) => ({ goal, index, ev: evaluated[index] ?? null }))
-    .sort((a, b) => rank(a.ev) - rank(b.ev) || a.index - b.index);
+function orderedRows(goals, evaluated, kind) {
+  return goalDisplayOrder(RULES, goals, kind).map((index) => ({
+    goal: goals[index],
+    index,
+    ev: evaluated[index] ?? null,
+  }));
 }
 
 function group() {
@@ -5146,7 +5352,7 @@ function renderGoals() {
     ),
   );
   if (state.input.endingGoals.length > 0) ending.append(columnsRow());
-  for (const { goal, index, ev } of orderedRows(state.input.endingGoals, endingEval)) {
+  for (const { goal, index, ev } of orderedRows(state.input.endingGoals, endingEval, 'attribute')) {
     ending.append(
       goalRow({
         name: attributeName(goal.attribute),
@@ -5175,7 +5381,7 @@ function renderGoals() {
     ),
   );
   if (state.input.miniGoals.length > 0) mini.append(columnsRow());
-  for (const { goal, index, ev } of orderedRows(state.input.miniGoals, miniEval)) {
+  for (const { goal, index, ev } of orderedRows(state.input.miniGoals, miniEval, 'deadline')) {
     mini.append(
       goalRow({
         name: `${goal.deadline} ${miniGoalSummary(goal)}`,
@@ -5216,7 +5422,7 @@ function renderGoals() {
     ),
   );
   if (state.input.globalConstraints.length > 0) global.append(columnsRow());
-  for (const { goal, index, ev } of orderedRows(state.input.globalConstraints, globalEval)) {
+  for (const { goal, index, ev } of orderedRows(state.input.globalConstraints, globalEval, 'attribute')) {
     let actual = '—';
     if (ev) {
       if (ev.state === 'met') actual = ev.metOn ? `${ev.metOn} 达成` : '成立';
@@ -5238,65 +5444,6 @@ function renderGoals() {
     );
   }
   host.append(global);
-}
-
-// ---------------------------------------------------------------- 诊断
-
-function renderDiagnosis() {
-  const host = $('diagnosis');
-  host.textContent = '';
-  host.classList.toggle('stale', isStale());
-
-  const diagnosis = state.diagnosis;
-  if (!diagnosis) return;
-
-  const head = document.createElement('div');
-  head.className = 'goals-head';
-  const title = document.createElement('span');
-  title.textContent = '不可达诊断（三项并列）';
-  head.append(title);
-  host.append(head);
-
-  const cards = [];
-  if (diagnosis.miniGoalsBlocking) {
-    const cancelled = diagnosis.mustCancel ?? [];
-    const last = cancelled.length > 0 ? cancelled[cancelled.length - 1] : null;
-    cards.push({
-      title: '小目标 是它在挡路',
-      text: last
-        ? `由近至远取消 ${cancelled.length} 条（到「${last.deadline} ${
-            last.attributes.map((id) => attributeName(id)).join('+')
-          } ${opText(last.op)} ${last.value}」为止）即可达标。`
-        : '取消全部小目标即可达标。',
-    });
-  } else {
-    cards.push({ title: '小目标 不是（唯一的）障碍', text: '只取消小目标不足以达标。' });
-  }
-
-  cards.push({
-    title: '结局 vs 全局',
-    text: diagnosis.endingAndGlobalConflict
-      ? '两者彼此冲突：必须连全局约束也拿掉，结局目标才可达。'
-      : '两者彼此不冲突。',
-  });
-
-  cards.push({
-    title: diagnosis.endingGoalsUnreachable ? '结局目标本身不可达' : '小目标之外',
-    text: diagnosis.endingGoalsUnreachable
-      ? '把小目标全部取消后仍不可达——问题出在结局目标本身。'
-      : '把小目标全部取消即可达标。',
-  });
-
-  for (const card of cards) {
-    const node = document.createElement('div');
-    node.className = 'diag-card';
-    const heading = document.createElement('b');
-    heading.textContent = card.title;
-    const text = document.createElement('p');
-    text.textContent = card.text;
-    node.append(heading, text);
-    host.append(node);
-  }
 }
 
 // ---------------------------------------------------------------- 右键菜单
@@ -5378,7 +5525,7 @@ function openMenu(clientX, clientY, date) {
   host.append(separator());
   host.append(
     menuItem(`设为已玩到（${state.selection.to}）`, () => setPlayedUpTo(state.selection.to), {
-      title: '历史是前缀，取选区的最后一天',
+      title: '它同时是时间轴的起点；取选区的最后一天',
     }),
   );
 
@@ -5700,23 +5847,91 @@ function wirePanels() {
     if (event.target === $('modal')) closeModal();
   });
 }
-return { renderGoals, renderDiagnosis, openMiniGoalPopup, wirePanels };
+return { renderGoals, openMiniGoalPopup, wirePanels };
+})();
+__ns["web/session.js"] = (() => {
+const { CURRENT_VERSION, fromJson, toJson } = __ns["src/input.js"];
+// 输入本地保存。
+//
+// 只存**输入**，不存结果：刷新之后回到「尚未计算」，由使用者自己点「计算」。
+// 求解是确定性的（同一输入两次结果完全相同），所以重算就能复原，不必把结果落盘。
+//
+// 键名带输入版本号：版本一变，旧键自然读不到，等于"版本不匹配即丢弃重来"。
+// 浏览器禁止 localStorage 时（隐私模式，或某些浏览器打开 file:// 单文件）静默降级为不保存，
+// 应用照常工作——保存是便利，不是依赖。
+
+
+
+const KEY = `tokimeki-planner/input/v${CURRENT_VERSION}`;
+
+/** 能读写就返回它，否则 null。探测一次，避免每个调用点各写一份 try/catch。 */
+function usableStorage() {
+  try {
+    const storage = globalThis.localStorage;
+    if (!storage) return null;
+    const probe = `${KEY}/probe`;
+    storage.setItem(probe, '1');
+    storage.removeItem(probe);
+    return storage;
+  } catch {
+    return null;
+  }
+}
+
+/** 读回上次的输入；没有、读坏、或版本不对都返回 null。 */
+function loadInput(rules) {
+  const storage = usableStorage();
+  if (!storage) return null;
+
+  let text = null;
+  try {
+    text = storage.getItem(KEY);
+  } catch {
+    return null;
+  }
+  if (text === null) return null;
+
+  try {
+    return fromJson(text, rules);
+  } catch {
+    // 存坏了的输入不该让应用起不来：丢掉它，回到出厂默认。
+    try {
+      storage.removeItem(KEY);
+    } catch {
+      /* 删不掉也就算了 */
+    }
+    return null;
+  }
+}
+
+function saveInput(input) {
+  const storage = usableStorage();
+  if (!storage) return;
+  try {
+    storage.setItem(KEY, toJson(input));
+  } catch {
+    /* 配额满等情况：不保存，也不打扰使用者 */
+  }
+}
+return { loadInput, saveInput };
 })();
 __ns["web/app.js"] = (() => {
 const rules = __ns["data/rules.json"];
 const { createPlanner } = __ns["src/plan.js"];
 const { createSolver } = __ns["src/solver.js"];
-const { fromJson, toJson } = __ns["src/input.js"];
-const { $, ATTRIBUTES, CLUBS, TIMELINE, UNSET, hooks, isStale, monthOf, setResult, state } = __ns["web/ui.js"];
+const { exportFileName, fromJson, toJson } = __ns["src/input.js"];
+const { $, CLUBS, CLUB_EXPERIENCE, TIMELINE, UNSET, VALUE_FIELDS, clearResult, focusDate, hooks, initialClubExperience, isStale, setResult, state } = __ns["web/ui.js"];
 const { renderCalendar, renderDetail, wireCalendar } = __ns["web/calendar.js"];
-const { renderDiagnosis, renderGoals, wirePanels } = __ns["web/panels.js"];
-const { setAttributeValue, setInitialClub, setPlayedUpTo, setStartDate } = __ns["web/edits.js"];
+const { renderGoals, wirePanels } = __ns["web/panels.js"];
+const { loadInput, saveInput } = __ns["web/session.js"];
+const { setAttributeValue, setClubExperience, setInitialClub, setPlayedUpTo } = __ns["web/edits.js"];
 // 主线程入口：接线、计算流程、左栏输入与 JSON 导入导出。
 //
 // 页面从 file:// 双击打开，而有些浏览器在 file:// 下拒绝构造 blob Worker，
 // 所以 Worker 有降级路径：建不了或中途报错就回退到主线程，保证"双击即用"成立。
 //
 // 计算是**显式**的：改任何输入只登记"待计算"，点「计算」才跑求解器。
+
 
 
 
@@ -5786,24 +6001,24 @@ function requestPlan(input) {
   });
 }
 
-function runSolveOnMainThread(input, options) {
+function runSolveOnMainThread(input) {
   try {
-    return { ok: true, assignments: inlineSolve(input, options) };
+    return { ok: true, assignments: inlineSolve(input) };
   } catch (error) {
     return { ok: false, error: error.message };
   }
 }
 
-function requestSolve(input, options) {
-  if (workerUnavailable || !worker) return Promise.resolve(runSolveOnMainThread(input, options));
+function requestSolve(input) {
+  if (workerUnavailable || !worker) return Promise.resolve(runSolveOnMainThread(input));
 
   const id = ++requestId;
   return new Promise((resolve) => {
     pending.set(id, resolve);
-    worker.postMessage({ id, type: 'solve', input, ...options });
+    worker.postMessage({ id, type: 'solve', input });
   }).then((reply) => {
     if (!reply.fallback) return reply;
-    return runSolveOnMainThread(input, options);
+    return runSolveOnMainThread(input);
   });
 }
 
@@ -5852,10 +6067,7 @@ async function compute() {
   renderComputeRow();
 
   try {
-    const solved = await requestSolve(state.input, {
-      previous: state.assignments,
-      fromDate: null,
-    });
+    const solved = await requestSolve(state.input);
     if (solved.cancelled) {
       notice = { text: '已取消计算。' };
       return;
@@ -5876,7 +6088,6 @@ async function compute() {
     }
 
     setResult(planned.result);
-    state.diagnosis = solved.assignments.diagnosis ?? null;
   } finally {
     state.computing = false;
     stopProgress();
@@ -5889,8 +6100,6 @@ async function compute() {
 const attributeInputs = new Map();
 
 function buildRail() {
-  $('rail-start-date').min = TIMELINE.start;
-  $('rail-start-date').max = TIMELINE.lastSettlement;
   $('rail-played-up-to').min = TIMELINE.start;
   $('rail-played-up-to').max = TIMELINE.lastSettlement;
   $('jump-date').min = TIMELINE.start;
@@ -5911,36 +6120,51 @@ function buildRail() {
 
   const host = $('attributes');
   host.textContent = '';
-  for (const attribute of ATTRIBUTES) {
+  // 10 格：9 项属性 + 当前社团的社团经验。后者也是当前状态的一部分——
+  // 合并起点与已玩到之后，它只能由输入承载（见 src/frontier.js）。
+  for (const field of VALUE_FIELDS) {
     const label = document.createElement('label');
-    label.className = `attr-cell ${attribute.direction === 'down' ? 'down' : ''}`;
+    label.className = `attr-cell ${field.direction === 'down' ? 'down' : ''}`;
 
     const caption = document.createElement('span');
-    caption.textContent = attribute.name;
+    caption.textContent = field.name;
 
     const input = document.createElement('input');
     input.type = 'number';
-    input.min = String(attribute.min);
-    input.max = String(attribute.max);
+    input.min = String(field.min);
+    input.max = String(field.max);
     input.addEventListener('change', () => {
-      setAttributeValue(attribute.id, Number(input.value));
+      setRailValue(field.id, Number(input.value));
     });
 
     label.append(caption, input);
     host.append(label);
-    attributeInputs.set(attribute.id, input);
+    attributeInputs.set(field.id, input);
   }
 }
 
+/** 左栏 10 项数值的读写口径：9 项属性在 `attributes` 里，社团经验按**当前社团**取。 */
+function railValue(id) {
+  if (id !== CLUB_EXPERIENCE.id) return state.input.attributes[id];
+  return initialClubExperience();
+}
+
+function setRailValue(id, value) {
+  if (id !== CLUB_EXPERIENCE.id) return setAttributeValue(id, value);
+  // 没加入社团时这一格没有落点：社团经验属于某个社团。
+  const club = state.input.initialClub;
+  if (club) setClubExperience(club, value);
+}
+
 function syncRail() {
-  $('rail-start-date').value = state.input.startDate;
   $('rail-played-up-to').value = state.input.playedUpTo;
   $('rail-initial-club').value = state.input.initialClub ?? UNSET;
-  for (const attribute of ATTRIBUTES) {
-    const input = attributeInputs.get(attribute.id);
-    if (input && document.activeElement !== input) {
-      input.value = String(state.input.attributes[attribute.id]);
-    }
+  for (const field of VALUE_FIELDS) {
+    const input = attributeInputs.get(field.id);
+    if (!input || document.activeElement === input) continue;
+    input.value = String(railValue(field.id));
+    // 没加入社团时，社团经验这一格无从填起，直接置灰；其余 9 格永远是活的。
+    input.disabled = field.id === CLUB_EXPERIENCE.id && state.input.initialClub === null;
   }
 }
 
@@ -5997,11 +6221,15 @@ function renderAll() {
   renderCalendar();
   renderDetail();
   renderGoals();
-  renderDiagnosis();
   renderComputeRow();
 }
 
 hooks.render = renderAll;
+hooks.persist = () => saveInput(state.input);
+hooks.notice = (text, error = false) => {
+  notice = text === null ? null : { text, error };
+  renderComputeRow();
+};
 
 // ---------------------------------------------------------------- JSON
 
@@ -6010,7 +6238,7 @@ function exportJson() {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = 'tokimeki-planner-input.json';
+  link.download = exportFileName(state.input);
   // 必须真的进 DOM，且撤销要等到下载启动之后，否则部分浏览器下载会失败。
   document.body.append(link);
   link.click();
@@ -6026,16 +6254,12 @@ async function importJson(file) {
     renderComputeRow();
     return;
   }
-  // 导入换了整套输入：结果作废，回到"尚未计算"。
-  state.assignments = null;
-  state.result = null;
-  state.diagnosis = null;
-  state.dayByDate = new Map();
-  state.pending = 0;
-  state.computedAt = null;
-  state.viewMonth = monthOf(state.input.startDate);
-  state.selection = { from: state.input.startDate, to: state.input.startDate };
+  // 导入换了整套输入：结果作废，回到"尚未计算"，视图跟到新的起点。
+  clearResult();
+  focusDate(state.input.playedUpTo);
   notice = null;
+  // 导入的输入立刻成为"上次的输入"，刷新后要能接着用。
+  saveInput(state.input);
   renderAll();
 }
 
@@ -6065,12 +6289,15 @@ function wireTopbar() {
 }
 
 function wireRail() {
-  $('rail-start-date').addEventListener('change', (event) => setStartDate(event.target.value));
   $('rail-played-up-to').addEventListener('change', (event) => setPlayedUpTo(event.target.value));
   $('rail-initial-club').addEventListener('change', (event) => setInitialClub(event.target.value));
 }
 
 // ---------------------------------------------------------------- 启动
+
+// 先尝试恢复上次的输入；没有就沿用出厂默认。结果一律不恢复：刷新后是「尚未计算」。
+const restored = loadInput(rules);
+if (restored) state.input = restored;
 
 startWorker();
 buildRail();
@@ -6079,9 +6306,8 @@ wireRail();
 wireCalendar();
 wirePanels();
 
-state.selection = { from: state.input.startDate, to: state.input.startDate };
-state.viewMonth = monthOf(state.input.startDate);
-$('jump-date').value = state.input.startDate;
+focusDate(state.input.playedUpTo);
+$('jump-date').value = state.input.playedUpTo;
 
 renderAll();
 return {  };

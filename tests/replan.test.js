@@ -1,7 +1,9 @@
-// 票 07：重规划与用户指定。
+// 重规划与用户指定。
 //
-// 断言走 `solve(input, { previous, fromDate })` 与 `plan(input, { assignments })`：
-// 冻结前缀是求解器的一等能力，它的效果通过"重算前后的日程逐格比对"来观察。
+// 合并起点与已玩到之后，**每次求解都是整份重排**：不再有"冻结前缀 / 重算起点"
+// 这套机器（见 ADR-0004）。这个文件因此只断言两件事：
+//   1. 使用者显式指定的东西，工具一律不改写；
+//   2. 达不到就如实报告，不偷偷改掉使用者的指定。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -16,19 +18,6 @@ const plan = createPlanner(rules);
 const solve = createSolver(rules);
 
 const baseInput = () => clubInput(rules);
-
-function assertIdenticalBefore(before, after, cut) {
-  const left = dayMap(before);
-  const right = dayMap(after);
-  for (const [date, day] of left) {
-    if (date >= cut) break;
-    const other = right.get(date);
-    assert.equal(other.commandId, day.commandId, `${date} 的指令被改写了`);
-    assert.equal(other.isEmpty, day.isEmpty, `${date} 的空过状态被改写了`);
-    assert.equal(other.isRestDay, day.isRestDay, `${date} 的休息日标记被改写了`);
-    assert.deepEqual(other.attributes, day.attributes, `${date} 的属性变了`);
-  }
-}
 
 test('指定的周指令、日指令、休息日与跳过都原样保留，工具不改写', () => {
   const input = baseInput();
@@ -50,141 +39,23 @@ test('指定的周指令、日指令、休息日与跳过都原样保留，工�
   assert.equal(days.get('1996-05-16').isEmpty, true, '指定的跳过必须原样保留');
 });
 
-test('改动一处之后，重算起点之前的安排逐格不变', () => {
+test('同一输入连续求解两次，结果完全相同', () => {
+  const input = baseInput();
+  assert.deepEqual(solve(input), solve(structuredClone(input)));
+});
+
+test('改一处输入会让整份日程重排，而不是只补后面一段', () => {
   const input = baseInput();
   const before = plan(input, { assignments: solve(input) });
-  const cut = before.weeks[60].start;
-
-  const edited = structuredClone(input);
-  edited.weekCommands[cut] = 'cmd-rest';
-
-  const after = plan(edited, { assignments: solve(edited, { previous: solve(input), fromDate: cut }) });
-
-  assertIdenticalBefore(before, after, cut);
-
-  const editedWeekday = after.days.find((day) => day.date > cut && !day.isRestDay);
-  assert.equal(editedWeekday.commandId, 'cmd-rest', '改动的那一周应当用上新指令');
-});
-
-test('从重算起点起的部分，与"把前缀当成显式指定后整份重排"一致', () => {
-  const input = baseInput();
-  const previous = solve(input);
-  const cut = plan(input, { assignments: previous }).weeks[60].start;
-
-  const edited = structuredClone(input);
-  edited.weekCommands[cut] = 'cmd-rest';
-  const incremental = plan(edited, { assignments: solve(edited, { previous, fromDate: cut }) });
-
-  // 把前缀原样写成显式指定，再不带冻结地完整算一遍——这就是"从该决策点起重新完整计算"
-  const explicit = structuredClone(edited);
-  for (const [anchor, id] of Object.entries(previous.weekCommands)) {
-    if (anchor < cut) explicit.weekCommands[anchor] ??= id;
-  }
-  for (const [date, id] of Object.entries(previous.dayCommands)) {
-    if (date < cut) explicit.dayCommands[date] ??= id;
-  }
-  const full = plan(explicit, { assignments: solve(explicit) });
-
-  const left = dayMap(incremental);
-  const right = dayMap(full);
-  for (const [date, day] of left) {
-    if (date < cut) continue;
-    assert.equal(right.get(date).commandId, day.commandId, `${date} 的指令对不上`);
-    assert.deepEqual(right.get(date).attributes, day.attributes, `${date} 的属性对不上`);
-  }
-});
-
-test('在某个周日切换社团，重算自该周日起，且该周日起不再出现旧社团的指令', () => {
-  const input = baseInput();
-  const previous = solve(input);
-  const before = plan(input, { assignments: previous });
-  const sunday = before.weeks[20].start;
-
-  const edited = structuredClone(input);
-  edited.clubChanges = [{ date: sunday, clubId: 'art-club' }];
-  const after = plan(edited, {
-    assignments: solve(edited, { previous, fromDate: sunday }),
-  });
-
-  assertIdenticalBefore(before, after, sunday);
-
-  const clubOf = new Map(rules.commands.map((command) => [command.id, command.clubId]));
-  for (const day of after.days) {
-    if (day.date < sunday || !day.commandId) continue;
-    const club = clubOf.get(day.commandId);
-    if (club == null) continue; // 日常指令的 clubId 是 null，不受社团限制
-    assert.equal(club, 'art-club', `${day.date} 还在用旧社团的指令`);
-  }
-});
-
-test('已有结果上再改一处，之前已经排好的历史仍然逐格不变', () => {
-  const input = baseInput();
-  const first = solve(input);
-  const cutOne = plan(input, { assignments: first }).weeks[40].start;
-
-  const second = structuredClone(input);
-  second.weekCommands[cutOne] = 'cmd-chat';
-  const secondAssignments = solve(second, { previous: first, fromDate: cutOne });
-
-  const cutTwo = plan(second, { assignments: secondAssignments }).weeks[80].start;
-  const third = structuredClone(second);
-  third.restDays = ['1997-01-15'];
-  const thirdAssignments = solve(third, { previous: secondAssignments, fromDate: cutTwo });
-
-  const before = plan(second, { assignments: secondAssignments });
-  const after = plan(third, { assignments: thirdAssignments });
-  assertIdenticalBefore(before, after, cutTwo);
-
-  // 第一次改动定下的那一周，在第二次改动之后仍然是它
-  const pinnedWeekday = after.days.find((day) => day.date > cutOne && !day.isRestDay);
-  assert.equal(pinnedWeekday.commandId, 'cmd-chat', '第一次改动定下的安排被第二次改动改写了');
-});
-
-test('「已玩到」之前的决定，改起始属性时也不被改写', () => {
-  const input = clubInput(rules);
-  input.playedUpTo = '1996-06-16';
-  const previous = solve(input);
-  const before = plan(input, { assignments: previous });
-
-  // 不带日期的改动：换了前提。历史里的**决定**不该跟着变。
-  const edited = structuredClone(input);
-  edited.attributes.literature = 55;
-
-  const after = plan(edited, { assignments: solve(edited, { previous }) });
-  const left = dayMap(before);
-  const right = dayMap(after);
-
-  for (const [date, day] of left) {
-    if (date >= '1996-06-16') break;
-    assert.equal(right.get(date).commandId, day.commandId, `${date} 的决定被改写了`);
-    assert.equal(right.get(date).isEmpty, day.isEmpty, `${date} 的空过状态被改写了`);
-  }
-});
-
-test('「已玩到」之后的部分跟随改动', () => {
-  const input = clubInput(rules);
-  input.playedUpTo = '1996-06-16';
-  const previous = solve(input);
 
   const edited = structuredClone(input);
   edited.attributes.literature = 55;
-  const after = plan(edited, { assignments: solve(edited, { previous }) });
+  const after = plan(edited, { assignments: solve(edited) });
 
   const changed = after.days.some(
-    (day, index) =>
-      day.date >= '1996-06-16' &&
-      day.attributes.literature !== plan(input, { assignments: previous }).days[index].attributes.literature,
+    (day, index) => day.attributes.literature !== before.days[index].attributes.literature,
   );
-  assert.equal(changed, true, '换了前提，之后的部分必须跟着变');
-});
-
-test('老存档没有「已玩到」时，当作还没玩过', () => {
-  const input = clubInput(rules);
-  delete input.playedUpTo;
-  assert.deepEqual(validateInput(input, rules), []);
-
-  const result = plan(input, { assignments: solve(input) });
-  assert.equal(result.ok, true);
+  assert.equal(changed, true, '换了前提，整份日程要跟着重排');
 });
 
 test('「已玩到」超出时间轴时被拒绝', () => {

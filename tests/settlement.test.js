@@ -61,97 +61,97 @@ test('空过：不执行、不判定、不结算，状态原样返回', () => {
 test('研读文科・平日：期望值 = 0.63×成功 + 0.37×失败', () => {
   const { delta } = settle('cmd-study-literature');
   assertDelta(delta, {
-    stamina: -0.8,
-    literature: 0.7335,
-    science: 0.0815,
-    art: 0.0815,
-    sports: -0.4,
-    popularity: 0.2445,
-    appearance: -0.3,
-    grit: -0.1,
-    stress: 1.17,
+    stamina: -0.81,
+    literature: 1.0269,
+    science: 0.0326,
+    art: 0.0326,
+    sports: -0.43,
+    popularity: 0.2608,
+    appearance: -0.29,
+    grit: -0.05,
+    stress: 1.14,
   });
 });
 
 test('失败时上升减半、下降照常；压力不减半，按原值再 +1', () => {
-  // 研读文科成功：文科 +0.9（升）、运动 -0.4（降）、压力 +0.8
-  // 失败：文科 +0.45、运动 -0.4、压力 +0.8+1=+1.8
+  // 研读文科成功：文科 +1.26（升）、运动 -0.43（降）、压力 +0.77
+  // 失败：文科 +0.63、运动 -0.43、压力 +0.77+1=+1.77
   // 合起来就是对上面那组期望值的解释——这里单独把它写成一组断言。
   const { delta } = settle('cmd-study-literature');
   const success = 0.63;
   const failure = 1 - success;
   assert.ok(
-    Math.abs(delta.literature - (success * 0.9 + failure * 0.45)) < TOLERANCE,
+    Math.abs(delta.literature - (success * 1.26 + failure * 0.63)) < TOLERANCE,
     '上升属性失败时应减半',
   );
   assert.ok(
-    Math.abs(delta.sports - (success * -0.4 + failure * -0.4)) < TOLERANCE,
+    Math.abs(delta.sports - (success * -0.43 + failure * -0.43)) < TOLERANCE,
     '下降属性失败时应照常',
   );
   assert.ok(
-    Math.abs(delta.stress - (success * 0.8 + failure * 1.8)) < TOLERANCE,
+    Math.abs(delta.stress - (success * 0.77 + failure * 1.77)) < TOLERANCE,
     '压力失败时不减半，且额外 +1',
   );
 });
 
 test('休息日加成：日常指令上升 ×4、社团指令上升 ×6，下降不受加成', () => {
-  // 研读文科在休息日：文科 0.9→3.6，理科 0.1→0.4，艺术 0.1→0.4，人缘 0.3→1.2
+  // 研读文科在休息日：文科 1.26→5.04，理科/艺术 0.04→0.16，人缘 0.32→1.28
   // 下降的体力/运动/容姿/毅力不变；压力不吃加成
   const { delta } = settle('cmd-study-literature', 'restDay');
   assertDelta(delta, {
-    stamina: -0.8,
-    literature: 0.63 * 3.6 + 0.37 * 1.8, // 2.934
-    science: 0.63 * 0.4 + 0.37 * 0.2, // 0.326
-    art: 0.63 * 0.4 + 0.37 * 0.2,
-    sports: -0.4,
-    popularity: 0.63 * 1.2 + 0.37 * 0.6, // 0.978
-    appearance: -0.3,
-    grit: -0.1,
-    stress: 1.17, // 与平日相同：压力不受 ×4 影响
+    stamina: -0.81,
+    literature: 0.63 * 5.04 + 0.37 * 2.52, // 4.1076
+    science: 0.63 * 0.16 + 0.37 * 0.08, // 0.1304
+    art: 0.63 * 0.16 + 0.37 * 0.08,
+    sports: -0.43,
+    popularity: 0.63 * 1.28 + 0.37 * 0.64, // 1.0432
+    appearance: -0.29,
+    grit: -0.05,
+    stress: 1.14, // 与平日相同：压力不受 ×4 影响
   });
 });
 
 test('社团指令在休息日的上升 ×6', () => {
-  // 科学社：理科 0.9→5.4，文科 0.1→0.6，艺术 0.3→1.8，毅力 0.3→1.8，人缘 0.1→0.6
-  // 压力 +1.4 不加成、失败时 +1；体力/容姿是下降，不变
+  // 科学社：理科 1.05→6.3，文科 0.06→0.36，艺术 0.27→1.62，毅力 0.3→1.8，人缘 0.06→0.36
+  // 压力 +1.24 不加成、失败时 +1；体力/容姿是下降，不变
   const { delta } = settle('cmd-club-science', 'restDay');
   assertDelta(delta, {
-    stamina: -0.8,
-    literature: 0.63 * 0.6 + 0.37 * 0.3,
-    science: 0.63 * 5.4 + 0.37 * 2.7, // 4.401
-    art: 0.63 * 1.8 + 0.37 * 0.9,
+    stamina: -0.86,
+    literature: 0.63 * 0.36 + 0.37 * 0.18,
+    science: 0.63 * 6.3 + 0.37 * 3.15, // 5.1345
+    art: 0.63 * 1.62 + 0.37 * 0.81,
     sports: 0,
-    popularity: 0.63 * 0.6 + 0.37 * 0.3,
-    appearance: -0.3,
+    popularity: 0.63 * 0.36 + 0.37 * 0.18,
+    appearance: -0.29,
     grit: 0.63 * 1.8 + 0.37 * 0.9,
-    stress: 0.63 * 1.4 + 0.37 * 2.4, // 1.77
+    stress: 0.63 * 1.24 + 0.37 * 2.24, // 1.61
   });
 });
 
 test('「休息」永远成功：期望值就等于成功变动', () => {
-  // 压力要从够高的地方起步，否则 -2.9 会被夹到 0，测到的就不是规则而是夹取
+  // 压力要从够高的地方起步，否则 -3.6 会被夹到 0，测到的就不是规则而是夹取
   const { delta } = settle('cmd-rest', 'weekday', { stress: 50 });
   assertDelta(delta, {
-    stamina: 3.1,
+    stamina: 3.76,
     literature: 0,
     science: 0,
     art: 0,
     sports: 0,
-    popularity: -0.6,
-    appearance: -0.8,
-    grit: -0.1,
-    stress: -2.9,
+    popularity: -0.67,
+    appearance: -0.81,
+    grit: -0.05,
+    stress: -3.6,
   });
 });
 
 test('「休息」在休息日：压力下降 ×4，上升效果也 ×4', () => {
   const { delta } = settle('cmd-rest', 'restDay', { stress: 50 });
   assertDelta(delta, {
-    stamina: 12.4, // 3.1 × 4
-    popularity: -0.6, // 下降不受加成
-    appearance: -0.8,
-    grit: -0.1,
-    stress: -11.6, // -2.9 × 4，唯一一条享受该翻倍的指令
+    stamina: 15.04, // 3.76 × 4
+    popularity: -0.67, // 下降不受加成
+    appearance: -0.81,
+    grit: -0.05,
+    stress: -14.4, // -3.6 × 4，唯一一条享受该翻倍的指令
   });
 });
 
@@ -184,7 +184,7 @@ test('社团经验各自独立累积，互不影响', () => {
 });
 
 test('属性被夹在 [0, 999]：上溢截到 999', () => {
-  // 力量训练给运动 +3.3，起点贴到上限
+  // 力量训练给运动 +4.41，起点贴到上限
   const { after } = settle('cmd-exercise', 'weekday', { sports: 998 });
   assert.equal(after.attributes.sports, 999 * SCALE);
 });

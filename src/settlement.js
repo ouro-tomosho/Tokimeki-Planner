@@ -8,6 +8,17 @@
 export const WEEKDAY = 'weekday';
 export const REST_DAY = 'restDay';
 
+/**
+ * 这条指令在这一天给它的社团加多少经验；非社团指令为 0。
+ *
+ * 导出是因为除了逐日结算，还有第二处要用它：`rollForward` 重放求解结果来补齐
+ * 各社团在起点上的计数（求解结果每天只暴露"当前社团"那一份）。两处共用一个口径。
+ */
+export function clubExperienceGain(rules, command, dayKind) {
+  if (!command || command.kind !== 'club') return 0;
+  return dayKind === REST_DAY ? rules.clubExperienceGain.restDay : rules.clubExperienceGain.weekday;
+}
+
 export function createSettlement(rules) {
   const scale = rules.fixedPointScale;
   const attributeIds = rules.attributes.map((a) => a.id);
@@ -78,11 +89,6 @@ export function createSettlement(rules) {
     return out;
   }
 
-  function clubExperienceEarned(command, dayKind) {
-    if (command.kind !== 'club') return 0;
-    return dayKind === REST_DAY ? rules.clubExperienceGain.restDay : rules.clubExperienceGain.weekday;
-  }
-
   return function settleDay(state, commandId, dayKind) {
     const attributes = { ...state.attributes };
     const clubExperience = { ...state.clubExperience };
@@ -99,7 +105,7 @@ export function createSettlement(rules) {
       attributes[id] = clampScaled(attributes[id] + expected[id] * scale, limit.min, limit.max);
     }
 
-    const earned = clubExperienceEarned(command, dayKind);
+    const earned = clubExperienceGain(rules, command, dayKind);
     if (earned > 0) {
       const clubId = command.clubId;
       const current = clubExperience[clubId] ?? 0;

@@ -52,7 +52,7 @@ test('内联的 Worker 源可执行，并完成一次 plan 往返', () => {
   assert.equal(replies.length, 1, '一次请求应恰好得到一次回执');
   assert.equal(replies[0].id, 7, '回执必须带回请求 id');
   assert.equal(replies[0].ok, true, `回执失败：${replies[0].error}`);
-  assert.equal(replies[0].result.startDate, '1995-04-04');
+  assert.equal(replies[0].result.playedUpTo, '1995-04-04');
   assert.equal(replies[0].result.endDate, '1998-03-01');
   assert.equal(replies[0].result.ruleSummary.commands, 18);
 });

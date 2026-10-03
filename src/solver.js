@@ -15,7 +15,12 @@
 
 import { buildCalendar } from './calendar.js';
 import { createPlanner } from './plan.js';
-import { clubBlockReason, createClubLookup, availableCommandIds } from './clubs.js';
+import {
+  availableCommandIds,
+  clubBlockReason,
+  createClubLookup,
+  seededClubExperience,
+} from './clubs.js';
 import { meets } from './constraints.js';
 import { REST_DAY, WEEKDAY, createSettlement } from './settlement.js';
 
@@ -48,41 +53,19 @@ export function createSolver(rules) {
   // 必须在这里建：下面的 return 之后就再也执行不到了（函数声明会提升，const 不会）。
   const planner = createPlanner(rules);
 
-  /** 由近至远：小目标的截止日期越早，越先被怀疑是它卡住了。 */
-  const byDeadline = (a, b) => (a.deadline < b.deadline ? -1 : a.deadline > b.deadline ? 1 : 0);
-
   function initialState(input) {
     return {
       attributes: Object.fromEntries(
         Object.entries(input.attributes).map(([id, value]) => [id, value * scale]),
       ),
-      clubExperience: Object.fromEntries(rules.clubs.map((club) => [club.id, 0])),
+      clubExperience: seededClubExperience(rules, input, scale),
     };
   }
 
   /**
    * 排一份日程：滚动时域贪心，不达标再收尾。
-   * 诊断阶段也走这里，只不过那时拿到的输入是**副本**（小目标被拿掉若干条）。
    */
-  function search(input, { previous = null, fromDate = null } = {}) {
-    /**
-     * 该休息日是否已被冻结：早于重算起点，上一份日程里已有决定，**且那条指令现在仍然可用**。
-     * 最后一条不能省：使用者刚把社团换掉时，冻结的旧社团指令会变成不可用、于是不结算，
-     * 那样"冻结的前缀"反倒与上一份日程对不上了。
-     */
-    const frozenDay = (date) => {
-      if (fromDate === null || date >= fromDate) return undefined;
-      const kept = previous?.dayCommands?.[date];
-      return kept !== undefined && candidatesAt(date).includes(kept) ? kept : undefined;
-    };
-
-    /** 该周是否已被冻结。以该周在表里的第一个平日为准，同样要求那条指令仍然可用。 */
-    const frozenWeek = (date, anchor) => {
-      if (fromDate === null || date >= fromDate) return undefined;
-      const kept = previous?.weekCommands?.[anchor];
-      return kept !== undefined && candidatesAt(date).includes(kept) ? kept : undefined;
-    };
-
+  function search(input) {
     const calendar = buildCalendar(rules, input);
     const clubAt = createClubLookup(input);
     const dayByDate = new Map(calendar.days.map((day) => [day.date, day]));
@@ -232,8 +215,7 @@ export function createSolver(rules) {
         const pinned = input.dayCommands[day.date];
         let chosen = pinned;
         if (chosen === undefined) {
-          const kept = frozenDay(day.date);
-          chosen = kept ?? pick(state, [day], candidatesAt(day.date), clubAt(day.date), day.date);
+          chosen = pick(state, [day], candidatesAt(day.date), clubAt(day.date), day.date);
           dayCommands[day.date] = chosen;
         }
         state = simulate(state, [day], chosen).state;
@@ -244,8 +226,7 @@ export function createSolver(rules) {
         let chosen = pinned;
         if (chosen === undefined) {
           const date = workdays[0].date;
-          const kept = frozenWeek(date, week.start);
-          chosen = kept ?? pick(state, workdays, candidatesAt(date), clubAt(date), date);
+          chosen = pick(state, workdays, candidatesAt(date), clubAt(date), date);
           weekCommands[week.start] = chosen;
         }
         state = simulate(state, workdays, chosen).state;
@@ -257,82 +238,15 @@ export function createSolver(rules) {
     // 滚动时域贪心对"终点长什么样"没有直接视野，只靠加权引导。
     // 没达标就再收一次尾：从后往前逐个槽位试遍候选，只接受让整份规划更好的改动。
     if (planner(input, { assignments }).goals.ok) return assignments;
-    return repair(input, assignments, fromDate);
+    return repair(input, assignments);
   }
 
   /**
-   * 不可达诊断：三项结论**并列**给出，不只报第一个命中的原因。
-   * 全程在输入的深拷贝上做，绝不改动使用者设定的任何目标或约束。
+   * 排一份日程。合并起点与已玩到之后，求解器不再需要上一份日程、
+   * 也不再需要在某个日期之前冻结前缀：每次都是从已玩到（含）往后整份重排。
    */
-  function diagnose(input) {
-    /** 在输入的深拷贝上改条件再排一次；绝不碰使用者设定的东西。 */
-    const reachableWith = (mutate) => {
-      const copy = structuredClone(input);
-      mutate(copy);
-      return planner(copy, { assignments: search(copy) }).goals.ok;
-    };
-
-    // 一：把全部小目标拿掉，只留结局目标与全局约束。
-    const withGlobalOnly = reachableWith((copy) => {
-      copy.miniGoals = [];
-    });
-
-    // 二：连全局约束也拿掉，只剩结局目标。
-    //     用来把"结局目标与全局约束冲突"和"结局目标本身不可达"分开——
-    //     后者怎么删约束都没救，前者只删小目标也没救。withGlobalOnly 为真时不必再跑。
-    const endingAlone = withGlobalOnly
-      ? true
-      : reachableWith((copy) => {
-          copy.miniGoals = [];
-          copy.globalConstraints = [];
-        });
-
-    // 三：由近至远逐个取消小目标，看取消到哪一个之后才可达。
-    //     全部取消仍不可达时（withGlobalOnly 为假）不必跑：没有哪个前缀能救。
-    // 三：由近至远逐个取消。注意这是**前缀**语义——"取消到第 N 条为止才可达"，
-    // 不是"取消某一条就够"。两条小目标各自独立地不可达时，只取消任何一条都救不了。
-    let mustCancel = [];
-    if (withGlobalOnly) {
-      const ordered = [...input.miniGoals].sort(byDeadline);
-      for (let count = 1; count <= ordered.length; count += 1) {
-        const ok = reachableWith((copy) => {
-          copy.miniGoals = [...copy.miniGoals].sort(byDeadline).slice(count);
-        });
-        if (ok) {
-          mustCancel = ordered.slice(0, count);
-          break;
-        }
-      }
-    }
-
-    // 三个字段都只描述**测到了什么**，结论留给界面去说——名字里带结论容易在别处被误读。
-    return {
-      // 拿掉全部小目标就可达
-      miniGoalsBlocking: withGlobalOnly,
-      // 得连全局约束也拿掉才可达
-      endingAndGlobalConflict: endingAlone && !withGlobalOnly,
-      // 验收标准 4 问的是"全部小目标取消后是否仍不可达"，不是"结局目标孤零零地是否可达"。
-      // endingAlone 另有用途：它是判定"冲突"的那一半。
-      endingGoalsUnreachable: !withGlobalOnly,
-      // 由近至远需要取消哪几条（前缀）；空数组表示没有可行的前缀
-      mustCancel,
-    };
-  }
-
-  /**
-   * @param options.previous  上一份日程；配合 fromDate 用来冻结前缀
-   * @param options.fromDate  重算起点（含）。这一天之前的决定原样保留，
-   *                          之后的重新排。不传就是整份重排。
-   */
-  return function solve(input, { previous = null, fromDate = null } = {}) {
-    // 历史任何时候都不被改写：重算起点永远不早于「已玩到」。
-    // 这条不变量放在求解器里，而不是指望每个调用方都记得算。
-    const history = input.playedUpTo ?? input.startDate;
-    const effectiveFrom = fromDate === null || fromDate < history ? history : fromDate;
-
-    const assignments = search(input, { previous, fromDate: effectiveFrom });
-    if (planner(input, { assignments }).goals.ok) return assignments;
-    return { ...assignments, diagnosis: diagnose(input) };
+  return function solve(input) {
+    return search(input);
   };
 
   /** 一份日程的好坏：先看达标，再看还差多少，最后才是正向总和与压力。 */
@@ -350,7 +264,7 @@ export function createSolver(rules) {
     return score;
   }
 
-  function repair(input, assignments, fromDate = null) {
+  function repair(input, assignments) {
     const clubAt = createClubLookup(input);
     const calendar = buildCalendar(rules, input, assignments);
     const dayByDate = new Map(calendar.days.map((day) => [day.date, day]));
@@ -370,8 +284,7 @@ export function createSolver(rules) {
         const workdays = days.filter((day) => !day.isRestDay);
 
         const weekDate = workdays[0]?.date;
-        const weekFrozen = fromDate !== null && weekDate !== undefined && weekDate < fromDate;
-        if (workdays.length > 0 && !weekFrozen && input.weekCommands[week.start] === undefined) {
+        if (workdays.length > 0 && weekDate !== undefined && input.weekCommands[week.start] === undefined) {
           const date = workdays[0].date;
           const original = assignments.weekCommands[week.start];
           for (const id of candidatesAt(date)) {
@@ -389,7 +302,6 @@ export function createSolver(rules) {
 
         for (const day of days) {
           if (!day.isRestDay || !day.isSettled) continue;
-          if (fromDate !== null && day.date < fromDate) continue;
           if (input.dayCommands[day.date] !== undefined) continue;
           const original = assignments.dayCommands[day.date];
           for (const id of candidatesAt(day.date)) {

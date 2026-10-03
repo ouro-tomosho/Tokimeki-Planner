@@ -8,22 +8,31 @@
 import rules from '../data/rules.json';
 import { createPlanner } from '../src/plan.js';
 import { createSolver } from '../src/solver.js';
-import { fromJson, toJson } from '../src/input.js';
+import { exportFileName, fromJson, toJson } from '../src/input.js';
 import {
   $,
-  ATTRIBUTES,
   CLUBS,
+  CLUB_EXPERIENCE,
   TIMELINE,
   UNSET,
+  VALUE_FIELDS,
+  clearResult,
+  focusDate,
   hooks,
+  initialClubExperience,
   isStale,
-  monthOf,
   setResult,
   state,
 } from './ui.js';
 import { renderCalendar, renderDetail, wireCalendar } from './calendar.js';
-import { renderDiagnosis, renderGoals, wirePanels } from './panels.js';
-import { setAttributeValue, setInitialClub, setPlayedUpTo, setStartDate } from './edits.js';
+import { renderGoals, wirePanels } from './panels.js';
+import { loadInput, saveInput } from './session.js';
+import {
+  setAttributeValue,
+  setClubExperience,
+  setInitialClub,
+  setPlayedUpTo,
+} from './edits.js';
 
 const inlinePlan = createPlanner(rules);
 const inlineSolve = createSolver(rules);
@@ -84,24 +93,24 @@ function requestPlan(input) {
   });
 }
 
-function runSolveOnMainThread(input, options) {
+function runSolveOnMainThread(input) {
   try {
-    return { ok: true, assignments: inlineSolve(input, options) };
+    return { ok: true, assignments: inlineSolve(input) };
   } catch (error) {
     return { ok: false, error: error.message };
   }
 }
 
-function requestSolve(input, options) {
-  if (workerUnavailable || !worker) return Promise.resolve(runSolveOnMainThread(input, options));
+function requestSolve(input) {
+  if (workerUnavailable || !worker) return Promise.resolve(runSolveOnMainThread(input));
 
   const id = ++requestId;
   return new Promise((resolve) => {
     pending.set(id, resolve);
-    worker.postMessage({ id, type: 'solve', input, ...options });
+    worker.postMessage({ id, type: 'solve', input });
   }).then((reply) => {
     if (!reply.fallback) return reply;
-    return runSolveOnMainThread(input, options);
+    return runSolveOnMainThread(input);
   });
 }
 
@@ -150,10 +159,7 @@ async function compute() {
   renderComputeRow();
 
   try {
-    const solved = await requestSolve(state.input, {
-      previous: state.assignments,
-      fromDate: null,
-    });
+    const solved = await requestSolve(state.input);
     if (solved.cancelled) {
       notice = { text: '已取消计算。' };
       return;
@@ -174,7 +180,6 @@ async function compute() {
     }
 
     setResult(planned.result);
-    state.diagnosis = solved.assignments.diagnosis ?? null;
   } finally {
     state.computing = false;
     stopProgress();
@@ -187,8 +192,6 @@ async function compute() {
 const attributeInputs = new Map();
 
 function buildRail() {
-  $('rail-start-date').min = TIMELINE.start;
-  $('rail-start-date').max = TIMELINE.lastSettlement;
   $('rail-played-up-to').min = TIMELINE.start;
   $('rail-played-up-to').max = TIMELINE.lastSettlement;
   $('jump-date').min = TIMELINE.start;
@@ -209,36 +212,51 @@ function buildRail() {
 
   const host = $('attributes');
   host.textContent = '';
-  for (const attribute of ATTRIBUTES) {
+  // 10 格：9 项属性 + 当前社团的社团经验。后者也是当前状态的一部分——
+  // 合并起点与已玩到之后，它只能由输入承载（见 src/frontier.js）。
+  for (const field of VALUE_FIELDS) {
     const label = document.createElement('label');
-    label.className = `attr-cell ${attribute.direction === 'down' ? 'down' : ''}`;
+    label.className = `attr-cell ${field.direction === 'down' ? 'down' : ''}`;
 
     const caption = document.createElement('span');
-    caption.textContent = attribute.name;
+    caption.textContent = field.name;
 
     const input = document.createElement('input');
     input.type = 'number';
-    input.min = String(attribute.min);
-    input.max = String(attribute.max);
+    input.min = String(field.min);
+    input.max = String(field.max);
     input.addEventListener('change', () => {
-      setAttributeValue(attribute.id, Number(input.value));
+      setRailValue(field.id, Number(input.value));
     });
 
     label.append(caption, input);
     host.append(label);
-    attributeInputs.set(attribute.id, input);
+    attributeInputs.set(field.id, input);
   }
 }
 
+/** 左栏 10 项数值的读写口径：9 项属性在 `attributes` 里，社团经验按**当前社团**取。 */
+function railValue(id) {
+  if (id !== CLUB_EXPERIENCE.id) return state.input.attributes[id];
+  return initialClubExperience();
+}
+
+function setRailValue(id, value) {
+  if (id !== CLUB_EXPERIENCE.id) return setAttributeValue(id, value);
+  // 没加入社团时这一格没有落点：社团经验属于某个社团。
+  const club = state.input.initialClub;
+  if (club) setClubExperience(club, value);
+}
+
 function syncRail() {
-  $('rail-start-date').value = state.input.startDate;
   $('rail-played-up-to').value = state.input.playedUpTo;
   $('rail-initial-club').value = state.input.initialClub ?? UNSET;
-  for (const attribute of ATTRIBUTES) {
-    const input = attributeInputs.get(attribute.id);
-    if (input && document.activeElement !== input) {
-      input.value = String(state.input.attributes[attribute.id]);
-    }
+  for (const field of VALUE_FIELDS) {
+    const input = attributeInputs.get(field.id);
+    if (!input || document.activeElement === input) continue;
+    input.value = String(railValue(field.id));
+    // 没加入社团时，社团经验这一格无从填起，直接置灰；其余 9 格永远是活的。
+    input.disabled = field.id === CLUB_EXPERIENCE.id && state.input.initialClub === null;
   }
 }
 
@@ -295,11 +313,15 @@ function renderAll() {
   renderCalendar();
   renderDetail();
   renderGoals();
-  renderDiagnosis();
   renderComputeRow();
 }
 
 hooks.render = renderAll;
+hooks.persist = () => saveInput(state.input);
+hooks.notice = (text, error = false) => {
+  notice = text === null ? null : { text, error };
+  renderComputeRow();
+};
 
 // ---------------------------------------------------------------- JSON
 
@@ -308,7 +330,7 @@ function exportJson() {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = 'tokimeki-planner-input.json';
+  link.download = exportFileName(state.input);
   // 必须真的进 DOM，且撤销要等到下载启动之后，否则部分浏览器下载会失败。
   document.body.append(link);
   link.click();
@@ -324,16 +346,12 @@ async function importJson(file) {
     renderComputeRow();
     return;
   }
-  // 导入换了整套输入：结果作废，回到"尚未计算"。
-  state.assignments = null;
-  state.result = null;
-  state.diagnosis = null;
-  state.dayByDate = new Map();
-  state.pending = 0;
-  state.computedAt = null;
-  state.viewMonth = monthOf(state.input.startDate);
-  state.selection = { from: state.input.startDate, to: state.input.startDate };
+  // 导入换了整套输入：结果作废，回到"尚未计算"，视图跟到新的起点。
+  clearResult();
+  focusDate(state.input.playedUpTo);
   notice = null;
+  // 导入的输入立刻成为"上次的输入"，刷新后要能接着用。
+  saveInput(state.input);
   renderAll();
 }
 
@@ -363,12 +381,15 @@ function wireTopbar() {
 }
 
 function wireRail() {
-  $('rail-start-date').addEventListener('change', (event) => setStartDate(event.target.value));
   $('rail-played-up-to').addEventListener('change', (event) => setPlayedUpTo(event.target.value));
   $('rail-initial-club').addEventListener('change', (event) => setInitialClub(event.target.value));
 }
 
 // ---------------------------------------------------------------- 启动
+
+// 先尝试恢复上次的输入；没有就沿用出厂默认。结果一律不恢复：刷新后是「尚未计算」。
+const restored = loadInput(rules);
+if (restored) state.input = restored;
 
 startWorker();
 buildRail();
@@ -377,8 +398,7 @@ wireRail();
 wireCalendar();
 wirePanels();
 
-state.selection = { from: state.input.startDate, to: state.input.startDate };
-state.viewMonth = monthOf(state.input.startDate);
-$('jump-date').value = state.input.startDate;
+focusDate(state.input.playedUpTo);
+$('jump-date').value = state.input.playedUpTo;
 
 renderAll();

@@ -53,7 +53,7 @@
       "clubId": null,
       "isRestCommand": false,
       "successRate": 0.63,
-      "effects": { "stamina": -0.8, "literature": 0.9, "science": 0.1, "art": 0.1, "sports": -0.4, "popularity": 0.3, "appearance": -0.3, "grit": -0.1, "stress": 0.8 }
+      "effects": { "stamina": -0.81, "literature": 1.26, "science": 0.04, "art": 0.04, "sports": -0.43, "popularity": 0.32, "appearance": -0.29, "grit": -0.05, "stress": 0.77 }
     },
     {
       "id": "cmd-study-science",
@@ -62,7 +62,7 @@
       "clubId": null,
       "isRestCommand": false,
       "successRate": 0.63,
-      "effects": { "stamina": -0.8, "literature": 0.1, "science": 0.9, "art": 0.1, "sports": -0.8, "popularity": 0.1, "appearance": -0.4, "grit": 0.3, "stress": 0.3 }
+      "effects": { "stamina": -0.81, "literature": 0.04, "science": 1.26, "art": 0.04, "sports": -0.81, "popularity": 0.16, "appearance": -0.48, "grit": 0.32, "stress": 0.34 }
     },
     {
       "id": "cmd-practice-art",
@@ -71,7 +71,7 @@
       "clubId": null,
       "isRestCommand": false,
       "successRate": 0.63,
-      "effects": { "stamina": -0.8, "literature": 0.1, "science": 0.1, "art": 0.9, "sports": -0.4, "popularity": 0.1, "appearance": -0.1, "grit": -0.1, "stress": -0.3 }
+      "effects": { "stamina": -0.81, "literature": 0.04, "science": 0.04, "art": 1.26, "sports": -0.48, "popularity": 0.08, "appearance": -0.15, "grit": -0.05, "stress": -0.33 }
     },
     {
       "id": "cmd-exercise",
@@ -80,7 +80,7 @@
       "clubId": null,
       "isRestCommand": false,
       "successRate": 0.63,
-      "effects": { "stamina": -2.4, "literature": -0.1, "science": -0.1, "art": -0.1, "sports": 3.3, "popularity": 0.1, "appearance": -0.4, "grit": 1.4, "stress": 0.1 }
+      "effects": { "stamina": -2.48, "literature": -0.15, "science": -0.15, "art": -0.15, "sports": 4.41, "popularity": 0.08, "appearance": -0.48, "grit": 1.88, "stress": -0.14 }
     },
     {
       "id": "cmd-chat",
@@ -89,7 +89,7 @@
       "clubId": null,
       "isRestCommand": false,
       "successRate": 0.63,
-      "effects": { "stamina": -1.2, "literature": -0.3, "science": -0.3, "art": -0.3, "sports": 0.2, "popularity": 1.5, "appearance": 0.8, "grit": -0.4, "stress": -0.9 }
+      "effects": { "stamina": -1.24, "literature": -0.29, "science": -0.29, "art": -0.29, "sports": 0.2, "popularity": 1.92, "appearance": 0.94, "grit": -0.2, "stress": 0.72 }
     },
     {
       "id": "cmd-groom",
@@ -98,7 +98,7 @@
       "clubId": null,
       "isRestCommand": false,
       "successRate": 0.63,
-      "effects": { "stamina": -0.6, "literature": -0.1, "science": -0.1, "art": -0.1, "sports": -0.1, "popularity": 0.5, "appearance": 2.1, "grit": -0.6, "stress": 0.1 }
+      "effects": { "stamina": -0.67, "literature": -0.15, "science": -0.15, "art": -0.1, "sports": -0.1, "popularity": 0.61, "appearance": 2.41, "grit": -0.34, "stress": 0.01 }
     },
     {
       "id": "cmd-rest",
@@ -107,7 +107,7 @@
       "clubId": null,
       "isRestCommand": true,
       "successRate": 1,
-      "effects": { "stamina": 3.1, "literature": 0, "science": 0, "art": 0, "sports": 0, "popularity": -0.6, "appearance": -0.8, "grit": -0.1, "stress": -2.9 }
+      "effects": { "stamina": 3.76, "literature": 0, "science": 0, "art": 0, "sports": 0, "popularity": -0.67, "appearance": -0.81, "grit": -0.05, "stress": -3.6 }
     },
     {
       "id": "cmd-club-literature",
@@ -116,7 +116,7 @@
       "clubId": "literature-club",
       "isRestCommand": false,
       "successRate": 0.63,
-      "effects": { "stamina": -0.8, "literature": 0.8, "science": 0.3, "art": 0.1, "sports": 0, "popularity": 0.1, "appearance": -0.3, "grit": -0.1, "stress": 1.1 }
+      "effects": { "stamina": -0.81, "literature": 0.81, "science": 0.27, "art": 0.13, "sports": 0, "popularity": 0.06, "appearance": -0.29, "grit": -0.05, "stress": 1.1 }
     },
     {
       "id": "cmd-club-drama",
@@ -125,7 +125,7 @@
       "clubId": "drama-club",
       "isRestCommand": false,
       "successRate": 0.63,
-      "effects": { "stamina": -0.9, "literature": 0.9, "science": 0, "art": 0.4, "sports": 0.1, "popularity": 0.1, "appearance": -0.1, "grit": 0.1, "stress": 1.1 }
+      "effects": { "stamina": -0.91, "literature": 0.95, "science": 0, "art": 0.4, "sports": 0.13, "popularity": 0.06, "appearance": -0.15, "grit": 0.06, "stress": 1.05 }
     },
     {
       "id": "cmd-club-science",
@@ -134,7 +134,7 @@
       "clubId": "science-club",
       "isRestCommand": false,
       "successRate": 0.63,
-      "effects": { "stamina": -0.8, "literature": 0.1, "science": 0.9, "art": 0.3, "sports": 0, "popularity": 0.1, "appearance": -0.3, "grit": 0.3, "stress": 1.4 }
+      "effects": { "stamina": -0.86, "literature": 0.06, "science": 1.05, "art": 0.27, "sports": 0, "popularity": 0.06, "appearance": -0.29, "grit": 0.3, "stress": 1.24 }
     },
     {
       "id": "cmd-club-computer",
@@ -143,7 +143,7 @@
       "clubId": "computer-club",
       "isRestCommand": false,
       "successRate": 0.63,
-      "effects": { "stamina": -0.8, "literature": 0.1, "science": 0.7, "art": 0.3, "sports": 0, "popularity": 0.2, "appearance": -0.4, "grit": 0.2, "stress": 1.8 }
+      "effects": { "stamina": -0.86, "literature": 0.06, "science": 1.02, "art": 0.44, "sports": 0, "popularity": 0.3, "appearance": -0.43, "grit": 0.3, "stress": 1.48 }
     },
     {
       "id": "cmd-club-art",
@@ -152,7 +152,7 @@
       "clubId": "art-club",
       "isRestCommand": false,
       "successRate": 0.63,
-      "effects": { "stamina": -0.9, "literature": 0.1, "science": 0, "art": 0.9, "sports": 0.1, "popularity": 0.1, "appearance": -0.1, "grit": -0.1, "stress": 0.9 }
+      "effects": { "stamina": -0.91, "literature": 0.13, "science": 0, "art": 1.02, "sports": 0.06, "popularity": 0.06, "appearance": -0.1, "grit": -0.1, "stress": 1.01 }
     },
     {
       "id": "cmd-club-brass-band",
@@ -161,7 +161,7 @@
       "clubId": "brass-band-club",
       "isRestCommand": false,
       "successRate": 0.63,
-      "effects": { "stamina": -0.9, "literature": 0.1, "science": 0.1, "art": 0.9, "sports": 0.2, "popularity": 0.1, "appearance": -0.2, "grit": 0.1, "stress": 0.9 }
+      "effects": { "stamina": -0.91, "literature": 0.03, "science": 0.03, "art": 0.81, "sports": 0.17, "popularity": 0.13, "appearance": -0.24, "grit": 0.06, "stress": 0.91 }
     },
     {
       "id": "cmd-club-baseball",
@@ -170,7 +170,7 @@
       "clubId": "baseball-club",
       "isRestCommand": false,
       "successRate": 0.63,
-      "effects": { "stamina": -1.9, "literature": -0.1, "science": -0.1, "art": -0.1, "sports": 0.9, "popularity": 0.1, "appearance": -0.3, "grit": 0.3, "stress": 0.2 }
+      "effects": { "stamina": -1.96, "literature": -0.1, "science": -0.1, "art": -0.1, "sports": 0.88, "popularity": 0.06, "appearance": -0.29, "grit": 0.78, "stress": -0.04 }
     },
     {
       "id": "cmd-club-soccer",
@@ -179,7 +179,7 @@
       "clubId": "soccer-club",
       "isRestCommand": false,
       "successRate": 0.63,
-      "effects": { "stamina": -1.9, "literature": -0.1, "science": -0.1, "art": -0.1, "sports": 0.9, "popularity": 0.1, "appearance": -0.2, "grit": 0.7, "stress": 0.3 }
+      "effects": { "stamina": -1.96, "literature": -0.1, "science": -0.1, "art": -0.1, "sports": 0.95, "popularity": 0.13, "appearance": -0.24, "grit": 0.71, "stress": 0.01 }
     },
     {
       "id": "cmd-club-tennis",
@@ -188,7 +188,7 @@
       "clubId": "tennis-club",
       "isRestCommand": false,
       "successRate": 0.63,
-      "effects": { "stamina": -1.6, "literature": -0.1, "science": -0.1, "art": 0, "sports": 0.8, "popularity": 0.1, "appearance": -0.1, "grit": 0.6, "stress": 0.5 }
+      "effects": { "stamina": -1.67, "literature": -0.1, "science": -0.1, "art": 0, "sports": 0.81, "popularity": 0.13, "appearance": -0.1, "grit": 0.64, "stress": 0.39 }
     },
     {
       "id": "cmd-club-swimming",
@@ -197,7 +197,7 @@
       "clubId": "swimming-club",
       "isRestCommand": false,
       "successRate": 0.63,
-      "effects": { "stamina": -1.9, "literature": -0.1, "science": -0.1, "art": 0, "sports": 0.9, "popularity": 0, "appearance": -0.1, "grit": 0.7, "stress": 0.2 }
+      "effects": { "stamina": -2.05, "literature": -0.1, "science": -0.1, "art": 0, "sports": 0.95, "popularity": 0, "appearance": -0.15, "grit": 0.71, "stress": -0.04 }
     },
     {
       "id": "cmd-club-basketball",
@@ -206,7 +206,7 @@
       "clubId": "basketball-club",
       "isRestCommand": false,
       "successRate": 0.63,
-      "effects": { "stamina": -1.8, "literature": -0.1, "science": -0.1, "art": -0.1, "sports": 0.9, "popularity": -0.1, "appearance": -0.2, "grit": 0.6, "stress": 0.4 }
+      "effects": { "stamina": -1.91, "literature": -0.1, "science": -0.1, "art": -0.1, "sports": 0.88, "popularity": 0.06, "appearance": -0.24, "grit": 0.68, "stress": 0.2 }
     }
   ],
   "defaultStart": {

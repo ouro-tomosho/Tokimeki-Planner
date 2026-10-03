@@ -64,12 +64,10 @@ function buildCell(date) {
   const weekday = weekdayOf(date);
   const inRange = inTimeline(date);
   const rest = isRestOn(date);
-  const history = state.input.playedUpTo ? date < state.input.playedUpTo : false;
 
   if (weekday === 0) cell.classList.add('is-sun');
   else cell.classList.add('is-wd');
   if (rest && weekday !== 0) cell.classList.add('is-rest');
-  if (history) cell.classList.add('is-history');
 
   const skipSource = inRange ? skipSourceOn(date, rest) : null;
   if (skipSource) cell.classList.add('is-empty');
@@ -89,6 +87,9 @@ function buildCell(date) {
   command.className = 'dcmd';
   if (skipSource) {
     command.textContent = '空过';
+  } else if (date === state.input.playedUpTo) {
+    // 状态快照：按 ADR-0004，起点当天不结算，写"要执行的指令"会骗人。
+    command.textContent = '起点';
   } else if (inRange) {
     const resolved = resolveDayCommand(date);
     command.textContent = resolved.commandId ? commandName(resolved.commandId) : '待定';
@@ -169,7 +170,7 @@ function buildMonth(key) {
       cell.setAttribute('aria-disabled', 'true');
       cell.tabIndex = -1;
       // 溢出格是"另一个月的那一天"，不该携带本月的任何标记——包括终点的底边与「终点」标签。
-      cell.classList.remove('is-empty', 'is-rest', 'is-history', 'is-end', 'is-played');
+      cell.classList.remove('is-empty', 'is-rest', 'is-end', 'is-played');
       cell.querySelector('.dcmd').textContent = '—';
       const flags = cell.querySelector('.flags');
       if (flags) flags.remove();
@@ -244,7 +245,7 @@ export function renderDetail() {
   const weekNo =
     Math.round(
       (Date.parse(`${weekStart}T00:00:00Z`) -
-        Date.parse(`${weekStartOf(state.input.startDate)}T00:00:00Z`)) /
+        Date.parse(`${weekStartOf(state.input.playedUpTo)}T00:00:00Z`)) /
         604800000,
     ) + 1;
   const weekText = document.createElement('span');

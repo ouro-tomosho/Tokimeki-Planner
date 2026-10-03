@@ -1,3 +1,8 @@
 node_modules/
 *.log
 *.tmp
+
+# 内部工作文档与技能配置：只在本地存在，不进公开仓库
+.scratch/
+docs/agents/
+AGENTS.md

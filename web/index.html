@@ -27,7 +27,6 @@
         --cell: #fffdf5;
         --cell-sun: #f0e2c6;
         --cell-off: #e9dec4;
-        --cell-hist: #e2d8c2;
         --raise: inset 1px 1px 0 #fffdf6, inset -1px -1px 0 #cdb896;
         --sink: inset -1px -1px 0 #fffdf6, inset 1px 1px 0 #cdb896;
         --font-ui: system-ui, -apple-system, "Segoe UI", "Noto Sans CJK SC", sans-serif;
@@ -351,9 +350,6 @@
       .legend .k-empty i {
         background: repeating-linear-gradient(135deg, #e2d6ba 0 3px, #c6b795 3px 4px);
       }
-      .legend .k-hist i {
-        background: var(--cell-hist);
-      }
       .legend .k-flag i {
         background: var(--rose);
         border-color: var(--rose-deep);
@@ -464,16 +460,17 @@
       .cell.is-sun {
         background: var(--cell-sun);
       }
+      /* 周日与休息日的日期数字用星期栏「日」的同一个红：一周里哪几天要单独下指令，一眼可见。 */
+      .cell.is-sun .dn,
+      .cell.is-rest .dn {
+        color: var(--rose-deep);
+      }
       .cell.is-rest {
         background: var(--rose-soft);
         border-color: var(--rose-line);
       }
       .cell.is-empty {
         background: repeating-linear-gradient(135deg, #e2d6ba 0 4px, #c6b795 4px 5px);
-      }
-      .cell.is-history {
-        background: var(--cell-hist);
-        color: var(--ink-2);
       }
       .cell.is-ovf {
         background: var(--cell-off);
@@ -767,24 +764,6 @@
       .row-actions .btn {
         padding: 2px 6px;
       }
-      .diagnosis {
-        margin-top: 8px;
-      }
-      .diag-card {
-        border: 1px solid var(--line-2);
-        border-left: 3px solid var(--amber);
-        background: #fffaf5;
-        padding: 6px 9px;
-        font-size: 12px;
-        margin-bottom: 6px;
-      }
-      .diag-card b {
-        color: var(--amber);
-      }
-      .diag-card p {
-        margin: 2px 0 0;
-        color: var(--ink-2);
-      }
       .foot {
         display: flex;
         gap: 8px;
@@ -956,14 +935,11 @@
         </button>
 
         <div class="panel">
-          <h2>起点</h2>
-          <label class="field"
-            ><span>当前日期</span><input id="rail-start-date" type="date"
-          /></label>
+          <h2>已玩到</h2>
           <label class="field"
             ><span>已玩到</span><input id="rail-played-up-to" type="date"
           /></label>
-          <p class="hint">这一日之前的日程算历史；也可在日历上右键设置。</p>
+          <p class="hint">它同时是时间轴的起点：规划从这一天往后排，当天不结算。也可在日历上右键设置。</p>
         </div>
 
         <div class="panel">
@@ -1000,7 +976,6 @@
             <span class="k-rest"><i></i>休息日</span>
             <span class="k-empty"><i></i>空过</span>
             <span class="k-flag"><i></i>小目标截止</span>
-            <span class="k-hist"><i></i>历史</span>
             <span class="k-played"><i></i>已玩到</span>
           </div>
           <div id="calendar" class="calendar"></div>
@@ -1019,7 +994,6 @@
             <span id="stale-note" class="stale-note"></span>
           </div>
           <div id="goals" class="goals"></div>
-          <div id="diagnosis" class="diagnosis"></div>
           <div class="foot">
             <button id="btn-export-foot" class="btn" type="button">导出 JSON</button>
             <label class="btn file-btn"

@@ -11,7 +11,7 @@
 //
 // 三条不可让步的纪律：
 //
-//   ① **模型可行 ≠ 真实可行**（ADR-0008）：每一片的解都要用 `settlement.apply()` 逐日重放，
+//   ① **模型可行 ≠ 真实可行**（ADR-0009）：每一片的解都要用 `settlement.apply()` 逐日重放，
 //      与模型声明的属性值逐条比对（< 1e-6）。不过闸就报错，绝不静默降级。
 //   ② **对外结论一律来自 `plan()`**，不来自搜索层自评。搜索层只负责找解。
 //   ③ **无兜底**：HiGHS 不可用、某片不可行、重放对不上——一律抛出中文错误，由界面现有
@@ -133,7 +133,7 @@ function replayChunk({ rules, input, days, incoming, assignments }) {
   return trajectory;
 }
 
-/** 重放闸门：模型声明的 v 必须与真实引擎逐日一致（ADR-0008 的硬门槛）。 */
+/** 重放闸门：模型声明的 v 必须与真实引擎逐日一致（ADR-0009 的硬门槛）。 */
 function assertModelMatchesEngine({ model, columns, trajectory }) {
   const declared = modelState(model, columns);
   let worst = 0;
@@ -150,7 +150,7 @@ function assertModelMatchesEngine({ model, columns, trajectory }) {
   if (worst > REPLAY_TOLERANCE) {
     throw new Error(
       `求解缺陷：模型声明的属性值与真实引擎重放不一致（最大偏差 ${worst.toExponential(3)}，@ ${where}）。` +
-        '按 ADR-0008 的纪律，这份结果不可信，已丢弃。',
+        '按 ADR-0009 的纪律，这份结果不可信，已丢弃。',
     );
   }
   return worst;

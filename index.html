@@ -1392,7 +1392,7 @@ const { clubCommandId } = __planCoreNs["src/clubs.js"];
 //
 // 每条属性的**起点值**隐式构成它的第一个检查点，不由数据录入。
 //
-// 见 ADR-0005。
+// 三类来源与目标优先级见 ADR-0007 与 ADR-0009。
 
 
 
@@ -2830,7 +2830,7 @@ const { clubExperienceGainOn, expectedEffects, resolveCommand, REST_DAY, WEEKDAY
 const { isClubSlot, isSkip } = __planCoreNs["src/commands.js"];
 // 一片的 MILP 模型：精确夹逼 + 分层字典序目标，交给 HiGHS 求解。
 //
-// 为什么在这里重新做 MILP（ADR-0008 记过一次失败）：那次失败的原因是**编码**，不是数学。
+// 为什么在这里重新做 MILP（ADR-0009 记过两个编码坑）：那次失败的原因是**编码**，不是数学。
 // 把逐日夹逼写成「辅助变量 L ≥ 0 表示被吸收掉的量」时，L 无条件放开会让模型**凭空抬高**
 // 属性，而 LP 松弛里"抬高"与"真实吸收"同价，于是整数最优解大量靠假抬高满足目标。
 //
@@ -3638,7 +3638,7 @@ const { apply, REST_DAY, WEEKDAY } = __planCoreNs["src/settlement.js"];
 //
 // 三条不可让步的纪律：
 //
-//   ① **模型可行 ≠ 真实可行**（ADR-0008）：每一片的解都要用 `settlement.apply()` 逐日重放，
+//   ① **模型可行 ≠ 真实可行**（ADR-0009）：每一片的解都要用 `settlement.apply()` 逐日重放，
 //      与模型声明的属性值逐条比对（< 1e-6）。不过闸就报错，绝不静默降级。
 //   ② **对外结论一律来自 `plan()`**，不来自搜索层自评。搜索层只负责找解。
 //   ③ **无兜底**：HiGHS 不可用、某片不可行、重放对不上——一律抛出中文错误，由界面现有
@@ -3760,7 +3760,7 @@ function replayChunk({ rules, input, days, incoming, assignments }) {
   return trajectory;
 }
 
-/** 重放闸门：模型声明的 v 必须与真实引擎逐日一致（ADR-0008 的硬门槛）。 */
+/** 重放闸门：模型声明的 v 必须与真实引擎逐日一致（ADR-0009 的硬门槛）。 */
 function assertModelMatchesEngine({ model, columns, trajectory }) {
   const declared = modelState(model, columns);
   let worst = 0;
@@ -3777,7 +3777,7 @@ function assertModelMatchesEngine({ model, columns, trajectory }) {
   if (worst > REPLAY_TOLERANCE) {
     throw new Error(
       `求解缺陷：模型声明的属性值与真实引擎重放不一致（最大偏差 ${worst.toExponential(3)}，@ ${where}）。` +
-        '按 ADR-0008 的纪律，这份结果不可信，已丢弃。',
+        '按 ADR-0009 的纪律，这份结果不可信，已丢弃。',
     );
   }
   return worst;

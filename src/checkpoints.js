@@ -12,7 +12,7 @@
 //
 // 每条属性的**起点值**隐式构成它的第一个检查点，不由数据录入。
 //
-// 见 ADR-0005。
+// 三类来源与目标优先级见 ADR-0007 与 ADR-0009。
 
 import { buildCalendar } from './calendar.js';
 import { clubCommandId } from './clubs.js';

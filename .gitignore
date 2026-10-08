@@ -8,13 +8,8 @@ node_modules/
 plan-core.js
 
 # 内部材料：不发布（判据见 README 的「数据来源」一节）。
-#
-# ⚠️ 这几条**只挡未来的提交**：当前仓库的历史里仍有它们的旧副本（`docs/data-request.md`、
-# 0001–0004 号 ADR、`GLOSSARY.md` 等，可用 `git log --all --name-only` 复核），
-# 那些对象与历史一起公开可读。
-#
-# 处置：所有者已裁决「全部工作完成后**重建仓库、清空历史**」。在重建完成之前，
-# **不要 `git remote add`、不要 `git push`**——本仓库目前也确实没有配置任何远程。
+# 这几条只挡**未来的提交**；`GLOSSARY.md` 等文件在旧提交里依然存在
+# （可用 `git log --all --name-only` 复核），历史不可改写。
 .scratch/
 AGENTS.md
 docs/agents/

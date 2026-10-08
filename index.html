@@ -4882,16 +4882,23 @@ function createSolver(rules, options = {}) {
     // ---- 由唯一判定器挑更好的那一份 ----
     //
     // 判定口径与对外指标完全一致：同一份 `plan()`、同一套目标与硬约束。两块候选谁更好由
-    // "合格性 → 小目标达标数 → 结局目标达标数"决定；精确求解的候选还额外背着重放闸门的保证。
+    // **所有者定的优先级**决定，一层都不能少：合格性 → **全局约束达标数** → 小目标达标数 →
+    // 结局目标达标数。精确求解的候选还额外背着重放闸门的保证。
+    //
+    // 少了"全局约束达标数"这一层会真的选错（2026-10-09 由 tools/compare-goal-priority.mjs 抓到）：
+    // 当结局目标被调低时，启发式会去追更多结局目标而放着一条全局约束没达成
+    // （实测 gc-popularity 只有 26.1/100），而它在"结局达标数"上更多，于是判定器选中了它——
+    // 这与"全局约束先于目标"直接矛盾。
     const judge = (candidateAssignments) => {
       const checked = plan(input, { assignments: candidateAssignments });
       const goals = checked.ok ? checked.goals : null;
       const met = (source) =>
         goals ? goals.items.filter((item) => item.source === source && item.state === 'met').length : -1;
       return {
-        rank: [goals && goals.valid ? 1 : 0, met('mini'), met('ending')],
+        rank: [goals && goals.valid ? 1 : 0, met('global'), met('mini'), met('ending')],
         valid: Boolean(goals && goals.valid),
         hardViolations: goals ? goals.hardViolations : null,
+        globalMet: met('global'),
         miniMet: met('mini'),
         endingMet: met('ending'),
       };
@@ -4948,8 +4955,10 @@ function createSolver(rules, options = {}) {
         candidates: candidateScores,
         heuristicError,
         heuristicReserveMs,
+        // `chunks` = **选中候选**的块（界面/验收按这个读）；精确求解那一份**始终**在
+        // `milpChunks` 里，否则它赢下候选时诊断信息反而空掉（2026-10-09 修正）。
         chunks: chosenCandidate.solver === 'milp' ? chunkReports : [],
-        milpChunks: chosenCandidate.solver === 'milp' ? [] : chunkReports,
+        milpChunks: chunkReports,
         // 因滚动近视而无解、已降级为软目标继续求解的块（结果以 plan() 的判定为准）。
         relaxedBlocks,
         seed: SEED,

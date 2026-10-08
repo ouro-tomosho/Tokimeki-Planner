@@ -1900,6 +1900,964 @@ function planChunks(rules, input, settledDates) {
 }
 return { CHUNK_WEEKS, CHUNK_COUNT, INTERPOLATION_EXCLUDED, chunkGeometry, interpolatedTargets, chunkTargets, planChunks };
 })();
+__planCoreNs["src/settlement.js"] = (() => {
+const { weekStartOf } = __planCoreNs["src/dates.js"];
+// 单日结算内核。
+//
+// 接缝是 `apply(rules, state, commandId, dayKind) → 新状态`：规则在这一层注入，
+// 纯函数、不碰 DOM，因此同一份代码既能在内联 Worker 里跑，也能在 Node 测试里直接断言。
+//
+// **全程小数，不截断**：所有效果按精确值累加，只在每次结算后夹在属性的 [min, max] 内。
+// 界面要显示两位小数时自行取整，不在这里做。
+//
+// 期望值与结算共用同一份 `branches()`：求解器与规划必须同一口径，否则搜索会在与结算
+// 不同的世界里寻优，得出的日程一重放就对不上。
+
+
+
+const WEEKDAY = 'weekday';
+const REST_DAY = 'restDay';
+
+/** 社团经验是**第 10 个属性**，它的 id 固定。社团指令的增益加到它上面。 */
+const CLUB_EXPERIENCE_ID = 'clubExperience';
+
+/** 传入指令 id 或指令对象，都解析成指令对象；空过返回 null。 */
+function resolveCommand(rules, commandOrId) {
+  if (commandOrId === null || commandOrId === undefined) return null;
+  if (typeof commandOrId === 'object') return commandOrId;
+  const command = rules.commands.find((c) => c.id === commandOrId);
+  if (!command) throw new Error(`未知指令：${commandOrId}`);
+  return command;
+}
+
+/**
+ * 该指令在这一天的两个分支：**休息日成功值**与**失败值**（真实数值，未按成功率加权）。
+ *
+ * 非压力属性：休息日全部 ×4（日常与社团同倍率）；失败时上升的减半。
+ * 压力（负面指标）：成功时上升的不适用休息日倍率，只有下降的适用；失败统一是
+ * **成功值的一半 + 1**（平日以未加成成功值为基准，休息日以加成后成功值为基准）。
+ */
+function branches(rules, command, dayKind) {
+  const restDay = dayKind === REST_DAY;
+  const bonus = rules.restDayBonus;
+  const negativeId = rules.attributes.find((a) => a.direction === 'down').id;
+  const success = {};
+  const failure = {};
+
+  for (const attribute of rules.attributes) {
+    const id = attribute.id;
+    const base = command.effects[id];
+    if (id === negativeId) {
+      const successValue = restDay && base < 0 ? base * bonus.stressReduction : base;
+      const failureValue = base > 0 ? base + 1 : successValue / 2 + 1;
+      success[id] = successValue;
+      failure[id] = failureValue;
+      continue;
+    }
+    const scaled = restDay ? base * (command.kind === 'club' ? bonus.club : bonus.daily) : base;
+    success[id] = scaled;
+    failure[id] = scaled > 0 ? scaled / 2 : scaled;
+  }
+  return { success, failure };
+}
+
+/**
+ * 期望变动（真实数值）：成功率加权后的当日效果。全部 10 项属性都有值。
+ * 这是期望值的**唯一**来源——求解器与结算都从这里取。
+ */
+function expectedEffects(rules, commandOrId, dayKind) {
+  const command = resolveCommand(rules, commandOrId);
+  if (!command) return Object.fromEntries(rules.attributes.map((a) => [a.id, 0]));
+  const { success, failure } = branches(rules, command, dayKind);
+  const rate = command.successRate;
+  const out = {};
+  for (const attribute of rules.attributes) {
+    const id = attribute.id;
+    out[id] = rate * success[id] + (1 - rate) * failure[id];
+  }
+  return out;
+}
+
+/**
+ * 这一天是否落在**有加成的社团集训周**里。
+ *
+ * `rules.calendar.clubWeeks` 的 6 条分两组：**8 月组**（1995-08-13、1996-08-11、1997-08-10）
+ * 有社团经验加成，**10 月组**没有。加成的作用域严格是**那一周的平日**——集训周不含休息日，
+ * 所以该周的休息日仍走基础值 `restDay`。
+ *
+ * 日期从字符串取，**不用 `new Date` 的本地时区**：跨时区跑会差一天。
+ */
+function isAugustClubWeek(rules, weekStart) {
+  if (!weekStart) return false;
+  return (rules.calendar?.clubWeeks ?? []).some(
+    (week) => week.date === weekStart && week.date.slice(5, 7) === '08',
+  );
+}
+
+/**
+ * 某一天的社团经验增益。加成只对**8 月集训周的平日**生效（见 `isAugustClubWeek`）。
+ *
+ * 判定优先级：
+ *   1. `rule.weekStart`（最可靠——调用方手里有完整的日历对象）；
+ *   2. `date`（退而求其次——从日期自己推周锚点，**用字符串运算，不碰时区**）；
+ *   3. 两者都没有：退回基础值。这条是为了兼容大量只关心"平日 +1 / 休息日 +4"的
+ *      既有测试调用点，代价是它们在 8 月集训周上会少算——所以 `apply` 在**能判定
+ *      却判不出来**时会抛错，而不是静默给错值。
+ */
+function clubExperienceGainOn(rules, dayKind, rule = null, date = null) {
+  const gain = rules.clubExperienceGain;
+  if (dayKind === REST_DAY) return gain.restDay;
+  const weekStart = rule?.weekStart ?? (date ? weekStartOf(date) : null);
+  if (weekStart === null) return gain.weekday;
+  return isAugustClubWeek(rules, weekStart) ? gain.augustWeekday : gain.weekday;
+}
+
+const clamp = (value, attribute) => Math.min(attribute.max, Math.max(attribute.min, value));
+
+/**
+ * 推进一天。
+ *
+ * `commandId` 为 `null` / `undefined` 表示**空过**：不执行、不判定成败、也不结算，
+ * 状态原样带入下一天。`state` 不被修改。
+ *
+ * 第 5/6 参用于判断 **8 月集训周加成**，给任意一个即可（两个都不给则按基础增益处理）：
+ *   - `rule`：这一天在日历里的身份 `{ date, isRestDay, weekStart }`；
+ *   - `date`：只给日期也行，内部用**字符串运算**推周锚点，不碰时区。
+ * 能拿到 `day` 的调用点（`plan` / `beam`）应当传 `day`。
+ */
+function apply(rules, state, commandId, dayKind, rule = null, date = null) {
+  const attributes = { ...state.attributes };
+  const command = resolveCommand(rules, commandId);
+
+  if (!command) return { ...state, attributes };
+
+  const expected = expectedEffects(rules, command, dayKind);
+  for (const attribute of rules.attributes) {
+    const id = attribute.id;
+    attributes[id] = clamp(attributes[id] + expected[id], attribute);
+  }
+
+  // 社团经验的增长只由这一处产生：加到**第 10 个属性** `clubExperience` 上，不受成败影响。
+  // 落点是属性 `clubExperience`，**不是** `command.clubId`——后者是社团 id（如 `science-club`），
+  // 根本不是属性。写错会让增益被静默丢弃（历史上真发生过）。
+  if (command.kind === 'club') {
+    const gain = clubExperienceGainOn(rules, dayKind, rule, date ?? rule?.date ?? null);
+    const attribute = rules.attributes.find((a) => a.id === CLUB_EXPERIENCE_ID);
+    if (!attribute) {
+      throw new Error(`规则里缺少社团经验属性 ${CLUB_EXPERIENCE_ID}，社团指令的增益无处可加`);
+    }
+    attributes[CLUB_EXPERIENCE_ID] = clamp(attributes[CLUB_EXPERIENCE_ID] + gain, attribute);
+  }
+
+  return { ...state, attributes };
+}
+return { WEEKDAY, REST_DAY, CLUB_EXPERIENCE_ID, resolveCommand, branches, expectedEffects, isAugustClubWeek, clubExperienceGainOn, apply };
+})();
+__planCoreNs["src/quota.js"] = (() => {
+const { addDays, weekStartOf } = __planCoreNs["src/dates.js"];
+const { availableCommandIds, availableDayCommandIds, clubCommandId, createClubLookup } = __planCoreNs["src/clubs.js"];
+const { CLUB_EXPERIENCE_ID, REST_DAY, WEEKDAY, expectedEffects } = __planCoreNs["src/settlement.js"];
+const { buildCheckpointSchedule } = __planCoreNs["src/checkpoints.js"];
+// 周配额分配：先用**精确方法**求出"每条指令各用几周"，再交给排布层。
+//
+// 为什么需要它：每周只有一条周指令、作用于 6 个平日，所以**一个决策同时推动全部 10 个
+// 属性**。束搜索逐状态选"当前最好"，会把资源堆到回报最快的一项上——实测反复出现某几项
+// 严重超额、另几项归零（文科 286 而容姿 3.8、体力 950 而其余归零）。排序键换过 9 版
+// （见 spec.md「排序键实验谱系」）都没解决，因为问题不在"怎么排序"。
+//
+// 关键性质（所有者确认的 H1）：指令**没有副作用**——今天做了什么不影响明天能做什么。
+// 因此终值只取决于"每条指令用了几次"，与顺序无关：
+//
+//     终值_k = 起点_k + Σ_c （周内次数_c × 该指令在该周的日效果_k × 该周可用天数）
+//
+// 于是"把 152 周分给各条主攻指令"就是一个**变量很少的整数规划**。这里用
+// 「缺口驱动的边际贪心 + 逐周最优分配」求解：每轮把一周交给"最能压低当前最大缺口"的
+// 指令，直到全部达标或周数用尽。它不需要任何权重表——缺口按**归一化比例**比较。
+
+
+
+
+
+
+/** 一条属性的"要求"：终点目标（`>=` 或 `<`）。 */
+function endTargetsOf(rules, schedule) {
+  const targets = new Map();
+  for (const checkpoint of schedule) {
+    if (checkpoint.source !== 'ending' || checkpoint.attributes) continue;
+    const current = targets.get(checkpoint.attribute);
+    if (!current || checkpoint.date >= current.date) {
+      targets.set(checkpoint.attribute, { op: checkpoint.op, value: checkpoint.value, date: checkpoint.date });
+    }
+  }
+  return targets;
+}
+
+/**
+ * 把某条指令施加到一整周上（该周每个结算日各一次），返回对每个属性的总变化。
+ *
+ * 按**真实日历**逐周算：该周有几个平日、几个休息日，周指令只作用于平日，休息日走日指令。
+ * 不能用"7 × 单日效果"（周指令管不了周日）。
+ */
+
+/**
+ * 某一周里"有结算的平日"与"有结算的休息日"分别是哪些天。
+ *
+ * **休息日不能按"i === 0（周日）"硬编码**：`rules.calendar.restDays` 里还有一批游戏内
+ * 确定的节假日，它们落在周一至周六，同样走各自的日指令。漏掉它们会把配额算错。
+ */
+function weekStructure(rules, weekStart) {
+  const fixedRest = new Set(rules.calendar?.restDays ?? []);
+  const weekdays = [];
+  const restDays = [];
+  for (let i = 0; i < 7; i += 1) {
+    const date = addDays(weekStart, i);
+    if (date < rules.timeline.start || date > rules.timeline.lastSettlement) continue;
+    if (date === rules.timeline.start) continue;
+    const isRest = i === 0 || fixedRest.has(date);
+    if (isRest) restDays.push(date);
+    else weekdays.push(date);
+  }
+  return { weekdays, restDays };
+}
+
+/**
+ * 求一份周配额：`{ quota: [ { weekStart, commandId, weekdayDates, restDates } ], unmet, weeks }`。
+ *
+ * @returns `{ plan, unmet, usedWeeks, weeks }`，`unmet` 是最终仍达不到的属性清单。
+ */
+function allocateQuota(rules, input) {
+  const weeks = buildCalendarWeeks(rules, input);
+  const clubAt = createClubLookup(input);
+  const schedule = buildCheckpointSchedule(rules, input);
+  const targets = endTargetsOf(rules, schedule);
+
+  // 每周的可用候选池与结构固定，先算一次。
+  const structures = weeks.map((week) => ({
+    weekStart: week.weekStart,
+    weekdayDates: week.weekdays,
+    restDates: week.restDays,
+    pool: availableCommandIds(rules, clubAt(week.weekStart), week.weekStart),
+  }));
+
+  // **每条指令在整周上的效果向量**：只取决于该周的平日天数与指令本身。
+  // 因为无副作用，终值 = 起点 + Σ（该指令用了几周 × 这个向量），与顺序无关。
+  const vectors = new Map();
+  for (const s of structures) {
+    if (vectors.has(s.pool.join('|') + '|' + s.weekdayDates.length)) continue;
+    const key = s.pool.join('|') + '|' + s.weekdayDates.length;
+    const table = new Map();
+    for (const commandId of s.pool) {
+      const perDay = expectedEffects(rules, commandId, WEEKDAY);
+      table.set(commandId, Object.fromEntries(
+        rules.attributes.map((a) => [a.id, perDay[a.id] * s.weekdayDates.length]),
+      ));
+    }
+    vectors.set(key, table);
+  }
+  const vectorFor = (s, commandId) => vectors.get(s.pool.join('|') + '|' + s.weekdayDates.length).get(commandId);
+
+  const start = Object.fromEntries(rules.attributes.map((a) => [a.id, a.default]));
+  const active = rules.attributes.filter((a) => targets.has(a.id) && a.id !== CLUB_EXPERIENCE_ID);
+
+  /** 给定"每周选哪条"，算终值（含夹逼）。 */
+  const evaluate = (choices) => {
+    const state = { ...start };
+    choices.forEach((commandId, index) => {
+      if (commandId === null) return;
+      const vector = vectorFor(structures[index], commandId);
+      for (const a of rules.attributes) {
+        state[a.id] = Math.max(a.min, Math.min(a.max, state[a.id] + vector[a.id]));
+      }
+    });
+    return state;
+  };
+
+  /** 缺口键：最大归一化缺口优先，再比总和。 */
+  const keyOf = (state) => {
+    const gaps = [];
+    for (const a of active) {
+      const t = targets.get(a.id);
+      const gap = t.op === '>=' ? t.value - state[a.id] : state[a.id] - (t.value - 1);
+      gaps.push(gap > 0 ? gap / Math.max(1, t.value) : 0);
+    }
+    gaps.sort((x, y) => y - x);
+    return { gaps, total: gaps.reduce((x, y) => x + y, 0) };
+  };
+  const better = (a, b) => {
+    for (let i = 0; i < Math.max(a.gaps.length, b.gaps.length); i += 1) {
+      const l = a.gaps[i] ?? 0;
+      const r = b.gaps[i] ?? 0;
+      if (Math.abs(l - r) > 1e-12) return l - r;
+    }
+    return a.total - b.total;
+  };
+
+  // 固定日历里的社团集训周：那段时间游戏里只能做社团指令，配额层照办、不再重选。
+  const pinnedClubWeeks = new Set((rules.calendar?.clubWeeks ?? []).map((w) => w.date));
+
+  // 初值：钉住的周用社团指令，其余先留空（下面迭代会填）。
+  const choices = structures.map((s) => {
+    if (!pinnedClubWeeks.has(s.weekStart)) return null;
+    const command = clubCommandId(rules, clubAt(s.weekStart));
+    return s.pool.includes(command) ? command : null;
+  });
+  let best = keyOf(evaluate(choices));
+  let bestChoices = [...choices];
+
+  // 逐周定点迭代：每轮扫全表，把每周换成"能让缺口键最小"的指令，直到不再改善。
+  for (let pass = 0; pass < 40; pass += 1) {
+    let improved = false;
+    for (let index = 0; index < structures.length; index += 1) {
+      // 固定日历钉住的社团集训周不参与重选。
+      if (pinnedClubWeeks.has(structures[index].weekStart)) continue;
+      const original = choices[index];
+      let localBest = original;
+      let localKey = null;
+      for (const commandId of structures[index].pool) {
+        choices[index] = commandId;
+        const key = keyOf(evaluate(choices));
+        if (localKey === null || better(key, localKey) < 0) {
+          localKey = key;
+          localBest = commandId;
+        }
+      }
+      choices[index] = localBest;
+      if (localBest !== original) improved = true;
+      if (better(localKey, best) < 0) {
+        best = localKey;
+        bestChoices = [...choices];
+        // 起点值为 0 的项不参与，避免"全 0"被当成最好
+      }
+    }
+    if (!improved) break;
+  }
+
+  // 把最终选择整理成排布层要的形状；休息日按同一套"缺口驱动"逐日选。
+  const state = { ...start };
+  const plan = [];
+  bestChoices.forEach((commandId, index) => {
+    const s = structures[index];
+    const vector = vectorFor(s, commandId);
+    for (const a of rules.attributes) {
+      state[a.id] = Math.max(a.min, Math.min(a.max, state[a.id] + vector[a.id]));
+    }
+    const restCommands = s.restDates.map((date) => {
+      const dayPool = availableDayCommandIds(rules, clubAt(date), date);
+      let restBest = null;
+      let restKey = null;
+      for (const candidate of dayPool) {
+        const trial = { ...state };
+        if (candidate !== 'skip') {
+          const perDay = expectedEffects(rules, candidate, REST_DAY);
+          for (const a of rules.attributes) {
+            trial[a.id] = Math.max(a.min, Math.min(a.max, trial[a.id] + perDay[a.id]));
+          }
+        }
+        const key = keyOf(trial);
+        if (restKey === null || better(key, restKey) < 0) {
+          restKey = key;
+          restBest = candidate;
+        }
+      }
+      if (restBest && restBest !== 'skip') {
+        const perDay = expectedEffects(rules, restBest, REST_DAY);
+        for (const a of rules.attributes) {
+          state[a.id] = Math.max(a.min, Math.min(a.max, state[a.id] + perDay[a.id]));
+        }
+      }
+      return { date, commandId: restBest };
+    });
+    plan.push({ weekStart: s.weekStart, commandId, weekdayDates: s.weekdayDates, restCommands });
+  });
+
+  return { plan, unmet: keyOf(state), state };
+}
+
+function buildCalendarWeeks(rules, input) {
+  const weeks = [];
+  for (let anchor = weekStartOf(rules.timeline.start); anchor <= rules.timeline.lastSettlement; anchor = addDays(anchor, 7)) {
+    const structure = weekStructure(rules, anchor);
+    weeks.push({ weekStart: anchor, ...structure });
+  }
+  return weeks;
+}
+
+/**
+ * 缺口键：对每条**有终点目标**的属性算"归一化缺口比例"，返回按大小排序的向量。
+ *
+ * 用向量而不是标量：标量化和会掩盖"某一项差很多"，而验收要的是全达标。
+ * 比较时**先比最大缺口**（先把最烂的一项补齐），再比缺口总和。
+ */
+
+/** 字典序比较两个缺口键：越小越好。 */
+return { allocateQuota };
+})();
+__planCoreNs["src/descent.js"] = (() => {
+const { buildCalendar } = __planCoreNs["src/calendar.js"];
+const { clubWeekMandate } = __planCoreNs["src/checkpoints.js"];
+const { availableCommandIds, availableDayCommandIds, clubCommandId, createClubLookup } = __planCoreNs["src/clubs.js"];
+const { clubExperienceGainOn, expectedEffects, REST_DAY, WEEKDAY } = __planCoreNs["src/settlement.js"];
+const { allocateQuota } = __planCoreNs["src/quota.js"];
+// 构造式启发式排布搜索：直接对**真实结算内核**（`settlement.js` 的 `apply`）做逐槽最速下降。
+//
+// **它现在的角色是"候选生成器"，不是产品求解器**（所有者 2026-10-08 裁决，见 ADR-0009）。
+// 产品求解器是 HiGHS 精确求解（`src/solve.js` + `src/milp.js`）。为什么还要留着它：
+// 精确求解按 8 周块**严格滚动**，丢掉了跨期的容量分配——实测默认输入下它 10/11，
+// 而本模块在**整条时间轴上一次性**分配，15 s 就能拿到 11/11（含毅力 100），
+// 且同样过当前 `plan()` 判定（ok/valid、硬违反 0）。于是两者**并列产出候选**，
+// 由 `plan()` 这个唯一判定器挑更好的那一份。这是"排布器对体面负责、判定器对真实语义负责"
+// 的分层（ADR-0007），不是退回旧方案。
+//
+// 为什么当年不直接用它当结论：它靠**启发式排序**找解，没有最优性保证；把每日夹逼写成 MILP
+// 之后 LP 松弛里「凭空抬高」
+// （L>0 而 v>0）与真实吸收**同价**，整数最优解会大量靠假抬高去满足目标——开发期实测
+// 35% 全约束跑 600s，抽出的解有 1103 条终值与真实重放不一致。所以：
+//
+//   · 本模块负责**找解**：每一次评价都是真实引擎的一次逐日推进，不存在"声明值与重放值
+//     两套数"的问题；
+//   · 求解结果最终还要由 `plan()` + 逐日重放复核（见 `solve.js` 的指标口径）。
+//
+// 结构（本文件头已自述）：
+//   决策槽 = 每个"有结算平日的自然周"一个周指令 + 每个结算休息日一个日指令（含跳过）
+//   评价   = 一次瘦重放（与 apply 同口径），算 ① gate 归一化缺口 ② 全局硬违反 ③ 夹逼吸收
+//   搜索   = 逐槽最速下降（枚举该槽全部候选）+ 迭代局部搜索（扰动 k 槽再下降）
+//
+// **确定性**：PRNG 固定种子、槽遍历顺序固定、候选顺序固定、轮数与预算都只做"是否继续"
+// 的判断。同一输入连续求解两次结果逐位相同。
+//
+// **协作式取消**：每完成一个槽位就查一次 `shouldStop()`；为真则立刻返回当前最优。
+
+
+
+
+
+
+
+/**
+ * 默认工作量（**确定性**预算，与挂钟无关）：
+ *   · 每个阶段先做 5 轮全槽下降，把配额暖启动推到局部最优；
+ *   · 再按 `DEFAULT_ILS` / `DEFAULT_REPAIR_FIRST` / `DEFAULT_REPAIR_LAST` 跑扰动式改进。
+ *
+ * 这组数在本机标定为 14–21 s（Worker 预算 30 s），给更慢的浏览器留了余量。它是**主判据**：
+ * 跑完它就停，与机器快慢无关；墙钟只作安全阀（见 `MIN_VIABLE_BUDGET_MS` 与 metrics
+ * 的 `stopped` / `reproducible`）。
+ */
+const DEFAULT_PASSES = 5;
+/** 迭代局部搜索的轮数（每轮 = 扰动 + 下降）。 */
+const DEFAULT_ILS = 10;
+/** 扰动槽数上限（IL-搜索的"踢一脚"）。 */
+const DEFAULT_KICK = 8;
+/** A 阶段（冲目标）里全局硬违反的权重：低权重 = 先把目标补齐。 */
+const DEFAULT_GATES_WEIGHT = 1;
+/** 修硬约束阶段里全局硬违反的权重：高权重 = 在不丢目标的前提下压违反。 */
+const DEFAULT_VALIDITY_WEIGHT = 200;
+
+/** 阶段 2（先修硬约束）的轮数。 */
+const DEFAULT_REPAIR_FIRST = 10;
+/** 阶段 4（再修一次）的轮数。 */
+const DEFAULT_REPAIR_LAST = 6;
+/** 主线程降级路径的默认预算：必须短到界面还能响应取消。 */
+const DEFAULT_BUDGET_MS = 30000;
+
+/**
+ * 低于这个预算**不启动搜索**：直接返回确定性基线（暖启动的那份配额日程）。
+ *
+ * 为什么要有这条：几百毫秒连一次全槽下降都跑不完，而"跑到一半被挂钟切断"会让同一输入
+ * 每次停在不同迭代上——那正是确定性承诺被破坏的地方。与其给出一个不可复现的结果，
+ * 不如**明确地**退回确定性基线，并在 metrics 里写清 `stopped: 'budget-too-small'`。
+ */
+const MIN_VIABLE_BUDGET_MS = 3000;
+
+/**
+ * 按**请求的预算**挑一档固定工作量。它读的是 `budgetMs` 这个**输入数字**，不是跑出来的
+ * 耗时——所以同一输入永远挑到同一档，工作量因此确定。
+ *
+ *   · `< 3000 ms`  不搜索，直接给确定性基线；
+ *   · `< 8000 ms`  （主线程降级路径）轻量档：一两秒内跑完，主线程不卡；
+ *   · 其余（Worker 路径）默认档。
+ */
+function workProfileFor(budgetMs) {
+  if (!(budgetMs >= MIN_VIABLE_BUDGET_MS)) {
+    return { name: 'none', search: false, passes: 0, ils: 0, repairFirst: 0, repairLast: 0 };
+  }
+  // 轻量档只做**一次初始下降**（阶段 2/3/4 的轮数为 0 时会被整段跳过）：
+  // 主线程降级路径只有 5 s，实测"2 轮下降 + 3 轮改进"要 4–5 s，正好卡在预算上被墙钟切断
+  // ——那又不可复现了。一次下降约 0.5 s（配额暖启动之上），既留足余量又是确定结果。
+  if (budgetMs < 8000) return { name: 'light', search: true, passes: 1, ils: 0, repairFirst: 0, repairLast: 0 };
+  return {
+    name: 'default',
+    search: true,
+    passes: DEFAULT_PASSES,
+    ils: DEFAULT_ILS,
+    repairFirst: DEFAULT_REPAIR_FIRST,
+    repairLast: DEFAULT_REPAIR_LAST,
+  };
+}
+
+/** 固定种子 PRNG（mulberry32）：不掷骰子，同输入同输出。 */
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const CLUB_EXPERIENCE = 'clubExperience';
+
+// ---------------------------------------------------------------- 问题构造
+
+function buildProblem(rules, input) {
+  const attributes = rules.attributes;
+  const ids = attributes.map((a) => a.id);
+  const index = Object.fromEntries(ids.map((id, i) => [id, i]));
+  const n = ids.length;
+  const mins = Float64Array.from(attributes.map((a) => a.min));
+  const maxs = Float64Array.from(attributes.map((a) => a.max));
+  const start = Float64Array.from(attributes.map((a) => input.attributes[a.id]));
+
+  const calendar = buildCalendar(rules, input);
+  const clubAt = createClubLookup(input);
+  const settled = calendar.days.filter((day) => day.isSettled);
+
+  // 系数唯一来源：引擎的 expectedEffects（含成功率、休息日 ×4、失败分支）与
+  // clubExperienceGainOn（含 8 月集训周加成）。工具与引擎不得各算一套。
+  const cache = new Map();
+  const effectOf = (commandId, isRestDay, weekStart) => {
+    const key = `${commandId}|${isRestDay ? 'r' : 'w'}|${weekStart}`;
+    const hit = cache.get(key);
+    if (hit) return hit;
+    const out = new Float64Array(n);
+    if (commandId && commandId !== 'skip') {
+      const command = rules.commands.find((c) => c.id === commandId);
+      if (!command) throw new Error(`未知指令：${commandId}`);
+      const base = expectedEffects(rules, command, isRestDay ? REST_DAY : WEEKDAY);
+      for (let i = 0; i < n; i += 1) {
+        let value = base[ids[i]];
+        if (ids[i] === CLUB_EXPERIENCE && command.kind === 'club') {
+          value += clubExperienceGainOn(rules, isRestDay ? REST_DAY : WEEKDAY, { weekStart });
+        }
+        out[i] = value;
+      }
+    }
+    cache.set(key, out);
+    return out;
+  };
+
+  // ---- 决策槽 ----
+  const slots = [];
+  const daySlot = new Int32Array(settled.length);
+  const weekSlotOf = new Map();
+  const daySlotOf = new Map();
+  for (let i = 0; i < settled.length; i += 1) {
+    const day = settled[i];
+    if (day.isRestDay) continue;
+    if (weekSlotOf.has(day.weekStart)) continue;
+    const club = clubAt(day.weekStart);
+    const mandate = clubWeekMandate(rules, club, day.weekStart);
+    const cands = mandate ? [mandate] : availableCommandIds(rules, club, day.weekStart);
+    weekSlotOf.set(day.weekStart, slots.length);
+    slots.push({ kind: 'week', key: day.weekStart, isRestDay: false, cands, dayIdxs: [] });
+  }
+  for (let i = 0; i < settled.length; i += 1) {
+    const day = settled[i];
+    if (!day.isRestDay) {
+      slots[weekSlotOf.get(day.weekStart)].dayIdxs.push(i);
+      continue;
+    }
+    const club = clubAt(day.date);
+    // 集训周强制的是**周指令**（该周全部平日）；休息日没有这条强制（所有者 2026-10-06 明确）。
+    daySlotOf.set(day.date, slots.length);
+    slots.push({ kind: 'day', key: day.date, isRestDay: true, cands: availableDayCommandIds(rules, club, day.date), dayIdxs: [i] });
+  }
+  for (const [start2, slot] of weekSlotOf) for (const i of slots[slot].dayIdxs) daySlot[i] = slot;
+  for (const [, slot] of daySlotOf) daySlot[slots[slot].dayIdxs[0]] = slot;
+
+  const slotEff = slots.map((slot) => slot.cands.map((cmd) => effectOf(cmd, slot.isRestDay, slot.key)));
+
+  // ---- 目标 ----
+  const checkpoints = input.checkpoints;
+  const ending = checkpoints.filter((c) => c.source === 'ending');
+  const mini = checkpoints.filter((c) => c.source === 'mini');
+  const global = checkpoints.filter((c) => c.source === 'global');
+  const lastIdx = settled.length - 1;
+  const miniIdx = new Map();
+  for (const cp of mini) {
+    let best = 0;
+    for (let i = 0; i < settled.length; i += 1) if (settled[i].date <= cp.date) best = i;
+    miniIdx.set(cp.id, best);
+  }
+  const makeGlobals = () =>
+    global.map((cp) => {
+      const id = cp.attribute ?? cp.attributes[0];
+      const ai = index[id];
+      const startMet = cp.op === '>=' ? start[ai] >= cp.value : start[ai] < cp.value;
+      return { ai, op: cp.op, value: cp.value, id: cp.id, hard: startMet };
+    });
+
+  const state = new Float64Array(n);
+  return {
+    rules, input, calendar, settled, slots, daySlot, slotEff, ids, index, n, start, mins, maxs,
+    ending, mini, global, lastIdx, miniIdx, makeGlobals, state, weekSlotOf, daySlotOf,
+  };
+}
+
+// ---------------------------------------------------------------- 评价
+
+/**
+ * 一次全量评价：瘦重放（与 `apply` 同口径）+ 三类指标。
+ * 返回的 `score` 只用于**搜索排序**；对外汇报的达标状态一律以 `plan()` 为准。
+ */
+function evaluate(problem, x, validityWeight) {
+  problem.evaluations += 1;
+  const { settled, slotEff, daySlot, state, n, start, mins, maxs, ending, mini, miniIdx, lastIdx, index } = problem;
+  state.set(start);
+  let absorb = 0;
+  let globalPenalty = 0;
+  let globalDays = 0;
+  const globals = problem.makeGlobals();
+  let finalState = null;
+  const miniState = new Map();
+
+  for (let i = 0; i < settled.length; i += 1) {
+    const s = daySlot[i];
+    const ci = x[s];
+    if (ci >= 0) {
+      const eff = slotEff[s][ci];
+      for (let a = 0; a < n; a += 1) {
+        const pre = state[a] + eff[a];
+        const v = pre < mins[a] ? mins[a] : pre > maxs[a] ? maxs[a] : pre;
+        state[a] = v;
+        if (v > pre) absorb += v - pre;
+      }
+    }
+    for (const g of globals) {
+      const v = state[g.ai];
+      const met = g.op === '>=' ? v >= g.value : v < g.value;
+      if (met) g.hard = true;
+      else if (g.hard) {
+        globalPenalty += g.op === '>=' ? (g.value - v) / g.value : (v - g.value) / g.value;
+        globalDays += 1;
+      }
+    }
+    for (const [cpId, i0] of miniIdx) if (i0 === i) miniState.set(cpId, Float64Array.from(state));
+    if (i === lastIdx) finalState = Float64Array.from(state);
+  }
+
+  const items = [];
+  for (const cp of ending) {
+    const id = cp.attribute ?? cp.attributes[0];
+    const v = (finalState ?? state)[index[id]];
+    items.push({ id: cp.id, actual: v, op: cp.op, value: cp.value, ok: cp.op === '>=' ? v >= cp.value : v < cp.value });
+  }
+  for (const cp of mini) {
+    const snap = miniState.get(cp.id);
+    const names = cp.attributes ?? [cp.attribute];
+    const v = names.reduce((sum, id) => sum + (snap ? snap[index[id]] : 0), 0);
+    items.push({ id: cp.id, actual: v, op: cp.op, value: cp.value, ok: cp.op === '>=' ? v >= cp.value : v < cp.value });
+  }
+  let shortfall = 0;
+  let unmet = 0;
+  for (const item of items) {
+    if (item.ok) continue;
+    unmet += 1;
+    const need = item.op === '>=' ? item.value - item.actual : item.actual - item.value + 1e-9;
+    shortfall += Math.max(0, need) / Math.max(1, Math.abs(item.value));
+  }
+  // **字典序**（所有者口径：不要为了凑 valid 去牺牲 ok）：
+  //   ① 未达标的目标条数最少 ② 缺口合计最小 ③ 全局硬违反最少 ④ 夹逼吸收最少（不推荐套利）
+  // 用大权重把四层压成一个标量，但层与层之间**不共享刻度**——这是刻意的：
+  // 少一条未达标优先于任何其他层的改善。
+  const score = unmet * 1e6 + shortfall * 1e3 + globalPenalty * validityWeight + 1e-6 * absorb;
+  return { score, unmet, shortfall, globalPenalty, globalDays, absorb, items };
+}
+
+// ---------------------------------------------------------------- 搜索
+
+function toAssignments(problem, x) {
+  const weekCommands = {};
+  const dayCommands = {};
+  for (let s = 0; s < problem.slots.length; s += 1) {
+    const slot = problem.slots[s];
+    const cmd = slot.cands[x[s]];
+    if (slot.kind === 'week') weekCommands[slot.key] = cmd;
+    else dayCommands[slot.key] = cmd;
+  }
+  return { weekCommands, dayCommands };
+}
+
+/**
+ * **规范序**（与搜索的加权代价无关）：未达标条数 → 缺口合计 → 全局硬违反 → 夹逼吸收。
+ *
+ * 搜索用加权标量只是为了有梯度；**选优**必须回到这个规范序，否则换一个权重就可能选出
+ * 更差的解。两个阶段（先冲目标、再修硬约束）的产物也用这个序比较。
+ */
+function betterThan(a, b) {
+  if (a.unmet !== b.unmet) return a.unmet < b.unmet;
+  if (Math.abs(a.shortfall - b.shortfall) > 1e-9) return a.shortfall < b.shortfall;
+  if (Math.abs(a.globalPenalty - b.globalPenalty) > 1e-9) return a.globalPenalty < b.globalPenalty;
+  return a.absorb < b.absorb;
+}
+
+/** 兜底初始解：全部休息周 + 休息日日指令（确定性、与数据无关）。 */
+function restVector(problem) {
+  const x = new Int32Array(problem.slots.length);
+  for (let s = 0; s < problem.slots.length; s += 1) {
+    const ci = problem.slots[s].cands.indexOf('cmd-rest');
+    x[s] = ci >= 0 ? ci : 0;
+  }
+  return x;
+}
+
+/**
+ * 暖启动种子：配额层的"缺口驱动贪心"（`src/quota.js`）。
+ *
+ * 为什么需要：从"全休息"冷启动时，30 s 预算内的下降只能爬到 6–7/11；配额层先用
+ * **与顺序无关**的性质（指令无副作用 ⇒ 终值只取决于各条用了几次）把资源摊到最缺的
+ * 那几项上，给下降一个"主攻方向已经对了"的起点。
+ *
+ * 配额层与下降层同口径（都用 `expectedEffects`），所以它给的是同一个世界里的解，
+ * 不会把搜索带偏。失败时退回兜底起点，不让求解整体失败。
+ */
+function quotaVector(problem) {
+  const x = restVector(problem);
+  try {
+    const quota = allocateQuota(problem.rules, problem.input);
+    for (const week of quota.plan ?? []) {
+      const slot = problem.weekSlotOf.get(week.weekStart);
+      if (slot !== undefined) {
+        const ci = problem.slots[slot].cands.indexOf(week.commandId);
+        if (ci >= 0) x[slot] = ci;
+      }
+      for (const rest of week.restCommands ?? []) {
+        const dayIndex = problem.daySlotOf.get(rest.date);
+        if (dayIndex === undefined) continue;
+        const ci = problem.slots[dayIndex].cands.indexOf(rest.commandId ?? 'skip');
+        if (ci >= 0) x[dayIndex] = ci;
+      }
+    }
+    return { x, quotaUnmet: quota.unmet ?? null };
+  } catch {
+    return { x, quotaUnmet: null };
+  }
+}
+
+function runDescent(rules, input, options = {}) {
+  const shouldStop = options.shouldStop ?? (() => false);
+  const budgetMs = options.budgetMs ?? DEFAULT_BUDGET_MS;
+  // 工作量：显式给定优先；否则由**请求的预算**决定一档固定值（见 workProfileFor）。
+  const profile = workProfileFor(budgetMs);
+  const passes = options.passes ?? profile.passes;
+  const ils = options.ils ?? profile.ils;
+  const kick = options.kick ?? DEFAULT_KICK;
+  const seed = options.seed ?? 20261006;
+  // 各阶段里"全局硬违反"的权重：冲目标阶段低（权重 1，先把目标补齐），
+  // 修硬约束阶段高（在不丢目标的前提下压违反）。阶段顺序见 `runDescent` 上方的说明。
+  const gatesWeight = options.gatesWeight ?? DEFAULT_GATES_WEIGHT;
+  const repairWeight = options.repairWeight ?? DEFAULT_VALIDITY_WEIGHT;
+  const repairFirst = options.repairFirst ?? profile.repairFirst;
+  const repairLast = options.repairLast ?? profile.repairLast;
+  const startedAt = Date.now();
+  const deadline = startedAt + budgetMs;
+
+  const problem = { ...buildProblem(rules, input), evaluations: 0 };
+  const rng = mulberry32(seed);
+  const warm = options.warmStart === false ? { x: restVector(problem), quotaUnmet: null } : quotaVector(problem);
+  const x = warm.x;
+
+  const order = [...problem.slots.keys()];
+  let current = evaluate(problem, x, gatesWeight);
+  let best = current;
+  const bestX = Int32Array.from(x);
+  let cancelled = false;
+  let iterations = 0;
+  let repairIterations = 0;
+
+  // **墙钟只是安全阀**：主判据是上面那组固定工作量（passes / ils / repairFirst / repairLast），
+  // 它在进入搜索前就定死了，所以"跑完计划工作量"这条路径与机器快慢无关。
+  // 安全阀触发时结果会停在不同迭代上——那种情况必须**标注**出来（`reproducible: false`），
+  // 不能假装它和平时一样可复现。
+  const outOfTime = () => Date.now() >= deadline || shouldStop();
+  let stoppedBy = 'work-limit';
+
+  /**
+   * 一次全槽最速下降。`weight` 只影响**方向**；是否更优由加权代价判断（同阶段内可比）。
+   *
+   * 取消/超时**不改变**已完成的轮数语义：它是安全阀，触发时把 `cancelled` 置真并立刻返回。
+   */
+  function descend(weight) {
+    for (let pass = 0; pass < passes; pass += 1) {
+      let improved = false;
+      for (let i = order.length - 1; i > 0; i -= 1) {
+        const j = Math.floor(rng() * (i + 1));
+        [order[i], order[j]] = [order[j], order[i]];
+      }
+      for (const s of order) {
+        const original = x[s];
+        let bestCand = original;
+        let bestScore = current.score;
+        for (let ci = 0; ci < problem.slots[s].cands.length; ci += 1) {
+          if (ci === original) continue;
+          x[s] = ci;
+          const result = evaluate(problem, x, weight);
+          if (result.score < bestScore - 1e-12) {
+            bestScore = result.score;
+            bestCand = ci;
+            current = result;
+          }
+        }
+        x[s] = bestCand;
+        if (bestCand !== original) improved = true;
+        if (outOfTime()) {
+          stoppedBy = shouldStop() ? 'cancelled' : 'wall-clock';
+          cancelled = true;
+          return improved;
+        }
+      }
+      if (!improved) break;
+    }
+    return false;
+  }
+
+  const snapshot = () => {
+    bestX.set(x);
+    best = current;
+  };
+
+  /** 迭代局部搜索：扰动 k 个槽再下降，只接受**规范序**更优者。 */
+  function iterate(count, weight) {
+    let done = 0;
+    for (let it = 0; it < count; it += 1) {
+      const y = Int32Array.from(bestX);
+      const k = 1 + Math.floor(rng() * kick);
+      for (let t = 0; t < k; t += 1) {
+        const s = Math.floor(rng() * y.length);
+        y[s] = Math.floor(rng() * problem.slots[s].cands.length);
+      }
+      x.set(y);
+      current = evaluate(problem, x, weight);
+      descend(weight);
+      done += 1;
+      if (betterThan(current, best)) {
+        if (typeof process !== 'undefined' && process.env?.DESCENT_DEBUG) {
+          // eslint-disable-next-line no-console
+          console.log(`[iter ${it}] 改善：best(${best.unmet},${best.shortfall.toFixed(4)},${best.globalDays},${best.absorb.toFixed(1)}) → (${current.unmet},${current.shortfall.toFixed(4)},${current.globalDays},${current.absorb.toFixed(1)})`);
+        }
+        snapshot();
+      }
+      if (outOfTime()) {
+        stoppedBy = shouldStop() ? 'cancelled' : 'wall-clock';
+        cancelled = true;
+        break;
+      }
+    }
+    return done;
+  }
+
+  /**
+   * 统一收尾：两条出口（"预算过小直接退回基线"与"跑完阶段"）共用一份 metrics 组装，
+   * 免得两处口径分叉。
+   */
+  function finish(overrides = {}) {
+    const stopped = overrides.stoppedBy ?? stoppedBy;
+    const wasCancelled = overrides.cancelled ?? cancelled;
+    return {
+      assignments: toAssignments(problem, bestX),
+      metrics: {
+        seed,
+        passes,
+        ils,
+        kick,
+        repairFirst,
+        repairLast,
+        // 计划工作量（确定性）与"本次实际跑了多少"分开报：前者是承诺，后者是实际。
+        work: { passes, ils, repairFirst, repairLast },
+        workProfile: profile.name,
+        evaluations: problem.evaluations,
+        budgetMs,
+        elapsedMs: Date.now() - startedAt,
+        ilsDone: overrides.iterations ?? iterations,
+        repairIterations: overrides.repairs ?? repairIterations,
+        cancelled: wasCancelled,
+        stopped,
+        // `incomplete` = 没跑完计划工作量（被取消 / 被墙钟切断 / 预算过小）。
+        incomplete: wasCancelled,
+        // `reproducible` = 这份结果是否可复现。只有**被墙钟切断**时才是 false：
+        // 那种情况下停在第几轮取决于机器快慢，同一输入两次可能不同。
+        reproducible: stopped !== 'wall-clock',
+        // 搜索层自评（只用于排序，**不作为对外结论**）
+        searchUnmet: best.unmet,
+        searchShortfall: best.shortfall,
+        searchHardViolationDays: best.globalDays,
+        absorption: best.absorb,
+        slots: problem.slots.length,
+        warmStart: options.warmStart === false ? 'rest' : 'quota',
+      },
+    };
+  }
+
+  if (!profile.search) {
+    // 预算太小：**不启动搜索**，直接返回确定性基线（配额暖启动）并如实标注。
+    // 必须真的返回：只置标志的话，下面的阶段仍会被墙钟切断，同一输入会停在不同迭代上
+    // （实测 5 次跑出 4 种结果，且因为系统时钟被校正出现过负的耗时）。
+    return finish({ stoppedBy: 'budget-too-small', cancelled: true });
+  }
+
+  // ---- 四个**确定性阶段**，一路往下走，每个阶段结束都按规范序取一次优 ----
+  //
+  // 为什么不是"跑一种参数"：这两个验收点要的工作量互相矛盾——
+  //   · 低成功率（35%）要把目标条数冲上去，必须多跑"冲目标"的 ILS；
+  //   · 高成功率（70%+）一旦 ILS 跑多，会被带进"11/11 但几百天硬违反"的角落，
+  //     而**初始下降 + 修硬约束**反而能直接拿到 11/11 且零违反。
+  // 所以按"先修硬约束 → 再冲目标 → 再修一次"的顺序走一遍，每个阶段结束都记录当前最好，
+  // 最后按**规范序**（与搜索权重无关）取优。阶段之间不重复劳动，整体仍然确定性。
+  descend(gatesWeight);
+  snapshot();
+  if (typeof process !== 'undefined' && process.env?.DESCENT_DEBUG) {
+    // eslint-disable-next-line no-console
+    console.log(`[阶段1 初始下降] passes=${passes} → (${best.unmet},${best.shortfall.toFixed(4)},${best.globalDays},${best.absorb.toFixed(1)})`);
+  }
+
+  /** 从当前最好解出发，用给定权重跑一轮下降 + ILS，返回是否被取消。 */
+  function stage(label, weight, count, isRepair = false) {
+    if (cancelled || count <= 0) return;
+    x.set(bestX);
+    current = evaluate(problem, x, weight);
+    descend(weight);
+    if (betterThan(current, best)) snapshot();
+    const done = iterate(count, weight);
+    iterations += done;
+    if (isRepair) repairIterations += done;
+    if (typeof process !== 'undefined' && process.env?.DESCENT_DEBUG) {
+      // eslint-disable-next-line no-console
+      console.log(`[${label}] → (${best.unmet},${best.shortfall.toFixed(4)},${best.globalDays},${best.absorb.toFixed(1)})`);
+    }
+  }
+
+  // 阶段 2：先修硬约束（高成功率下这一步就能给出"全达标 + 零违反"）
+  stage('阶段2 修硬约束', repairWeight, repairFirst, true);
+  const afterRepair = best;
+  const afterRepairX = Int32Array.from(bestX);
+  // 阶段 3：冲目标（低成功率下靠它把未达标条数压下去）
+  stage('阶段3 冲目标', gatesWeight, ils);
+  // 阶段 4：再修一次硬约束（只在没有丢掉目标的前提下）
+  stage('阶段4 再修', repairWeight, repairLast, true);
+  void afterRepair;
+  void afterRepairX;
+
+  if (typeof process !== 'undefined' && process.env?.DESCENT_DEBUG) {
+    const check = evaluate(problem, bestX, gatesWeight);
+    // eslint-disable-next-line no-console
+    console.log('[descent-debug] best', { unmet: best.unmet, shortfall: best.shortfall, days: best.globalDays, absorb: best.absorb },
+      'bestX', { unmet: check.unmet, shortfall: check.shortfall, days: check.globalDays, absorb: check.absorb });
+  }
+
+  return finish();
+}
+return { DEFAULT_PASSES, DEFAULT_ILS, DEFAULT_KICK, DEFAULT_GATES_WEIGHT, DEFAULT_VALIDITY_WEIGHT, DEFAULT_REPAIR_FIRST, DEFAULT_REPAIR_LAST, DEFAULT_BUDGET_MS, MIN_VIABLE_BUDGET_MS, workProfileFor, runDescent };
+})();
 __planCoreNs["src/frontier.js"] = (() => {
 const { addDays } = __planCoreNs["src/dates.js"];
 const { createClubLookup } = __planCoreNs["src/clubs.js"];
@@ -2669,159 +3627,6 @@ function checkDayList(label, list, inTimeline, problems) {
   }
 }
 return { CURRENT_VERSION, DEFAULT_SUCCESS_RATE, defaultInput, toJson, clampToLimits, exportFileName, fromJson, validateInput };
-})();
-__planCoreNs["src/settlement.js"] = (() => {
-const { weekStartOf } = __planCoreNs["src/dates.js"];
-// 单日结算内核。
-//
-// 接缝是 `apply(rules, state, commandId, dayKind) → 新状态`：规则在这一层注入，
-// 纯函数、不碰 DOM，因此同一份代码既能在内联 Worker 里跑，也能在 Node 测试里直接断言。
-//
-// **全程小数，不截断**：所有效果按精确值累加，只在每次结算后夹在属性的 [min, max] 内。
-// 界面要显示两位小数时自行取整，不在这里做。
-//
-// 期望值与结算共用同一份 `branches()`：求解器与规划必须同一口径，否则搜索会在与结算
-// 不同的世界里寻优，得出的日程一重放就对不上。
-
-
-
-const WEEKDAY = 'weekday';
-const REST_DAY = 'restDay';
-
-/** 社团经验是**第 10 个属性**，它的 id 固定。社团指令的增益加到它上面。 */
-const CLUB_EXPERIENCE_ID = 'clubExperience';
-
-/** 传入指令 id 或指令对象，都解析成指令对象；空过返回 null。 */
-function resolveCommand(rules, commandOrId) {
-  if (commandOrId === null || commandOrId === undefined) return null;
-  if (typeof commandOrId === 'object') return commandOrId;
-  const command = rules.commands.find((c) => c.id === commandOrId);
-  if (!command) throw new Error(`未知指令：${commandOrId}`);
-  return command;
-}
-
-/**
- * 该指令在这一天的两个分支：**休息日成功值**与**失败值**（真实数值，未按成功率加权）。
- *
- * 非压力属性：休息日全部 ×4（日常与社团同倍率）；失败时上升的减半。
- * 压力（负面指标）：成功时上升的不适用休息日倍率，只有下降的适用；失败统一是
- * **成功值的一半 + 1**（平日以未加成成功值为基准，休息日以加成后成功值为基准）。
- */
-function branches(rules, command, dayKind) {
-  const restDay = dayKind === REST_DAY;
-  const bonus = rules.restDayBonus;
-  const negativeId = rules.attributes.find((a) => a.direction === 'down').id;
-  const success = {};
-  const failure = {};
-
-  for (const attribute of rules.attributes) {
-    const id = attribute.id;
-    const base = command.effects[id];
-    if (id === negativeId) {
-      const successValue = restDay && base < 0 ? base * bonus.stressReduction : base;
-      const failureValue = base > 0 ? base + 1 : successValue / 2 + 1;
-      success[id] = successValue;
-      failure[id] = failureValue;
-      continue;
-    }
-    const scaled = restDay ? base * (command.kind === 'club' ? bonus.club : bonus.daily) : base;
-    success[id] = scaled;
-    failure[id] = scaled > 0 ? scaled / 2 : scaled;
-  }
-  return { success, failure };
-}
-
-/**
- * 期望变动（真实数值）：成功率加权后的当日效果。全部 10 项属性都有值。
- * 这是期望值的**唯一**来源——求解器与结算都从这里取。
- */
-function expectedEffects(rules, commandOrId, dayKind) {
-  const command = resolveCommand(rules, commandOrId);
-  if (!command) return Object.fromEntries(rules.attributes.map((a) => [a.id, 0]));
-  const { success, failure } = branches(rules, command, dayKind);
-  const rate = command.successRate;
-  const out = {};
-  for (const attribute of rules.attributes) {
-    const id = attribute.id;
-    out[id] = rate * success[id] + (1 - rate) * failure[id];
-  }
-  return out;
-}
-
-/**
- * 这一天是否落在**有加成的社团集训周**里。
- *
- * `rules.calendar.clubWeeks` 的 6 条分两组：**8 月组**（1995-08-13、1996-08-11、1997-08-10）
- * 有社团经验加成，**10 月组**没有。加成的作用域严格是**那一周的平日**——集训周不含休息日，
- * 所以该周的休息日仍走基础值 `restDay`。
- *
- * 日期从字符串取，**不用 `new Date` 的本地时区**：跨时区跑会差一天。
- */
-function isAugustClubWeek(rules, weekStart) {
-  if (!weekStart) return false;
-  return (rules.calendar?.clubWeeks ?? []).some(
-    (week) => week.date === weekStart && week.date.slice(5, 7) === '08',
-  );
-}
-
-/**
- * 某一天的社团经验增益。加成只对**8 月集训周的平日**生效（见 `isAugustClubWeek`）。
- *
- * 判定优先级：
- *   1. `rule.weekStart`（最可靠——调用方手里有完整的日历对象）；
- *   2. `date`（退而求其次——从日期自己推周锚点，**用字符串运算，不碰时区**）；
- *   3. 两者都没有：退回基础值。这条是为了兼容大量只关心"平日 +1 / 休息日 +4"的
- *      既有测试调用点，代价是它们在 8 月集训周上会少算——所以 `apply` 在**能判定
- *      却判不出来**时会抛错，而不是静默给错值。
- */
-function clubExperienceGainOn(rules, dayKind, rule = null, date = null) {
-  const gain = rules.clubExperienceGain;
-  if (dayKind === REST_DAY) return gain.restDay;
-  const weekStart = rule?.weekStart ?? (date ? weekStartOf(date) : null);
-  if (weekStart === null) return gain.weekday;
-  return isAugustClubWeek(rules, weekStart) ? gain.augustWeekday : gain.weekday;
-}
-
-const clamp = (value, attribute) => Math.min(attribute.max, Math.max(attribute.min, value));
-
-/**
- * 推进一天。
- *
- * `commandId` 为 `null` / `undefined` 表示**空过**：不执行、不判定成败、也不结算，
- * 状态原样带入下一天。`state` 不被修改。
- *
- * 第 5/6 参用于判断 **8 月集训周加成**，给任意一个即可（两个都不给则按基础增益处理）：
- *   - `rule`：这一天在日历里的身份 `{ date, isRestDay, weekStart }`；
- *   - `date`：只给日期也行，内部用**字符串运算**推周锚点，不碰时区。
- * 能拿到 `day` 的调用点（`plan` / `beam`）应当传 `day`。
- */
-function apply(rules, state, commandId, dayKind, rule = null, date = null) {
-  const attributes = { ...state.attributes };
-  const command = resolveCommand(rules, commandId);
-
-  if (!command) return { ...state, attributes };
-
-  const expected = expectedEffects(rules, command, dayKind);
-  for (const attribute of rules.attributes) {
-    const id = attribute.id;
-    attributes[id] = clamp(attributes[id] + expected[id], attribute);
-  }
-
-  // 社团经验的增长只由这一处产生：加到**第 10 个属性** `clubExperience` 上，不受成败影响。
-  // 落点是属性 `clubExperience`，**不是** `command.clubId`——后者是社团 id（如 `science-club`），
-  // 根本不是属性。写错会让增益被静默丢弃（历史上真发生过）。
-  if (command.kind === 'club') {
-    const gain = clubExperienceGainOn(rules, dayKind, rule, date ?? rule?.date ?? null);
-    const attribute = rules.attributes.find((a) => a.id === CLUB_EXPERIENCE_ID);
-    if (!attribute) {
-      throw new Error(`规则里缺少社团经验属性 ${CLUB_EXPERIENCE_ID}，社团指令的增益无处可加`);
-    }
-    attributes[CLUB_EXPERIENCE_ID] = clamp(attributes[CLUB_EXPERIENCE_ID] + gain, attribute);
-  }
-
-  return { ...state, attributes };
-}
-return { WEEKDAY, REST_DAY, CLUB_EXPERIENCE_ID, resolveCommand, branches, expectedEffects, isAugustClubWeek, clubExperienceGainOn, apply };
 })();
 __planCoreNs["src/milp.js"] = (() => {
 const { availableCommandIds, availableDayCommandIds, clubCommandId, createClubLookup } = __planCoreNs["src/clubs.js"];
@@ -3617,6 +4422,7 @@ return { createPlanner };
 })();
 __planCoreNs["src/solve.js"] = (() => {
 const { buildCalendar, resolveCommand } = __planCoreNs["src/calendar.js"];
+const { runDescent } = __planCoreNs["src/descent.js"];
 const { actualOf, attributeIdOf, meets } = __planCoreNs["src/checkpoints.js"];
 const { interpolatedTargets, planChunks } = __planCoreNs["src/chunks.js"];
 const { addDays } = __planCoreNs["src/dates.js"];
@@ -3654,6 +4460,7 @@ const { apply, REST_DAY, WEEKDAY } = __planCoreNs["src/settlement.js"];
 
 
 
+
 /** 主线程降级路径的默认预算：必须短到界面还能响应取消。 */
 const MAIN_THREAD_BUDGET_MS = 5000;
 
@@ -3678,6 +4485,19 @@ const RETRY_BLOCK_MS = 6000;
  * 最后一块的块尾就是片尾（最后一个块的块尾就是时间轴终点，目标恰为结局阈值）。
  */
 const SOLVE_BLOCK_WEEKS = 8;
+
+/** 候选生成器的预算份额：构造式启发式拿这么多，剩下给精确求解。 */
+const HEURISTIC_SHARE = 0.3;
+
+/** 启发式至少要拿到这么多预算，才会走它的"默认档"（工作量档位按**请求**预算选，见 descent.js）。 */
+const HEURISTIC_MIN_BUDGET_MS = 8000;
+
+/**
+ * 总预算低于这个数就**不启用**候选生成器：主线程降级路径只有 5 s，把一半预算分给启发式
+ * 会让精确求解退化到比它单独跑还差（实测：9 s 预算下分走一半后，某个晚起场景从
+ * valid=true 掉到 valid=false）。产品路径的 60 s 远高于这条线。
+ */
+const HEURISTIC_ENABLE_MIN_BUDGET_MS = 20000;
 
 /** 固定随机种子：同一输入在同一时间路径下结果稳定（不是可复现性承诺，见 README）。 */
 const SEED = 20261008;
@@ -3835,7 +4655,16 @@ function createSolver(rules, options = {}) {
     const shouldStop = runOptions.shouldStop ?? (() => false);
     const budgetMs = runOptions.budgetMs ?? defaultBudgetMs;
     const startedAt = Date.now();
-    const deadline = startedAt + budgetMs;
+    // 预算排布：**精确求解先跑**（它的块之间会让出事件循环，取消因此仍然灵敏），
+    // 并给启发式候选留出一份**保留额度**，跑完再补上启发式。
+    const heuristicReserveMs =
+      budgetMs >= HEURISTIC_ENABLE_MIN_BUDGET_MS
+        ? Math.min(
+            Math.max(HEURISTIC_MIN_BUDGET_MS, Math.floor(budgetMs * HEURISTIC_SHARE)),
+            Math.floor(budgetMs / 2),
+          )
+        : 0;
+    const deadline = startedAt + budgetMs - heuristicReserveMs;
 
     // 成功率覆盖：建模与复核必须用**同一份**有效规则（见 rules.js 的 withSuccessRate）。
     const effective = withSuccessRate(rules, input.successRate);
@@ -4026,7 +4855,69 @@ function createSolver(rules, options = {}) {
       chunkReport.status = chunkReport.provenOptimal ? 'Optimal' : 'Time limit reached';
     }
 
-    const assignments = { weekCommands, dayCommands };
+    // ---- 候选 B：构造式启发式（在精确求解之后跑；它的保留额度已在预算排布里留出）----
+    //
+    // 它按**整条时间轴**一次性分配决策，因此在"跨期容量"上强于按 8 周块滚动的精确求解：
+    // 实测默认输入 15 s 可得 11/11（含毅力 100），而精确求解是 10/11。它没有最优性保证，
+    // 所以只作为**候选**，与精确求解的候选一起交给唯一判定器 `plan()` 定夺（所有者
+    // 2026-10-08 裁决，见 ADR-0009 的"候选生成器"一节）。
+    // 份额之外再压一道上限：**不能超过总预算的一半**——否则小预算下（主线程降级路径只有 5 s）
+    // 启发式的最小额度会把它自己撑到超出总预算，把精确求解挤到只剩最低额度。
+    // 只有预算够大（`HEURISTIC_ENABLE_MIN_BUDGET_MS`）才启用候选生成器——小预算下把时间分给
+    // 它会同时拖坏两个候选，还不如让精确求解独占。
+    let heuristicAssignments = null;
+    let heuristicError = null;
+    if (heuristicReserveMs > 0) {
+      try {
+        heuristicAssignments = runDescent(effective, input, {
+          shouldStop,
+          budgetMs: Math.max(HEURISTIC_MIN_BUDGET_MS, startedAt + budgetMs - Date.now()),
+        }).assignments;
+      } catch (error) {
+        // 启发式只提供**额外的**候选：它自己失败不该把精确求解已经拿到的日程一起毁掉。
+        heuristicError = error.message;
+      }
+    }
+
+    // ---- 由唯一判定器挑更好的那一份 ----
+    //
+    // 判定口径与对外指标完全一致：同一份 `plan()`、同一套目标与硬约束。两块候选谁更好由
+    // "合格性 → 小目标达标数 → 结局目标达标数"决定；精确求解的候选还额外背着重放闸门的保证。
+    const judge = (candidateAssignments) => {
+      const checked = plan(input, { assignments: candidateAssignments });
+      const goals = checked.ok ? checked.goals : null;
+      const met = (source) =>
+        goals ? goals.items.filter((item) => item.source === source && item.state === 'met').length : -1;
+      return {
+        rank: [goals && goals.valid ? 1 : 0, met('mini'), met('ending')],
+        valid: Boolean(goals && goals.valid),
+        hardViolations: goals ? goals.hardViolations : null,
+        miniMet: met('mini'),
+        endingMet: met('ending'),
+      };
+    };
+    const scoresBetter = (a, b) => {
+      for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return a[i] > b[i];
+      return false;
+    };
+
+    const candidates = [
+      { solver: 'milp', assignments: { weekCommands, dayCommands } },
+    ];
+    if (heuristicAssignments) candidates.push({ solver: 'heuristic', assignments: heuristicAssignments });
+
+    let chosenCandidate = candidates[0];
+    const candidateScores = {};
+    for (const candidate of candidates) {
+      candidateScores[candidate.solver] = judge(candidate.assignments);
+    }
+    for (const candidate of candidates) {
+      if (scoresBetter(candidateScores[candidate.solver].rank, candidateScores[chosenCandidate.solver].rank)) {
+        chosenCandidate = candidate;
+      }
+    }
+
+    const assignments = chosenCandidate.assignments;
 
     // 官方口径复核：同一个 plan()，界面与测试看到的是同一份判定。
     const verified = plan(input, { assignments });
@@ -4052,8 +4943,13 @@ function createSolver(rules, options = {}) {
     return {
       assignments,
       metrics: {
-        solver: 'highs-milp',
-        chunks: chunkReports,
+        solver: chosenCandidate.solver === 'milp' ? 'highs-milp' : 'descent-heuristic',
+        chosenSolver: chosenCandidate.solver,
+        candidates: candidateScores,
+        heuristicError,
+        heuristicReserveMs,
+        chunks: chosenCandidate.solver === 'milp' ? chunkReports : [],
+        milpChunks: chosenCandidate.solver === 'milp' ? [] : chunkReports,
         // 因滚动近视而无解、已降级为软目标继续求解的块（结果以 plan() 的判定为准）。
         relaxedBlocks,
         seed: SEED,

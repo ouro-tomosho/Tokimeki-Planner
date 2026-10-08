@@ -18,6 +18,7 @@
 //      的错误面显示（`web/worker.js` 的 catch → `web/app.js` 的「求解失败：…」）。
 
 import { buildCalendar, resolveCommand } from './calendar.js';
+import { runDescent } from './descent.js';
 import { actualOf, attributeIdOf, meets } from './checkpoints.js';
 import { interpolatedTargets, planChunks } from './chunks.js';
 import { addDays } from './dates.js';
@@ -51,6 +52,19 @@ const RETRY_BLOCK_MS = 6000;
  * 最后一块的块尾就是片尾（最后一个块的块尾就是时间轴终点，目标恰为结局阈值）。
  */
 export const SOLVE_BLOCK_WEEKS = 8;
+
+/** 候选生成器的预算份额：构造式启发式拿这么多，剩下给精确求解。 */
+const HEURISTIC_SHARE = 0.3;
+
+/** 启发式至少要拿到这么多预算，才会走它的"默认档"（工作量档位按**请求**预算选，见 descent.js）。 */
+const HEURISTIC_MIN_BUDGET_MS = 8000;
+
+/**
+ * 总预算低于这个数就**不启用**候选生成器：主线程降级路径只有 5 s，把一半预算分给启发式
+ * 会让精确求解退化到比它单独跑还差（实测：9 s 预算下分走一半后，某个晚起场景从
+ * valid=true 掉到 valid=false）。产品路径的 60 s 远高于这条线。
+ */
+const HEURISTIC_ENABLE_MIN_BUDGET_MS = 20000;
 
 /** 固定随机种子：同一输入在同一时间路径下结果稳定（不是可复现性承诺，见 README）。 */
 const SEED = 20261008;
@@ -208,7 +222,16 @@ export function createSolver(rules, options = {}) {
     const shouldStop = runOptions.shouldStop ?? (() => false);
     const budgetMs = runOptions.budgetMs ?? defaultBudgetMs;
     const startedAt = Date.now();
-    const deadline = startedAt + budgetMs;
+    // 预算排布：**精确求解先跑**（它的块之间会让出事件循环，取消因此仍然灵敏），
+    // 并给启发式候选留出一份**保留额度**，跑完再补上启发式。
+    const heuristicReserveMs =
+      budgetMs >= HEURISTIC_ENABLE_MIN_BUDGET_MS
+        ? Math.min(
+            Math.max(HEURISTIC_MIN_BUDGET_MS, Math.floor(budgetMs * HEURISTIC_SHARE)),
+            Math.floor(budgetMs / 2),
+          )
+        : 0;
+    const deadline = startedAt + budgetMs - heuristicReserveMs;
 
     // 成功率覆盖：建模与复核必须用**同一份**有效规则（见 rules.js 的 withSuccessRate）。
     const effective = withSuccessRate(rules, input.successRate);
@@ -399,7 +422,69 @@ export function createSolver(rules, options = {}) {
       chunkReport.status = chunkReport.provenOptimal ? 'Optimal' : 'Time limit reached';
     }
 
-    const assignments = { weekCommands, dayCommands };
+    // ---- 候选 B：构造式启发式（在精确求解之后跑；它的保留额度已在预算排布里留出）----
+    //
+    // 它按**整条时间轴**一次性分配决策，因此在"跨期容量"上强于按 8 周块滚动的精确求解：
+    // 实测默认输入 15 s 可得 11/11（含毅力 100），而精确求解是 10/11。它没有最优性保证，
+    // 所以只作为**候选**，与精确求解的候选一起交给唯一判定器 `plan()` 定夺（所有者
+    // 2026-10-08 裁决，见 ADR-0009 的"候选生成器"一节）。
+    // 份额之外再压一道上限：**不能超过总预算的一半**——否则小预算下（主线程降级路径只有 5 s）
+    // 启发式的最小额度会把它自己撑到超出总预算，把精确求解挤到只剩最低额度。
+    // 只有预算够大（`HEURISTIC_ENABLE_MIN_BUDGET_MS`）才启用候选生成器——小预算下把时间分给
+    // 它会同时拖坏两个候选，还不如让精确求解独占。
+    let heuristicAssignments = null;
+    let heuristicError = null;
+    if (heuristicReserveMs > 0) {
+      try {
+        heuristicAssignments = runDescent(effective, input, {
+          shouldStop,
+          budgetMs: Math.max(HEURISTIC_MIN_BUDGET_MS, startedAt + budgetMs - Date.now()),
+        }).assignments;
+      } catch (error) {
+        // 启发式只提供**额外的**候选：它自己失败不该把精确求解已经拿到的日程一起毁掉。
+        heuristicError = error.message;
+      }
+    }
+
+    // ---- 由唯一判定器挑更好的那一份 ----
+    //
+    // 判定口径与对外指标完全一致：同一份 `plan()`、同一套目标与硬约束。两块候选谁更好由
+    // "合格性 → 小目标达标数 → 结局目标达标数"决定；精确求解的候选还额外背着重放闸门的保证。
+    const judge = (candidateAssignments) => {
+      const checked = plan(input, { assignments: candidateAssignments });
+      const goals = checked.ok ? checked.goals : null;
+      const met = (source) =>
+        goals ? goals.items.filter((item) => item.source === source && item.state === 'met').length : -1;
+      return {
+        rank: [goals && goals.valid ? 1 : 0, met('mini'), met('ending')],
+        valid: Boolean(goals && goals.valid),
+        hardViolations: goals ? goals.hardViolations : null,
+        miniMet: met('mini'),
+        endingMet: met('ending'),
+      };
+    };
+    const scoresBetter = (a, b) => {
+      for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return a[i] > b[i];
+      return false;
+    };
+
+    const candidates = [
+      { solver: 'milp', assignments: { weekCommands, dayCommands } },
+    ];
+    if (heuristicAssignments) candidates.push({ solver: 'heuristic', assignments: heuristicAssignments });
+
+    let chosenCandidate = candidates[0];
+    const candidateScores = {};
+    for (const candidate of candidates) {
+      candidateScores[candidate.solver] = judge(candidate.assignments);
+    }
+    for (const candidate of candidates) {
+      if (scoresBetter(candidateScores[candidate.solver].rank, candidateScores[chosenCandidate.solver].rank)) {
+        chosenCandidate = candidate;
+      }
+    }
+
+    const assignments = chosenCandidate.assignments;
 
     // 官方口径复核：同一个 plan()，界面与测试看到的是同一份判定。
     const verified = plan(input, { assignments });
@@ -425,8 +510,13 @@ export function createSolver(rules, options = {}) {
     return {
       assignments,
       metrics: {
-        solver: 'highs-milp',
-        chunks: chunkReports,
+        solver: chosenCandidate.solver === 'milp' ? 'highs-milp' : 'descent-heuristic',
+        chosenSolver: chosenCandidate.solver,
+        candidates: candidateScores,
+        heuristicError,
+        heuristicReserveMs,
+        chunks: chosenCandidate.solver === 'milp' ? chunkReports : [],
+        milpChunks: chosenCandidate.solver === 'milp' ? [] : chunkReports,
         // 因滚动近视而无解、已降级为软目标继续求解的块（结果以 plan() 的判定为准）。
         relaxedBlocks,
         seed: SEED,

@@ -19,3 +19,7 @@ plan-core.js
 AGENTS.md
 docs/agents/
 docs/data-request.md
+
+# 开发期验证脚本：不是构建/运行必需的代码（所有者 2026-10-08 的仓库卫生口径），
+# 它需要 node_modules/highs 才能跑，是开发期工具，不进版本库。
+tools/verify-solver.mjs

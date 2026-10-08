@@ -18,7 +18,7 @@ self.onmessage = async (event) => {
     if (message.type === 'solve') {
       // 求解很慢，先把中间结论交出去也没意义——一次性把日程交回，由主线程再规划一次。
       const { assignments, metrics } = await solve(message.input, {
-        budgetMs: message.budgetMs ?? 30000,
+        budgetMs: message.budgetMs ?? 60000,
         shouldStop: () => self.__cancelled === id,
       });
       self.postMessage({ id, ok: true, assignments, metrics });

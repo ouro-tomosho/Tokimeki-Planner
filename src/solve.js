@@ -18,6 +18,7 @@
 //      的错误面显示（`web/worker.js` 的 catch → `web/app.js` 的「求解失败：…」）。
 
 import { buildCalendar, resolveCommand } from './calendar.js';
+import { actualOf, attributeIdOf, meets } from './checkpoints.js';
 import { interpolatedTargets, planChunks } from './chunks.js';
 import { addDays } from './dates.js';
 import { getHighs } from './highs.js';
@@ -34,6 +35,9 @@ export const WORKER_BUDGET_MS = 60000;
 
 /** 单片至少给这么多预算，免得把时间切到连可行解都找不到。 */
 const MIN_CHUNK_MS = 1000;
+
+/** 预算耗尽后给一块的重试额度：只有"没找到可行解"这一种失败会走这条路径。 */
+const RETRY_BLOCK_MS = 6000;
 
 /**
  * 每次 MILP 求解的**内部滚动块**长度（自然周）。
@@ -55,17 +59,6 @@ const SEED = 20261008;
 const REPLAY_TOLERANCE = 1e-6;
 
 // ---------------------------------------------------------------- 目标构造
-
-const namesOf = (checkpoint) =>
-  checkpoint.attributes ?? (checkpoint.attribute ? [checkpoint.attribute] : []);
-
-function actualOf(checkpoint, attributes) {
-  return namesOf(checkpoint).reduce((sum, id) => sum + (attributes[id] ?? 0), 0);
-}
-
-function meets(checkpoint, actual) {
-  return checkpoint.op === '>=' ? actual >= checkpoint.value : actual < checkpoint.value;
-}
 
 /**
  * 本片要判定的目标。
@@ -101,7 +94,7 @@ export function buildTargets({ rules, input, block, days, dayIndexByDate, lastSe
     if (judged === null || judged < block.startDate || judged > block.endDate) continue;
     const day = dayIndexByDate.get(judged);
     if (day === undefined) continue;
-    const names = namesOf(checkpoint);
+    const names = attributeIdOf(checkpoint);
     if (names.length === 0) continue;
     // 单属性结局目标若已被块目标覆盖就不重复加（最后一块的 7 项正是结局阈值本身）。
     if (checkpoint.source === 'ending' && names.length === 1 && covered.has(names[0])) continue;
@@ -185,17 +178,22 @@ function solveChunkModel(highs, model, timeLimitMs, context = '') {
     throw new Error('求解缺陷：模型无界——这是代码问题，不是数据问题。');
   }
   if (status === 'Infeasible' || status === 'Primal infeasible or unbounded') {
-    throw new Error(
+    const error = new Error(
       `这一片没有可行日程（${context}）：硬约束互相冲突。` +
         '按「先达成者先硬化」，全局约束一旦达成便不得跌破；如果这一片（含集训周的强制指令）' +
-        '无法维持它，就是真的不可行。也请检查是否把某些周或日钉成了互相冲突的指令。',
+        '无法维持它，就是真的不可行。',
     );
+    error.infeasible = true;
+    throw error;
   }
   if (!result?.Columns || !Number.isFinite(result.ObjectiveValue)) {
-    throw new Error(
+    const error = new Error(
       `这一片在 ${(timeLimitMs / 1000).toFixed(1)} s 预算内没有找到可行日程` +
         `（${context}，HiGHS 状态：${status}）。请重试，或放宽目标。`,
     );
+    // 标记为可重试：调用方会放宽这一块的时间再试一次（预算被前面的块吃光时才走到这里）。
+    error.retryable = true;
+    throw error;
   }
   return result;
 }
@@ -222,7 +220,7 @@ export function createSolver(rules, options = {}) {
 
     const globalRules = input.checkpoints.filter((checkpoint) => checkpoint.source === 'global');
     const achieved = Object.fromEntries(
-      globalRules.map((rule) => [rule.id, meets(rule, actualOf(rule, input.attributes))]),
+      globalRules.map((rule) => [rule.id, meets(actualOf(rule, input.attributes), rule.op, rule.value)]),
     );
 
     /** 严格早于某日的最后一个结算日；没有则 null。 */
@@ -242,6 +240,7 @@ export function createSolver(rules, options = {}) {
     const dayCommands = {};
     let incoming = { ...input.attributes };
     const chunkReports = [];
+    const relaxedBlocks = [];
     let cancelled = false;
     let worstReplay = 0;
 
@@ -280,6 +279,12 @@ export function createSolver(rules, options = {}) {
     }
 
     for (let index = 0; index < blocks.length; index += 1) {
+      // **必须让出一次宏任务**：`highs.solve()` 是同步的，整个块循环期间 Worker 不可能处理
+      // 任何消息（微任务也不行——消息事件是宏任务）。不在这里让一次，取消按钮就完全失效，
+      // 只能等整段求解跑完（实测：20 s 预算下 cancelled 恒为 false）。
+      await new Promise((resolve) => {
+        setTimeout(resolve, 0);
+      });
       if (shouldStop()) {
         cancelled = true;
         break;
@@ -297,13 +302,36 @@ export function createSolver(rules, options = {}) {
       const model = buildChunkModel({ rules: effective, input, days, incoming, achieved, targets });
 
       const blockStartedAt = Date.now();
-      const result = solveChunkModel(
-        highs,
-        model,
-        timeLimitMs,
-        `片 ${block.chunk.index + 1} 的第 ${index + 1} 块 ${block.startDate}→${block.endDate}`,
-      );
-      const blockAssignments = extractAssignments(model, result.Columns);
+      const context = `片 ${block.chunk.index + 1} 的第 ${index + 1} 块 ${block.startDate}→${block.endDate}`;
+      let result;
+      let model2 = model;
+      try {
+        result = solveChunkModel(highs, model, timeLimitMs, context);
+      } catch (error) {
+        if (error?.retryable) {
+          // 预算被前面的块吃光时，后面的块只剩最低额度，可能连可行解都没找到。
+          // 这不是"问题不可行"，而是"时间不够"——放宽这一块的时间重试一次，
+          // 宁可超出总预算一点，也不要让用户拿到一张空手而归的错误。
+          result = solveChunkModel(highs, model, Math.max(timeLimitMs * 3, RETRY_BLOCK_MS), context);
+        } else if (error?.infeasible) {
+          // **严格滚动的近视会把前缀逼进死角**：某一块（典型是含集训周强制指令的那一块）
+          // 在"已达成的全局约束不得跌破"之下真的没有可行解——而这是前面那些块冻结出来的，
+          // 不是问题本身无解（同一份输入在启发式求解器下有过合格日程）。
+          //
+          // 处置：把带入本块的"已达成"降级为**软目标**（仍属最高层、权重 1e6，会尽力重新达成
+          // 并再次硬化），让求解继续，把真实结果**如实**交给 `plan()` 判定——它会标出这一条
+          // "已破线"，`valid` 随之为 false。宁可给用户一张完整但如实标注不合格的日程，
+          // 也不要给一个什么都拿不到的错误。
+          relaxedBlocks.push({ chunkIndex: block.chunk.index + 1, startDate: block.startDate, endDate: block.endDate });
+          for (const rule of globalRules) achieved[rule.id] = false;
+          model2 = buildChunkModel({ rules: effective, input, days, incoming, achieved, targets });
+          result = solveChunkModel(highs, model2, Math.max(timeLimitMs * 3, RETRY_BLOCK_MS), context);
+        } else {
+          throw error;
+        }
+      }
+      const model_ = model2;
+      const blockAssignments = extractAssignments(model_, result.Columns);
 
       // 先重放再采纳：闸门不过就不认这份解（也不会把它混进结果里）。
       const trajectory = replayChunk({
@@ -315,7 +343,7 @@ export function createSolver(rules, options = {}) {
       });
       worstReplay = Math.max(
         worstReplay,
-        assertModelMatchesEngine({ model, columns: result.Columns, trajectory }),
+        assertModelMatchesEngine({ model: model_, columns: result.Columns, trajectory }),
       );
 
       Object.assign(weekCommands, blockAssignments.weekCommands);
@@ -325,7 +353,7 @@ export function createSolver(rules, options = {}) {
       // **读模型自己的 g**，不读"轨迹里哪一天碰巧达标"：后者比模型的承诺更强，会把下一块
       // 逼进一个它无法维持的强制集合（实测过：那一块直接判不可行）。
       incoming = trajectory.length > 0 ? { ...trajectory[trajectory.length - 1] } : incoming;
-      Object.assign(achieved, modelAchieved(model, result.Columns));
+      Object.assign(achieved, modelAchieved(model_, result.Columns));
 
       const report = {
         chunkIndex: block.chunk.index + 1,
@@ -337,7 +365,7 @@ export function createSolver(rules, options = {}) {
         elapsedMs: Date.now() - blockStartedAt,
         status: result.Status,
         objective: result.objective ?? result.ObjectiveValue,
-        binaries: model.counts.binaries,
+        binaries: model_.counts.binaries,
         targets: targets.map((target) => ({
           key: target.key,
           kind: target.kind,
@@ -399,6 +427,8 @@ export function createSolver(rules, options = {}) {
       metrics: {
         solver: 'highs-milp',
         chunks: chunkReports,
+        // 因滚动近视而无解、已降级为软目标继续求解的块（结果以 plan() 的判定为准）。
+        relaxedBlocks,
         seed: SEED,
         replayMaxDeviation: worstReplay,
         // 本次求解实际使用的成功率（缺省 = 规则常量）。
@@ -440,7 +470,7 @@ export const SUGGEST_LADDER = [0.35, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9];
  */
 export async function suggestSuccessRate(rules, input, options = {}) {
   const ladder = options.ladder ?? SUGGEST_LADDER;
-  const budgetMs = options.budgetMs ?? WORKER_BUDGET_MS;
+  const budgetMs = options.budgetMs ?? 8000;
   const shouldStop = options.shouldStop ?? (() => false);
   const solve = createSolver(rules, { budgetMs });
   const trials = [];

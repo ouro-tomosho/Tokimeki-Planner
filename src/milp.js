@@ -35,7 +35,7 @@
 
 import { availableCommandIds, availableDayCommandIds, clubCommandId, createClubLookup } from './clubs.js';
 import { clubWeekMandate } from './checkpoints.js';
-import { clubExperienceGainOn, expectedEffects, REST_DAY, WEEKDAY } from './settlement.js';
+import { clubExperienceGainOn, expectedEffects, resolveCommand, REST_DAY, WEEKDAY } from './settlement.js';
 import { isClubSlot, isSkip } from './commands.js';
 
 const CLUB_EXPERIENCE = 'clubExperience';
@@ -47,26 +47,54 @@ const EPS = 1e-6;
  * 分层权重。**每一层的"一个单位"都必须重于下一层的全部可能改进**，否则优先级会被目标
  * 函数自己抹平（这个项目实测过的失效形态：小目标没满足、结局目标却超额一堆）。
  *
- * 量级依据（片内上界）：
- *   · 全局达成条数 ≤ 4 条        → 1e9，大于 4 条 × 上游天数 × 1e5 ≈ 1.4e8
- *   · 全局欠账天数 ≤ 4 × 天数    → 1e5，大于全局层以下的全部（约 2e3）
- *   · 小目标未达标条数 ≤ 2       → 1e3，大于片目标层全部（约 92）
- *   · 片目标未达标条数 ≤ 9       → 1e1，大于缺口层全部（≤ 1.9）
- *   · 绝对缺口：按**点**计，整体缩小 1000 倍（等比缩放不改变 argmin）→ 1e-3
- *   · 超额：**负**权重 1e-8——刻意小到"只有前四层全部打平时才可能影响结果"，
- *     这正是所有者要的"只给小奖励，不能把重心从优先满足未达标上挪走"。
+ * 量级依据（片内上界）。严格字典序要求"上一层的**一个单位**重于下一层的**全部**可能改进"：
+ *
+ *   · 全局达成条数 ≤ 4 条 → 1e10，大于 4 × 上游天数(1456) × 1e6 = 1.5e9
+ *   · 全局欠账天数 ≤ 4×天数 → 1e6，大于小目标层 + 结局层的全部（约 3e5）
+ *   · 小目标未达标条数 ≤ 2 → 1e5，大于小目标缺口全部（941 点 × 100）+ 结局层全部
+ *   · 小目标缺口（≤941 点）→ 每点 100，大于结局层全部（9×10 + 1010×5e-3 ≈ 95）
+ *   · 结局未达标条数 ≤ 9 → 1e1，大于结局缺口全部（1010 × 5e-3 = 5.05）
+ *   · 结局缺口 → 每点 5e-3
+ *   · 块尾余量 → 0.1（压在结局缺口点之上、结局条数之下，见下方字段注释）
+ *   · 超额 → −1e-5/点，且有 5 点上限：总贡献 ≤ 目标数×5×1e-5 < 5e-3 = 一点结局缺口
+ *
+ * **小目标与结局目标的缺口权重必须不同**：共用一个权重时，一点小目标缺口与一点结局缺口
+ * 1:1 互换，"小目标优先"就只在**条数**上成立、在缺口上失效（2026-10-08 复查发现并修掉）。
  */
 export const WEIGHTS = {
-  achievedRule: 1e9,
-  unmetGlobalDay: 1e5,
-  // 终点余量（见 HEADROOM_CAP）：它属于**最高层（全局约束）**内部的一个次级偏好，
-  // 位置在"欠账天数"之下、小目标之上——因为"让全局约束全程守得住"本就是那一层的目标。
-  headroom: 20,
-  unmetMini: 1e3,
+  achievedRule: 1e10,
+  unmetGlobalDay: 1e6,
+  // ---- 小目标层（整层严格重于结局层）----
+  unmetMini: 1e5,
+  gapMini: 100,
   unmetTarget: 1e1,
-  gap: 1e-3,
-  excess: -1e-8,
+  gapTarget: 5e-3,
+  // 块尾余量（见 HEADROOM_CAP）：**整层压在结局层之上、小目标层与全局层之下**。
+  //
+  // 位置**必须**在"全部缺口层之上、小目标未达标条数之下"：
+  //   上限贡献 = 4 规则 × 15 点 × 1600 = 96000 < 一次小目标未达标（1e5）
+  //   且 96000 > 小目标缺口全部（941 点 × 100 = 94100）与结局层全部（≈95）
+  // 也就是：它永远不会动全局约束、也永远不会让一条小目标从达标变成未达标，
+  // 但会**优先于一切缺口**去保留块尾余量。
+  //
+  // 实测定的这个位置：权重 0.1（只压过结局缺口）时两个既有场景立刻变回"某块不可行"；
+  // 权重 20（压过小目标缺口）时仍有一个场景不可行；只有压过**全部**缺口层才稳。
+  // 上限 15 点 / 权重 1600 与 8 点 / 3000 的总影响相同，但每块留的余量更大（更不容易走死角）。
+  // 这正是它的作用——**用缺口换全局约束的可维持性**。
+  //
+  // ⚠️ 这一条**超出了所有者"目前只做重排序 / 不做安全余量"的授权**（见 ADR-0009 的
+  // "待所有者复核"一节）：它不放宽任何阈值，但它确实会牺牲结局目标。要么保留它，
+  // 要么去掉它并把"某块不可行"从报错改成"如实报告不合格"。
+  headroom: 1600,
+  // 超额奖励：有上限（EXCESS_CAP），整体低于一点结局缺口——只作平局加分。
+  excess: -1e-5,
 };
+
+/**
+ * 超额奖励的上限（点/目标）。有上限才能让"小奖励"真的是小的：
+ * 总贡献 ≤ 目标数 × 上限 × |权重| < 一点结局缺口，永远不会挤掉缺口层。
+ */
+export const EXCESS_CAP = 5;
 
 /**
  * 块尾余量的上限（点）。**不是安全余量要求，是滚动的可行性条件**。
@@ -76,10 +104,10 @@ export const WEIGHTS = {
  * 零余量出发没有任何机动空间（把起点体力抬到 25 立刻就可行）。原因是每块都在为片目标
  * 消耗体力，而硬约束只要求"不越线"，于是最优解**恰好贴线**。
  *
- * 这个偏好只在最高层内部起作用：它不会放宽任何阈值（阈值仍是硬约束），只是在对可行解
- * 排序时，优先选择块尾留有余量的那些。上限把它限制成"小偏好"而不是"越多越好"。
+ * 它**不放宽任何阈值**（阈值仍是硬约束），只在排序时优先选择块尾留有余量的解；
+ * 上限与权重一起把它限制成"小偏好"而不是"越多越好"。
  */
-export const HEADROOM_CAP = 8;
+export const HEADROOM_CAP = 15;
 
 // ---------------------------------------------------------------- 数字与 LP 文本
 
@@ -120,8 +148,8 @@ function dailyEffect(rules, commandId, dayKind, weekStart, ids) {
   const out = new Float64Array(ids.length);
   if (!commandId || isSkip(commandId)) return out;
 
-  const command = rules.commands.find((c) => c.id === commandId);
-  if (!command) throw new Error(`未知指令：${commandId}`);
+  // 指令解析复用 settlement.js 的唯一口径（含"未知指令"的报错），求解器不再自己查一遍。
+  const command = resolveCommand(rules, commandId);
 
   const base = expectedEffects(rules, command, dayKind);
   for (let i = 0; i < ids.length; i += 1) {
@@ -268,7 +296,8 @@ export function buildChunkModel({ rules, input, days, incoming, achieved, target
   const pName = (i) => `p${i}`;
   const uName = (i) => `u${i}`;
   const eName = (i) => `e${i}`;
-  /** 片尾最后一个结算日的下标：终点余量与片目标都看这一天。 */
+  const rName = (i) => `r${i}`;
+  /** 片尾最后一个结算日的下标：块尾余量与片目标都看这一天。 */
   const last = T - 1;
 
   // ---- 逐日可达性（前缀）与夹逼剪枝 ----
@@ -443,7 +472,7 @@ export function buildChunkModel({ rules, input, days, incoming, achieved, target
     }
   }
 
-  // ---- 终点余量（软，最高层内部的次级偏好）----
+  // ---- 块尾余量（软，最高层内部的次级偏好）----
   const headVars = [];
   for (const { rule, index: h } of forcedRules) {
     const a = rule.ai;
@@ -477,7 +506,12 @@ export function buildChunkModel({ rules, input, days, incoming, achieved, target
       row([[pName(i), 1], ...terms], '>=', value);
       row([...terms, [uName(i), scale]], '>=', value);
       row([...terms, [uName(i), scale]], '<=', value - EPS + scale);
+      // 超额：`e ≥ expr − τ`（e ≥ 0，无上界）；奖励变量 `r ≤ min(e, EXCESS_CAP)` ——
+      // 负权重把 r 顶到上界，于是奖励**饱和**在 5 点。【不能用 e ≤ CAP 去夹】：超额一旦超过
+      // 上限就无解；【也不能把 e 写成 ≤ expr − τ】：低于目标时右端为负，同样无解。
+      // 两种错法都被穷举用例当场抓到（6 个用例里 3~5 个变成 Infeasible）。
       row([[eName(i), 1], ...negate(terms)], '>=', -value);
+      row([[rName(i), 1], [eName(i), -1]], '<=', 0);
     } else {
       // 缺口：p ≥ expr − τ；未达标：u=1 ⇒ expr ≥ τ，u=0 ⇒ expr ≤ τ−EPS
       row([[pName(i), 1], ...negate(terms)], '>=', -value);
@@ -497,8 +531,8 @@ export function buildChunkModel({ rules, input, days, incoming, achieved, target
   for (const target of targetInfo) {
     const i = target.index;
     objective.push([uName(i), target.kind === 'mini' ? WEIGHTS.unmetMini : WEIGHTS.unmetTarget]);
-    objective.push([pName(i), WEIGHTS.gap]);
-    if (target.op === '>=') objective.push([eName(i), WEIGHTS.excess]);
+    objective.push([pName(i), target.kind === 'mini' ? WEIGHTS.gapMini : WEIGHTS.gapTarget]);
+    if (target.op === '>=') objective.push([rName(i), WEIGHTS.excess]);
   }
 
   // ---- LP 文本 ----
@@ -509,6 +543,9 @@ export function buildChunkModel({ rules, input, days, incoming, achieved, target
     }
   }
   for (const { name } of headVars) bounds.push(`0 <= ${name} <= ${HEADROOM_CAP}`);
+  for (const target of targetInfo) {
+    if (target.op === '>=') bounds.push(`0 <= ${rName(target.index)} <= ${EXCESS_CAP}`);
+  }
 
   const binaries = [];
   for (let s = 0; s < slots.length; s += 1) {

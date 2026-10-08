@@ -14,6 +14,7 @@
 // 不让整份日程变成"不合格"——不合格只由硬约束（全局约束的硬阶段、集训周、钉住的槽位）决定。
 
 import { addDays, weekStartOf } from './dates.js';
+import { valueAt } from './checkpoints.js';
 
 /** 一片的自然周数（最后一片是余下的部分周）。 */
 export const CHUNK_WEEKS = 52;
@@ -33,16 +34,6 @@ export const CHUNK_COUNT = 3;
  * 两者的**结局目标**照旧在最后一片判定。
  */
 export const INTERPOLATION_EXCLUDED = ['stamina', 'stress'];
-
-const MS_PER_DAY = 86400000;
-
-function dayNumber(date) {
-  return Date.parse(`${date}T00:00:00Z`) / MS_PER_DAY;
-}
-
-function daysBetween(from, to) {
-  return dayNumber(to) - dayNumber(from);
-}
 
 /**
  * 固定的片界。返回按时间升序的 `[{ index, startDate, endDate, landingDate }]`。
@@ -93,15 +84,19 @@ export function interpolatedTargets(rules, input, landingDate) {
   const defaults = new Map(rules.attributes.map((a) => [a.id, a.default]));
   const targets = [];
 
-  const ratioOf = (checkpointDate) => {
-    const span = daysBetween(rules.timeline.start, checkpointDate);
-    const elapsed = daysBetween(rules.timeline.start, landingDate);
-    return span > 0 ? Math.min(1, Math.max(0, elapsed / span)) : 1;
-  };
+  // 插值一律走 `checkpoints.js` 的 `valueAt`：它是**判定轨道**用的同一个函数
+  // （`createTrajectory` 也用它）。求解器再写一份线性插值 = 两套口径，迟早分叉。
+  const at = (from, to, checkpointDate) =>
+    valueAt(
+      [
+        { date: rules.timeline.start, value: from },
+        { date: checkpointDate, value: to },
+      ],
+      landingDate,
+    );
 
   for (const checkpoint of input.checkpoints) {
     if (checkpoint.op !== '>=') continue;
-    const ratio = ratioOf(checkpoint.date);
 
     if (checkpoint.source === 'ending') {
       // 结局目标都是单属性；集合型不会出现在结局组里。体力与压力不参与插值。
@@ -113,7 +108,7 @@ export function interpolatedTargets(rules, input, landingDate) {
         key: checkpoint.id,
         kind: 'target',
         terms: [{ attribute: checkpoint.attribute, coefficient: 1 }],
-        value: from + (checkpoint.value - from) * ratio,
+        value: at(from, checkpoint.value, checkpoint.date),
       });
       continue;
     }
@@ -129,7 +124,7 @@ export function interpolatedTargets(rules, input, landingDate) {
         key: checkpoint.id,
         kind: 'mini',
         terms: names.map((attribute) => ({ attribute, coefficient: 1 })),
-        value: from + (checkpoint.value - from) * ratio,
+        value: at(from, checkpoint.value, checkpoint.date),
       });
     }
   }
@@ -162,8 +157,6 @@ export function planChunks(rules, input, settledDates) {
       // `null` 表示调用方没有提供日历：调用方自己判定是否求解。
       settledCount: inChunk ? inChunk.length : null,
       active: inChunk ? inChunk.length > 0 : true,
-      firstSettled: inChunk && inChunk.length > 0 ? inChunk[0] : null,
-      lastSettled: inChunk && inChunk.length > 0 ? inChunk[inChunk.length - 1] : null,
     };
   });
 }

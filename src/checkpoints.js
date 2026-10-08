@@ -17,7 +17,8 @@
 import { buildCalendar } from './calendar.js';
 import { clubCommandId } from './clubs.js';
 
-const attributeIdOf = (checkpoint) =>
+/** 检查点涉及的属性 id 列表（单属性或集合）；求解器与判定共用这一份口径。 */
+export const attributeIdOf = (checkpoint) =>
   checkpoint.attributes ?? (checkpoint.attribute ? [checkpoint.attribute] : []);
 
 /** 某个检查点在给定状态上要比较的实际值：单属性取值，集合取求和。 */

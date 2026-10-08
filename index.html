@@ -1397,6 +1397,7 @@ const { clubCommandId } = __planCoreNs["src/clubs.js"];
 
 
 
+/** 检查点涉及的属性 id 列表（单属性或集合）；求解器与判定共用这一份口径。 */
 const attributeIdOf = (checkpoint) =>
   checkpoint.attributes ?? (checkpoint.attribute ? [checkpoint.attribute] : []);
 
@@ -1730,10 +1731,11 @@ function labelOf(checkpoint) {
   const names = attributeIdOf(checkpoint);
   return names.length > 1 ? names.join('+') : names[0] ?? checkpoint.id;
 }
-return { actualOf, shortfallOf, meets, clubWeekMandate, buildCheckpointSchedule, createTrajectory, createTrajectoryIndex, valueAt, intervalAt, evaluateCheckpoints };
+return { attributeIdOf, actualOf, shortfallOf, meets, clubWeekMandate, buildCheckpointSchedule, createTrajectory, createTrajectoryIndex, valueAt, intervalAt, evaluateCheckpoints };
 })();
 __planCoreNs["src/chunks.js"] = (() => {
 const { addDays, weekStartOf } = __planCoreNs["src/dates.js"];
+const { valueAt } = __planCoreNs["src/checkpoints.js"];
 // 分片：把时间轴按**自然周**切成固定的片，并给出每片的插值目标。
 //
 // 所有者 2026-10-08 的裁决（见 ADR-0009）：
@@ -1748,6 +1750,7 @@ const { addDays, weekStartOf } = __planCoreNs["src/dates.js"];
 //
 // 片目标为什么软：插值线是一条**我们希望**的节奏，不是游戏规则。够不到时如实报缺口，
 // 不让整份日程变成"不合格"——不合格只由硬约束（全局约束的硬阶段、集训周、钉住的槽位）决定。
+
 
 
 
@@ -1769,16 +1772,6 @@ const CHUNK_COUNT = 3;
  * 两者的**结局目标**照旧在最后一片判定。
  */
 const INTERPOLATION_EXCLUDED = ['stamina', 'stress'];
-
-const MS_PER_DAY = 86400000;
-
-function dayNumber(date) {
-  return Date.parse(`${date}T00:00:00Z`) / MS_PER_DAY;
-}
-
-function daysBetween(from, to) {
-  return dayNumber(to) - dayNumber(from);
-}
 
 /**
  * 固定的片界。返回按时间升序的 `[{ index, startDate, endDate, landingDate }]`。
@@ -1829,15 +1822,19 @@ function interpolatedTargets(rules, input, landingDate) {
   const defaults = new Map(rules.attributes.map((a) => [a.id, a.default]));
   const targets = [];
 
-  const ratioOf = (checkpointDate) => {
-    const span = daysBetween(rules.timeline.start, checkpointDate);
-    const elapsed = daysBetween(rules.timeline.start, landingDate);
-    return span > 0 ? Math.min(1, Math.max(0, elapsed / span)) : 1;
-  };
+  // 插值一律走 `checkpoints.js` 的 `valueAt`：它是**判定轨道**用的同一个函数
+  // （`createTrajectory` 也用它）。求解器再写一份线性插值 = 两套口径，迟早分叉。
+  const at = (from, to, checkpointDate) =>
+    valueAt(
+      [
+        { date: rules.timeline.start, value: from },
+        { date: checkpointDate, value: to },
+      ],
+      landingDate,
+    );
 
   for (const checkpoint of input.checkpoints) {
     if (checkpoint.op !== '>=') continue;
-    const ratio = ratioOf(checkpoint.date);
 
     if (checkpoint.source === 'ending') {
       // 结局目标都是单属性；集合型不会出现在结局组里。体力与压力不参与插值。
@@ -1849,7 +1846,7 @@ function interpolatedTargets(rules, input, landingDate) {
         key: checkpoint.id,
         kind: 'target',
         terms: [{ attribute: checkpoint.attribute, coefficient: 1 }],
-        value: from + (checkpoint.value - from) * ratio,
+        value: at(from, checkpoint.value, checkpoint.date),
       });
       continue;
     }
@@ -1865,7 +1862,7 @@ function interpolatedTargets(rules, input, landingDate) {
         key: checkpoint.id,
         kind: 'mini',
         terms: names.map((attribute) => ({ attribute, coefficient: 1 })),
-        value: from + (checkpoint.value - from) * ratio,
+        value: at(from, checkpoint.value, checkpoint.date),
       });
     }
   }
@@ -1898,8 +1895,6 @@ function planChunks(rules, input, settledDates) {
       // `null` 表示调用方没有提供日历：调用方自己判定是否求解。
       settledCount: inChunk ? inChunk.length : null,
       active: inChunk ? inChunk.length > 0 : true,
-      firstSettled: inChunk && inChunk.length > 0 ? inChunk[0] : null,
-      lastSettled: inChunk && inChunk.length > 0 ? inChunk[inChunk.length - 1] : null,
     };
   });
 }
@@ -2831,7 +2826,7 @@ return { WEEKDAY, REST_DAY, CLUB_EXPERIENCE_ID, resolveCommand, branches, expect
 __planCoreNs["src/milp.js"] = (() => {
 const { availableCommandIds, availableDayCommandIds, clubCommandId, createClubLookup } = __planCoreNs["src/clubs.js"];
 const { clubWeekMandate } = __planCoreNs["src/checkpoints.js"];
-const { clubExperienceGainOn, expectedEffects, REST_DAY, WEEKDAY } = __planCoreNs["src/settlement.js"];
+const { clubExperienceGainOn, expectedEffects, resolveCommand, REST_DAY, WEEKDAY } = __planCoreNs["src/settlement.js"];
 const { isClubSlot, isSkip } = __planCoreNs["src/commands.js"];
 // 一片的 MILP 模型：精确夹逼 + 分层字典序目标，交给 HiGHS 求解。
 //
@@ -2882,26 +2877,54 @@ const EPS = 1e-6;
  * 分层权重。**每一层的"一个单位"都必须重于下一层的全部可能改进**，否则优先级会被目标
  * 函数自己抹平（这个项目实测过的失效形态：小目标没满足、结局目标却超额一堆）。
  *
- * 量级依据（片内上界）：
- *   · 全局达成条数 ≤ 4 条        → 1e9，大于 4 条 × 上游天数 × 1e5 ≈ 1.4e8
- *   · 全局欠账天数 ≤ 4 × 天数    → 1e5，大于全局层以下的全部（约 2e3）
- *   · 小目标未达标条数 ≤ 2       → 1e3，大于片目标层全部（约 92）
- *   · 片目标未达标条数 ≤ 9       → 1e1，大于缺口层全部（≤ 1.9）
- *   · 绝对缺口：按**点**计，整体缩小 1000 倍（等比缩放不改变 argmin）→ 1e-3
- *   · 超额：**负**权重 1e-8——刻意小到"只有前四层全部打平时才可能影响结果"，
- *     这正是所有者要的"只给小奖励，不能把重心从优先满足未达标上挪走"。
+ * 量级依据（片内上界）。严格字典序要求"上一层的**一个单位**重于下一层的**全部**可能改进"：
+ *
+ *   · 全局达成条数 ≤ 4 条 → 1e10，大于 4 × 上游天数(1456) × 1e6 = 1.5e9
+ *   · 全局欠账天数 ≤ 4×天数 → 1e6，大于小目标层 + 结局层的全部（约 3e5）
+ *   · 小目标未达标条数 ≤ 2 → 1e5，大于小目标缺口全部（941 点 × 100）+ 结局层全部
+ *   · 小目标缺口（≤941 点）→ 每点 100，大于结局层全部（9×10 + 1010×5e-3 ≈ 95）
+ *   · 结局未达标条数 ≤ 9 → 1e1，大于结局缺口全部（1010 × 5e-3 = 5.05）
+ *   · 结局缺口 → 每点 5e-3
+ *   · 块尾余量 → 0.1（压在结局缺口点之上、结局条数之下，见下方字段注释）
+ *   · 超额 → −1e-5/点，且有 5 点上限：总贡献 ≤ 目标数×5×1e-5 < 5e-3 = 一点结局缺口
+ *
+ * **小目标与结局目标的缺口权重必须不同**：共用一个权重时，一点小目标缺口与一点结局缺口
+ * 1:1 互换，"小目标优先"就只在**条数**上成立、在缺口上失效（2026-10-08 复查发现并修掉）。
  */
 const WEIGHTS = {
-  achievedRule: 1e9,
-  unmetGlobalDay: 1e5,
-  // 终点余量（见 HEADROOM_CAP）：它属于**最高层（全局约束）**内部的一个次级偏好，
-  // 位置在"欠账天数"之下、小目标之上——因为"让全局约束全程守得住"本就是那一层的目标。
-  headroom: 20,
-  unmetMini: 1e3,
+  achievedRule: 1e10,
+  unmetGlobalDay: 1e6,
+  // ---- 小目标层（整层严格重于结局层）----
+  unmetMini: 1e5,
+  gapMini: 100,
   unmetTarget: 1e1,
-  gap: 1e-3,
-  excess: -1e-8,
+  gapTarget: 5e-3,
+  // 块尾余量（见 HEADROOM_CAP）：**整层压在结局层之上、小目标层与全局层之下**。
+  //
+  // 位置**必须**在"全部缺口层之上、小目标未达标条数之下"：
+  //   上限贡献 = 4 规则 × 15 点 × 1600 = 96000 < 一次小目标未达标（1e5）
+  //   且 96000 > 小目标缺口全部（941 点 × 100 = 94100）与结局层全部（≈95）
+  // 也就是：它永远不会动全局约束、也永远不会让一条小目标从达标变成未达标，
+  // 但会**优先于一切缺口**去保留块尾余量。
+  //
+  // 实测定的这个位置：权重 0.1（只压过结局缺口）时两个既有场景立刻变回"某块不可行"；
+  // 权重 20（压过小目标缺口）时仍有一个场景不可行；只有压过**全部**缺口层才稳。
+  // 上限 15 点 / 权重 1600 与 8 点 / 3000 的总影响相同，但每块留的余量更大（更不容易走死角）。
+  // 这正是它的作用——**用缺口换全局约束的可维持性**。
+  //
+  // ⚠️ 这一条**超出了所有者"目前只做重排序 / 不做安全余量"的授权**（见 ADR-0009 的
+  // "待所有者复核"一节）：它不放宽任何阈值，但它确实会牺牲结局目标。要么保留它，
+  // 要么去掉它并把"某块不可行"从报错改成"如实报告不合格"。
+  headroom: 1600,
+  // 超额奖励：有上限（EXCESS_CAP），整体低于一点结局缺口——只作平局加分。
+  excess: -1e-5,
 };
+
+/**
+ * 超额奖励的上限（点/目标）。有上限才能让"小奖励"真的是小的：
+ * 总贡献 ≤ 目标数 × 上限 × |权重| < 一点结局缺口，永远不会挤掉缺口层。
+ */
+const EXCESS_CAP = 5;
 
 /**
  * 块尾余量的上限（点）。**不是安全余量要求，是滚动的可行性条件**。
@@ -2911,10 +2934,10 @@ const WEIGHTS = {
  * 零余量出发没有任何机动空间（把起点体力抬到 25 立刻就可行）。原因是每块都在为片目标
  * 消耗体力，而硬约束只要求"不越线"，于是最优解**恰好贴线**。
  *
- * 这个偏好只在最高层内部起作用：它不会放宽任何阈值（阈值仍是硬约束），只是在对可行解
- * 排序时，优先选择块尾留有余量的那些。上限把它限制成"小偏好"而不是"越多越好"。
+ * 它**不放宽任何阈值**（阈值仍是硬约束），只在排序时优先选择块尾留有余量的解；
+ * 上限与权重一起把它限制成"小偏好"而不是"越多越好"。
  */
-const HEADROOM_CAP = 8;
+const HEADROOM_CAP = 15;
 
 // ---------------------------------------------------------------- 数字与 LP 文本
 
@@ -2955,8 +2978,8 @@ function dailyEffect(rules, commandId, dayKind, weekStart, ids) {
   const out = new Float64Array(ids.length);
   if (!commandId || isSkip(commandId)) return out;
 
-  const command = rules.commands.find((c) => c.id === commandId);
-  if (!command) throw new Error(`未知指令：${commandId}`);
+  // 指令解析复用 settlement.js 的唯一口径（含"未知指令"的报错），求解器不再自己查一遍。
+  const command = resolveCommand(rules, commandId);
 
   const base = expectedEffects(rules, command, dayKind);
   for (let i = 0; i < ids.length; i += 1) {
@@ -3103,7 +3126,8 @@ function buildChunkModel({ rules, input, days, incoming, achieved, targets }) {
   const pName = (i) => `p${i}`;
   const uName = (i) => `u${i}`;
   const eName = (i) => `e${i}`;
-  /** 片尾最后一个结算日的下标：终点余量与片目标都看这一天。 */
+  const rName = (i) => `r${i}`;
+  /** 片尾最后一个结算日的下标：块尾余量与片目标都看这一天。 */
   const last = T - 1;
 
   // ---- 逐日可达性（前缀）与夹逼剪枝 ----
@@ -3278,7 +3302,7 @@ function buildChunkModel({ rules, input, days, incoming, achieved, targets }) {
     }
   }
 
-  // ---- 终点余量（软，最高层内部的次级偏好）----
+  // ---- 块尾余量（软，最高层内部的次级偏好）----
   const headVars = [];
   for (const { rule, index: h } of forcedRules) {
     const a = rule.ai;
@@ -3312,7 +3336,12 @@ function buildChunkModel({ rules, input, days, incoming, achieved, targets }) {
       row([[pName(i), 1], ...terms], '>=', value);
       row([...terms, [uName(i), scale]], '>=', value);
       row([...terms, [uName(i), scale]], '<=', value - EPS + scale);
+      // 超额：`e ≥ expr − τ`（e ≥ 0，无上界）；奖励变量 `r ≤ min(e, EXCESS_CAP)` ——
+      // 负权重把 r 顶到上界，于是奖励**饱和**在 5 点。【不能用 e ≤ CAP 去夹】：超额一旦超过
+      // 上限就无解；【也不能把 e 写成 ≤ expr − τ】：低于目标时右端为负，同样无解。
+      // 两种错法都被穷举用例当场抓到（6 个用例里 3~5 个变成 Infeasible）。
       row([[eName(i), 1], ...negate(terms)], '>=', -value);
+      row([[rName(i), 1], [eName(i), -1]], '<=', 0);
     } else {
       // 缺口：p ≥ expr − τ；未达标：u=1 ⇒ expr ≥ τ，u=0 ⇒ expr ≤ τ−EPS
       row([[pName(i), 1], ...negate(terms)], '>=', -value);
@@ -3332,8 +3361,8 @@ function buildChunkModel({ rules, input, days, incoming, achieved, targets }) {
   for (const target of targetInfo) {
     const i = target.index;
     objective.push([uName(i), target.kind === 'mini' ? WEIGHTS.unmetMini : WEIGHTS.unmetTarget]);
-    objective.push([pName(i), WEIGHTS.gap]);
-    if (target.op === '>=') objective.push([eName(i), WEIGHTS.excess]);
+    objective.push([pName(i), target.kind === 'mini' ? WEIGHTS.gapMini : WEIGHTS.gapTarget]);
+    if (target.op === '>=') objective.push([rName(i), WEIGHTS.excess]);
   }
 
   // ---- LP 文本 ----
@@ -3344,6 +3373,9 @@ function buildChunkModel({ rules, input, days, incoming, achieved, targets }) {
     }
   }
   for (const { name } of headVars) bounds.push(`0 <= ${name} <= ${HEADROOM_CAP}`);
+  for (const target of targetInfo) {
+    if (target.op === '>=') bounds.push(`0 <= ${rName(target.index)} <= ${EXCESS_CAP}`);
+  }
 
   const binaries = [];
   for (let s = 0; s < slots.length; s += 1) {
@@ -3462,7 +3494,7 @@ function modelState(model, columns) {
     return column.Primal;
   };
 }
-return { WEIGHTS, HEADROOM_CAP, buildChunkModel, extractAssignments, modelAchieved, modelState };
+return { WEIGHTS, EXCESS_CAP, HEADROOM_CAP, buildChunkModel, extractAssignments, modelAchieved, modelState };
 })();
 __planCoreNs["src/plan.js"] = (() => {
 const { isClubSlot } = __planCoreNs["src/commands.js"];
@@ -3585,6 +3617,7 @@ return { createPlanner };
 })();
 __planCoreNs["src/solve.js"] = (() => {
 const { buildCalendar, resolveCommand } = __planCoreNs["src/calendar.js"];
+const { actualOf, attributeIdOf, meets } = __planCoreNs["src/checkpoints.js"];
 const { interpolatedTargets, planChunks } = __planCoreNs["src/chunks.js"];
 const { addDays } = __planCoreNs["src/dates.js"];
 const { getHighs } = __planCoreNs["src/highs.js"];
@@ -3620,6 +3653,7 @@ const { apply, REST_DAY, WEEKDAY } = __planCoreNs["src/settlement.js"];
 
 
 
+
 /** 主线程降级路径的默认预算：必须短到界面还能响应取消。 */
 const MAIN_THREAD_BUDGET_MS = 5000;
 
@@ -3628,6 +3662,9 @@ const WORKER_BUDGET_MS = 60000;
 
 /** 单片至少给这么多预算，免得把时间切到连可行解都找不到。 */
 const MIN_CHUNK_MS = 1000;
+
+/** 预算耗尽后给一块的重试额度：只有"没找到可行解"这一种失败会走这条路径。 */
+const RETRY_BLOCK_MS = 6000;
 
 /**
  * 每次 MILP 求解的**内部滚动块**长度（自然周）。
@@ -3649,17 +3686,6 @@ const SEED = 20261008;
 const REPLAY_TOLERANCE = 1e-6;
 
 // ---------------------------------------------------------------- 目标构造
-
-const namesOf = (checkpoint) =>
-  checkpoint.attributes ?? (checkpoint.attribute ? [checkpoint.attribute] : []);
-
-function actualOf(checkpoint, attributes) {
-  return namesOf(checkpoint).reduce((sum, id) => sum + (attributes[id] ?? 0), 0);
-}
-
-function meets(checkpoint, actual) {
-  return checkpoint.op === '>=' ? actual >= checkpoint.value : actual < checkpoint.value;
-}
 
 /**
  * 本片要判定的目标。
@@ -3695,7 +3721,7 @@ function buildTargets({ rules, input, block, days, dayIndexByDate, lastSettledBe
     if (judged === null || judged < block.startDate || judged > block.endDate) continue;
     const day = dayIndexByDate.get(judged);
     if (day === undefined) continue;
-    const names = namesOf(checkpoint);
+    const names = attributeIdOf(checkpoint);
     if (names.length === 0) continue;
     // 单属性结局目标若已被块目标覆盖就不重复加（最后一块的 7 项正是结局阈值本身）。
     if (checkpoint.source === 'ending' && names.length === 1 && covered.has(names[0])) continue;
@@ -3779,17 +3805,22 @@ function solveChunkModel(highs, model, timeLimitMs, context = '') {
     throw new Error('求解缺陷：模型无界——这是代码问题，不是数据问题。');
   }
   if (status === 'Infeasible' || status === 'Primal infeasible or unbounded') {
-    throw new Error(
+    const error = new Error(
       `这一片没有可行日程（${context}）：硬约束互相冲突。` +
         '按「先达成者先硬化」，全局约束一旦达成便不得跌破；如果这一片（含集训周的强制指令）' +
-        '无法维持它，就是真的不可行。也请检查是否把某些周或日钉成了互相冲突的指令。',
+        '无法维持它，就是真的不可行。',
     );
+    error.infeasible = true;
+    throw error;
   }
   if (!result?.Columns || !Number.isFinite(result.ObjectiveValue)) {
-    throw new Error(
+    const error = new Error(
       `这一片在 ${(timeLimitMs / 1000).toFixed(1)} s 预算内没有找到可行日程` +
         `（${context}，HiGHS 状态：${status}）。请重试，或放宽目标。`,
     );
+    // 标记为可重试：调用方会放宽这一块的时间再试一次（预算被前面的块吃光时才走到这里）。
+    error.retryable = true;
+    throw error;
   }
   return result;
 }
@@ -3816,7 +3847,7 @@ function createSolver(rules, options = {}) {
 
     const globalRules = input.checkpoints.filter((checkpoint) => checkpoint.source === 'global');
     const achieved = Object.fromEntries(
-      globalRules.map((rule) => [rule.id, meets(rule, actualOf(rule, input.attributes))]),
+      globalRules.map((rule) => [rule.id, meets(actualOf(rule, input.attributes), rule.op, rule.value)]),
     );
 
     /** 严格早于某日的最后一个结算日；没有则 null。 */
@@ -3836,6 +3867,7 @@ function createSolver(rules, options = {}) {
     const dayCommands = {};
     let incoming = { ...input.attributes };
     const chunkReports = [];
+    const relaxedBlocks = [];
     let cancelled = false;
     let worstReplay = 0;
 
@@ -3874,6 +3906,12 @@ function createSolver(rules, options = {}) {
     }
 
     for (let index = 0; index < blocks.length; index += 1) {
+      // **必须让出一次宏任务**：`highs.solve()` 是同步的，整个块循环期间 Worker 不可能处理
+      // 任何消息（微任务也不行——消息事件是宏任务）。不在这里让一次，取消按钮就完全失效，
+      // 只能等整段求解跑完（实测：20 s 预算下 cancelled 恒为 false）。
+      await new Promise((resolve) => {
+        setTimeout(resolve, 0);
+      });
       if (shouldStop()) {
         cancelled = true;
         break;
@@ -3891,13 +3929,36 @@ function createSolver(rules, options = {}) {
       const model = buildChunkModel({ rules: effective, input, days, incoming, achieved, targets });
 
       const blockStartedAt = Date.now();
-      const result = solveChunkModel(
-        highs,
-        model,
-        timeLimitMs,
-        `片 ${block.chunk.index + 1} 的第 ${index + 1} 块 ${block.startDate}→${block.endDate}`,
-      );
-      const blockAssignments = extractAssignments(model, result.Columns);
+      const context = `片 ${block.chunk.index + 1} 的第 ${index + 1} 块 ${block.startDate}→${block.endDate}`;
+      let result;
+      let model2 = model;
+      try {
+        result = solveChunkModel(highs, model, timeLimitMs, context);
+      } catch (error) {
+        if (error?.retryable) {
+          // 预算被前面的块吃光时，后面的块只剩最低额度，可能连可行解都没找到。
+          // 这不是"问题不可行"，而是"时间不够"——放宽这一块的时间重试一次，
+          // 宁可超出总预算一点，也不要让用户拿到一张空手而归的错误。
+          result = solveChunkModel(highs, model, Math.max(timeLimitMs * 3, RETRY_BLOCK_MS), context);
+        } else if (error?.infeasible) {
+          // **严格滚动的近视会把前缀逼进死角**：某一块（典型是含集训周强制指令的那一块）
+          // 在"已达成的全局约束不得跌破"之下真的没有可行解——而这是前面那些块冻结出来的，
+          // 不是问题本身无解（同一份输入在启发式求解器下有过合格日程）。
+          //
+          // 处置：把带入本块的"已达成"降级为**软目标**（仍属最高层、权重 1e6，会尽力重新达成
+          // 并再次硬化），让求解继续，把真实结果**如实**交给 `plan()` 判定——它会标出这一条
+          // "已破线"，`valid` 随之为 false。宁可给用户一张完整但如实标注不合格的日程，
+          // 也不要给一个什么都拿不到的错误。
+          relaxedBlocks.push({ chunkIndex: block.chunk.index + 1, startDate: block.startDate, endDate: block.endDate });
+          for (const rule of globalRules) achieved[rule.id] = false;
+          model2 = buildChunkModel({ rules: effective, input, days, incoming, achieved, targets });
+          result = solveChunkModel(highs, model2, Math.max(timeLimitMs * 3, RETRY_BLOCK_MS), context);
+        } else {
+          throw error;
+        }
+      }
+      const model_ = model2;
+      const blockAssignments = extractAssignments(model_, result.Columns);
 
       // 先重放再采纳：闸门不过就不认这份解（也不会把它混进结果里）。
       const trajectory = replayChunk({
@@ -3909,7 +3970,7 @@ function createSolver(rules, options = {}) {
       });
       worstReplay = Math.max(
         worstReplay,
-        assertModelMatchesEngine({ model, columns: result.Columns, trajectory }),
+        assertModelMatchesEngine({ model: model_, columns: result.Columns, trajectory }),
       );
 
       Object.assign(weekCommands, blockAssignments.weekCommands);
@@ -3919,7 +3980,7 @@ function createSolver(rules, options = {}) {
       // **读模型自己的 g**，不读"轨迹里哪一天碰巧达标"：后者比模型的承诺更强，会把下一块
       // 逼进一个它无法维持的强制集合（实测过：那一块直接判不可行）。
       incoming = trajectory.length > 0 ? { ...trajectory[trajectory.length - 1] } : incoming;
-      Object.assign(achieved, modelAchieved(model, result.Columns));
+      Object.assign(achieved, modelAchieved(model_, result.Columns));
 
       const report = {
         chunkIndex: block.chunk.index + 1,
@@ -3931,7 +3992,7 @@ function createSolver(rules, options = {}) {
         elapsedMs: Date.now() - blockStartedAt,
         status: result.Status,
         objective: result.objective ?? result.ObjectiveValue,
-        binaries: model.counts.binaries,
+        binaries: model_.counts.binaries,
         targets: targets.map((target) => ({
           key: target.key,
           kind: target.kind,
@@ -3993,6 +4054,8 @@ function createSolver(rules, options = {}) {
       metrics: {
         solver: 'highs-milp',
         chunks: chunkReports,
+        // 因滚动近视而无解、已降级为软目标继续求解的块（结果以 plan() 的判定为准）。
+        relaxedBlocks,
         seed: SEED,
         replayMaxDeviation: worstReplay,
         // 本次求解实际使用的成功率（缺省 = 规则常量）。
@@ -4034,7 +4097,7 @@ const SUGGEST_LADDER = [0.35, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9];
  */
 async function suggestSuccessRate(rules, input, options = {}) {
   const ladder = options.ladder ?? SUGGEST_LADDER;
-  const budgetMs = options.budgetMs ?? WORKER_BUDGET_MS;
+  const budgetMs = options.budgetMs ?? 8000;
   const shouldStop = options.shouldStop ?? (() => false);
   const solve = createSolver(rules, { budgetMs });
   const trials = [];

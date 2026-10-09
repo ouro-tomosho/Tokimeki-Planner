@@ -11,6 +11,7 @@ import { isClubSlot } from './commands.js';
 import { buildCalendar } from './calendar.js';
 import { buildCheckpointSchedule, clubWeekMandate, evaluateCheckpoints } from './checkpoints.js';
 import { clubBlockReason, clubCommandId, createClubLookup } from './clubs.js';
+import { weekStartOf } from './dates.js';
 import { validateInput } from './input.js';
 import { validateRules, withSuccessRate } from './rules.js';
 import { REST_DAY, WEEKDAY, apply } from './settlement.js';
@@ -42,10 +43,18 @@ export function createPlanner(rules) {
     // 「第一次执行的社团指令必须是周日的日指令」（数据见 `rules.clubFirstCommand`）。
     // 休息日只会解析到**日指令**（见 calendar.js 的 `resolveCommand`：休息日读 `dayCommands`），
     // 而周日按定义就是休息日——所以"周日的日指令"落到判定上就是"该天的 weekday 等于规则里的值"。
-    // 未配置这条规则时 `clubFirstSatisfied` 直接为真，判定不受影响。
+    //
+    // **整条豁免**（所有者 2026-10-09 明确）：使用者**已经选了社团**、且「已玩到」落在**集训周内**
+    // 时，按"并非第一次执行社团指令"处理——社团活动在快照之前就已经在进行（集训周本身就在强制
+    // 社团指令），本时间轴上的第一次执行当然不是"第一次"。此时规则不适用：不判违规，也不需要
+    // 去满足它。未配置这条规则时同样不适用。
     const clubCommandIds = new Set(rules.commands.filter((c) => c.kind === 'club').map((c) => c.id));
     const clubFirstWeekday = rules.clubFirstCommand?.weekday ?? null;
-    let clubFirstSatisfied = clubFirstWeekday === null;
+    const snapshotWeek = weekStartOf(input.playedUpTo);
+    const snapshotInClubWeek = (rules.calendar?.clubWeeks ?? []).some((week) => week.date === snapshotWeek);
+    const clubFirstWaived =
+      clubFirstWeekday === null || (clubAt(input.playedUpTo) !== null && snapshotInClubWeek);
+    let clubFirstSatisfied = clubFirstWaived;
 
     const days = calendar.days.map((day) => {
       const club = clubAt(day.date);
@@ -78,14 +87,9 @@ export function createPlanner(rules) {
 
       // 首次社团指令：只有在**那之前**还没出现过合规的首次执行时才算违规。
       // 于是"先在工作日用了社团指令、之后才在周日补一次"仍然违规（违规天 = 周日那次之前的社团天），
-      // 而"第一个社团指令就落在周日"完全合规。
-      //
-      // **集训周强制的那几天豁免**：集训周是另一条硬约束（必须执行社团指令），当"已玩到"落在
-      // 集训周中间时，本时间轴上第一个社团指令**必然**是工作日——两条规则会互相判死。
-      // 所以这条规则只管**自由选择**的社团指令：强制执行的既不算合规、也不算违规。
-      const isMandatedClub = mandate !== null && !day.isRestDay && executed === mandate;
+      // 而"第一个社团指令就落在周日"完全合规。豁免与否见上面的 `clubFirstWaived`。
       let clubFirstViolation = false;
-      if (executed !== null && clubCommandIds.has(executed) && !isMandatedClub && !clubFirstSatisfied) {
+      if (executed !== null && clubCommandIds.has(executed) && !clubFirstSatisfied) {
         if (day.weekday === clubFirstWeekday) clubFirstSatisfied = true;
         else clubFirstViolation = true;
       }
@@ -97,6 +101,7 @@ export function createPlanner(rules) {
         commandBlocked,
         clubWeekViolation,
         clubFirstViolation,
+        clubFirstWaived,
         attributes: { ...state.attributes },
         // 结算前的值：小目标 / 结局目标的判定基准（见上面的注释）。
         attributesBefore,

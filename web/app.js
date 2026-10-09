@@ -288,8 +288,8 @@ function renderComputeRow() {
     note.textContent = `${state.pending} 处改动待计算`;
   } else {
     // 求解用的是"已玩到"那一刻的属性快照，真实游玩中随机事件会让实际属性与推算值逐渐分叉，
-    // 所以提醒每三个月回来校正一次（所有者 2026-10-09 要求把这句写在状态行里）。
-    note.textContent = '已计算｜每三个月通过“已玩到”和左侧的属性输入栏校正计算';
+    // 所以提醒每三个月回来校正一次（所有者 2026-10-09 要求写在状态行，措辞按同日要求润色）。
+    note.textContent = '已计算｜每三个月用“已玩到”与左侧属性栏校正一次';
   }
   note.classList.toggle('error', Boolean(notice?.error));
 

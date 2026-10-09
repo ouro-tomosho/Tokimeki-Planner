@@ -1720,12 +1720,16 @@ function evaluateCheckpoints(rules, input, days) {
   const clubWeekViolations = days.filter((day) => day.clubWeekViolation === true).length;
   // 「第一次执行的社团指令必须是周日的日指令」（`rules.clubFirstCommand`，由 `plan` 逐日标注）。
   const clubFirstViolations = days.filter((day) => day.clubFirstViolation === true).length;
+  // 规则是否**整条豁免**（使用者已选社团 + 「已玩到」落在集训周内，见 plan.js）：如实带出去，
+  // 免得"0 天违规"分不清是"满足了"还是"根本没适用"。
+  const clubFirstWaived = days.some((day) => day.clubFirstWaived === true);
   return {
     ok: gated.every((item) => item.state === 'met'),
     valid: hardViolations === 0 && clubWeekViolations === 0 && clubFirstViolations === 0,
     hardViolations,
     clubWeekViolations,
     clubFirstViolations,
+    clubFirstWaived,
     items,
     gated,
   };
@@ -2131,6 +2135,7 @@ return { allocateQuota };
 })();
 __planCoreNs["src/descent.js"] = (() => {
 const { buildCalendar } = __planCoreNs["src/calendar.js"];
+const { weekStartOf } = __planCoreNs["src/dates.js"];
 const { SKIP_DAY, commandIdOf, isClubSlot } = __planCoreNs["src/commands.js"];
 const { clubWeekMandate } = __planCoreNs["src/checkpoints.js"];
 const { availableCommandIds, availableDayCommandIds, clubBlockReason, clubCommandId, createClubLookup } = __planCoreNs["src/clubs.js"];
@@ -2166,6 +2171,7 @@ const { allocateQuota } = __planCoreNs["src/quota.js"];
 //
 // **协作式取消**：每次全槽下降之后、每轮 ILS 之前让出一次宏任务并查 `shouldStop()`；
 // 不让出的话 Worker 收不到取消消息（搜索整体是同步的），取消按钮等于失效。
+
 
 
 
@@ -2342,8 +2348,7 @@ function buildProblem(rules, input) {
         ? [mandate]
         : availableCommandIds(rules, club, day.weekStart);
     weekSlotOf.set(day.weekStart, slots.length);
-    // `mandate` 留着：首次社团规则要给"集训周强制的那几天"豁免（与 plan.js 同口径）。
-    slots.push({ kind: 'week', key: day.weekStart, isRestDay: false, mandate, cands, dayIdxs: [] });
+    slots.push({ kind: 'week', key: day.weekStart, isRestDay: false, cands, dayIdxs: [] });
   }
   for (let i = 0; i < settled.length; i += 1) {
     const day = settled[i];
@@ -2391,6 +2396,12 @@ function buildProblem(rules, input) {
     });
 
   const state = new Float64Array(n);
+  // 「首次社团指令必须是周日的日指令」的**整条豁免**（与 plan.js 同口径）：使用者已选社团、
+  // 且「已玩到」落在集训周内 → 按"并非第一次执行社团指令"处理，规则不适用。
+  const snapshotWeek = weekStartOf(input.playedUpTo);
+  const snapshotInClubWeek = (rules.calendar?.clubWeeks ?? []).some((week) => week.date === snapshotWeek);
+  const clubFirstWeekday = rules.clubFirstCommand?.weekday ?? null;
+  const clubFirstWaived = clubFirstWeekday === null || (clubAt(input.playedUpTo) !== null && snapshotInClubWeek);
   return {
     rules, input, calendar, settled, slots, daySlot, slotEff, ids, index, n, start, mins, maxs,
     ending, mini, global, lastIdx, miniIdx, makeGlobals, state, weekSlotOf, daySlotOf,
@@ -2398,7 +2409,8 @@ function buildProblem(rules, input) {
     // 判定里已经实现（`plan.js` 逐日标注），搜索这边必须同口径——否则它会搜出一份
     // 判定为不合格的日程。周日按定义就是休息日、只解析日指令，所以这里看 weekday 即可。
     clubCommandIds: new Set(rules.commands.filter((c) => c.kind === 'club').map((c) => c.id)),
-    clubFirstWeekday: rules.clubFirstCommand?.weekday ?? null,
+    clubFirstWeekday,
+    clubFirstWaived,
   };
 }
 
@@ -2417,7 +2429,7 @@ function evaluate(problem, x) {
   let globalViolationDays = 0;
   let globalUnmetDays = 0;
   let clubFirstViolations = 0;
-  let clubFirstSatisfied = problem.clubFirstWeekday === null;
+  let clubFirstSatisfied = problem.clubFirstWaived;
   const globals = problem.makeGlobals();
   let finalState = null;
   const miniState = new Map();
@@ -2427,12 +2439,8 @@ function evaluate(problem, x) {
     const ci = x[s];
     if (ci >= 0) {
       // 首次社团指令：在那之前还没出现合规的首次执行时，社团指令落在非周日就是违规。
-      const slot = problem.slots[s];
-      const chosen = slot.cands[ci];
-      // **集训周强制执行的社团指令豁免**（与 plan.js 同口径）：它是另一条硬约束，
-      // 当"已玩到"落在集训周中间时，本时间轴第一个社团指令必然是工作日，两条规则会互相判死。
-      const isMandatedClub = slot.kind === 'week' && slot.mandate !== undefined && slot.mandate === chosen;
-      if (chosen !== undefined && problem.clubCommandIds.has(chosen) && !isMandatedClub && !clubFirstSatisfied) {
+      const chosen = problem.slots[s].cands[ci];
+      if (chosen !== undefined && problem.clubCommandIds.has(chosen) && !clubFirstSatisfied) {
         if (settled[i].weekday === problem.clubFirstWeekday) clubFirstSatisfied = true;
         else clubFirstViolations += 1;
       }
@@ -3593,6 +3601,7 @@ const { isClubSlot } = __planCoreNs["src/commands.js"];
 const { buildCalendar } = __planCoreNs["src/calendar.js"];
 const { buildCheckpointSchedule, clubWeekMandate, evaluateCheckpoints } = __planCoreNs["src/checkpoints.js"];
 const { clubBlockReason, clubCommandId, createClubLookup } = __planCoreNs["src/clubs.js"];
+const { weekStartOf } = __planCoreNs["src/dates.js"];
 const { validateInput } = __planCoreNs["src/input.js"];
 const { validateRules, withSuccessRate } = __planCoreNs["src/rules.js"];
 const { REST_DAY, WEEKDAY, apply } = __planCoreNs["src/settlement.js"];
@@ -3604,6 +3613,7 @@ const { REST_DAY, WEEKDAY, apply } = __planCoreNs["src/settlement.js"];
 //
 // 检查点的判定在 `evaluateCheckpoints` 里汇总：它读这份逐日结果，自己重算
 // 达标 / 未达标 / 已破线 / 首次达成日（含全局硬约束）。这里只负责把每天结算对。
+
 
 
 
@@ -3640,10 +3650,18 @@ function createPlanner(rules) {
     // 「第一次执行的社团指令必须是周日的日指令」（数据见 `rules.clubFirstCommand`）。
     // 休息日只会解析到**日指令**（见 calendar.js 的 `resolveCommand`：休息日读 `dayCommands`），
     // 而周日按定义就是休息日——所以"周日的日指令"落到判定上就是"该天的 weekday 等于规则里的值"。
-    // 未配置这条规则时 `clubFirstSatisfied` 直接为真，判定不受影响。
+    //
+    // **整条豁免**（所有者 2026-10-09 明确）：使用者**已经选了社团**、且「已玩到」落在**集训周内**
+    // 时，按"并非第一次执行社团指令"处理——社团活动在快照之前就已经在进行（集训周本身就在强制
+    // 社团指令），本时间轴上的第一次执行当然不是"第一次"。此时规则不适用：不判违规，也不需要
+    // 去满足它。未配置这条规则时同样不适用。
     const clubCommandIds = new Set(rules.commands.filter((c) => c.kind === 'club').map((c) => c.id));
     const clubFirstWeekday = rules.clubFirstCommand?.weekday ?? null;
-    let clubFirstSatisfied = clubFirstWeekday === null;
+    const snapshotWeek = weekStartOf(input.playedUpTo);
+    const snapshotInClubWeek = (rules.calendar?.clubWeeks ?? []).some((week) => week.date === snapshotWeek);
+    const clubFirstWaived =
+      clubFirstWeekday === null || (clubAt(input.playedUpTo) !== null && snapshotInClubWeek);
+    let clubFirstSatisfied = clubFirstWaived;
 
     const days = calendar.days.map((day) => {
       const club = clubAt(day.date);
@@ -3676,14 +3694,9 @@ function createPlanner(rules) {
 
       // 首次社团指令：只有在**那之前**还没出现过合规的首次执行时才算违规。
       // 于是"先在工作日用了社团指令、之后才在周日补一次"仍然违规（违规天 = 周日那次之前的社团天），
-      // 而"第一个社团指令就落在周日"完全合规。
-      //
-      // **集训周强制的那几天豁免**：集训周是另一条硬约束（必须执行社团指令），当"已玩到"落在
-      // 集训周中间时，本时间轴上第一个社团指令**必然**是工作日——两条规则会互相判死。
-      // 所以这条规则只管**自由选择**的社团指令：强制执行的既不算合规、也不算违规。
-      const isMandatedClub = mandate !== null && !day.isRestDay && executed === mandate;
+      // 而"第一个社团指令就落在周日"完全合规。豁免与否见上面的 `clubFirstWaived`。
       let clubFirstViolation = false;
-      if (executed !== null && clubCommandIds.has(executed) && !isMandatedClub && !clubFirstSatisfied) {
+      if (executed !== null && clubCommandIds.has(executed) && !clubFirstSatisfied) {
         if (day.weekday === clubFirstWeekday) clubFirstSatisfied = true;
         else clubFirstViolation = true;
       }
@@ -3695,6 +3708,7 @@ function createPlanner(rules) {
         commandBlocked,
         clubWeekViolation,
         clubFirstViolation,
+        clubFirstWaived,
         attributes: { ...state.attributes },
         // 结算前的值：小目标 / 结局目标的判定基准（见上面的注释）。
         attributesBefore,
@@ -6162,8 +6176,8 @@ function renderComputeRow() {
     note.textContent = `${state.pending} 处改动待计算`;
   } else {
     // 求解用的是"已玩到"那一刻的属性快照，真实游玩中随机事件会让实际属性与推算值逐渐分叉，
-    // 所以提醒每三个月回来校正一次（所有者 2026-10-09 要求把这句写在状态行里）。
-    note.textContent = '已计算｜每三个月通过“已玩到”和左侧的属性输入栏校正计算';
+    // 所以提醒每三个月回来校正一次（所有者 2026-10-09 要求写在状态行，措辞按同日要求润色）。
+    note.textContent = '已计算｜每三个月用“已玩到”与左侧属性栏校正一次';
   }
   note.classList.toggle('error', Boolean(notice?.error));
 

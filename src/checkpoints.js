@@ -340,12 +340,16 @@ export function evaluateCheckpoints(rules, input, days) {
   const clubWeekViolations = days.filter((day) => day.clubWeekViolation === true).length;
   // 「第一次执行的社团指令必须是周日的日指令」（`rules.clubFirstCommand`，由 `plan` 逐日标注）。
   const clubFirstViolations = days.filter((day) => day.clubFirstViolation === true).length;
+  // 规则是否**整条豁免**（使用者已选社团 + 「已玩到」落在集训周内，见 plan.js）：如实带出去，
+  // 免得"0 天违规"分不清是"满足了"还是"根本没适用"。
+  const clubFirstWaived = days.some((day) => day.clubFirstWaived === true);
   return {
     ok: gated.every((item) => item.state === 'met'),
     valid: hardViolations === 0 && clubWeekViolations === 0 && clubFirstViolations === 0,
     hardViolations,
     clubWeekViolations,
     clubFirstViolations,
+    clubFirstWaived,
     items,
     gated,
   };

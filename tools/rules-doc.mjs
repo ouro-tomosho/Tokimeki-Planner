@@ -14,6 +14,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const RULES_FILE = path.join(ROOT, 'data', 'rules.json');
 const { DEFAULT_SUCCESS_RATE } = await import('../src/input.js');
 const { validateRules } = await import('../src/rules.js');
+const { WEEKDAY_NAMES } = await import('../src/calendar.js');
 const OUT_FILE = path.join(ROOT, 'RULES.md');
 
 /**
@@ -206,8 +207,10 @@ ${clubWeeks.map((w) => `- ${w.date} 起的一周`).join('\n')}
 ${rules.calendar?.note ? `> ${rules.calendar.note}\n` : ''}
 ## 其它
 
-- **社团指令**自 ${rules.clubUnlockDate} 起才可执行；社团切换只在周日。这两条在数据里由
-  \`clubUnlockDate\` 表达，工具按它判定。
+- **社团指令**自 ${rules.clubUnlockDate} 起才可执行；社团切换只在周日；**第一次执行的社团
+  指令必须是周${WEEKDAY_NAMES[rules.clubFirstCommand?.weekday ?? 0]}的日指令**（在那之前
+  执行社团指令只算违规）。这三条在数据里由 \`clubUnlockDate\` 与 \`clubFirstCommand\` 表达，
+  工具按它们判定。
 - 起点与终点**当天都不结算**：起点是状态快照（它的结果已经发生在游戏里），终点是时间轴边界。
 - 起点之后的每一天有三种可能。工具**不强制**每天都必须有指令，但三者的效果不同：
 

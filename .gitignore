@@ -15,7 +15,8 @@ AGENTS.md
 docs/agents/
 docs/data-request.md
 
-# 开发期验证脚本：不是构建/运行必需的代码（所有者 2026-10-08 的仓库卫生口径），
-# 它需要 node_modules/highs 才能跑，是开发期工具，不进版本库。
+# 开发期脚本：不是构建/运行必需的代码（所有者 2026-10-08 的仓库卫生口径），不进版本库。
+# 两者都只用 src/ 与 data/，不需要任何依赖（原先那句"需要 node_modules/highs"随
+# 精确求解一起过时了——2026-10-09 修正）。
 tools/verify-solver.mjs
 tools/compare-goal-priority.mjs

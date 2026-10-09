@@ -12,7 +12,8 @@
 //   · 本模块负责**找解**，每一次评价都是同一份 `expectedEffects` 口径下的逐日推进；
 //   · 对外结论一律由 `plan()`（真实引擎复核）给出，本模块的自评只用于搜索排序。
 //
-// 评价口径就是所有者定的优先级（全局约束 → 小目标 → 结局目标），逐层比较、不共享刻度，
+// 评价口径就是所有者定的优先级（全局约束 → 小目标 → 结局目标）加上两条**合格性**规则
+// （已达成后跌破、首次社团指令必须是周日），逐层比较、不共享刻度，
 // 详见 `betterThan` 上方的说明；曾把顺序写反（目标在前、全局在后）导致放松结局目标时丢掉
 // 全局约束、35% 成功率下给出 1161 天硬违反——那条弯路记在 ADR-0009 里。
 //
@@ -29,8 +30,15 @@
 // 不让出的话 Worker 收不到取消消息（搜索整体是同步的），取消按钮等于失效。
 
 import { buildCalendar } from './calendar.js';
+import { SKIP_DAY, commandIdOf, isClubSlot } from './commands.js';
 import { clubWeekMandate } from './checkpoints.js';
-import { availableCommandIds, availableDayCommandIds, clubCommandId, createClubLookup } from './clubs.js';
+import {
+  availableCommandIds,
+  availableDayCommandIds,
+  clubBlockReason,
+  clubCommandId,
+  createClubLookup,
+} from './clubs.js';
 import { clubExperienceGainOn, expectedEffects, REST_DAY, WEEKDAY } from './settlement.js';
 import { allocateQuota } from './quota.js';
 
@@ -165,6 +173,26 @@ function buildProblem(rules, input) {
   };
 
   // ---- 决策槽 ----
+  //
+  // **使用者钉住的指令必须原样成为候选**（唯一候选）：`plan()` 解析时钉住优先于求解器的填空
+  // （见 calendar.js 的 `resolveCommand`），所以搜索若在这里自由选择，它优化的就不是最终那份日程。
+  // 这条曾经漏掉过（2026-10-09 查出）：实测钉住 `1995-04-23 = cmd-rest` 时，搜索按自己的选择
+  // 继续按 `cmd-chat` 推进，与真实轨迹到 11 月已差 9.5 点人气，最终交出一份 `valid=false` 的日程
+  // （全局约束破了 2 天）而自评完全看不到。`skippedDays` 与"显式清空"的日子由 `isSettled` 排除，
+  // 不会进槽。
+  const pinnedCandsOf = (value, date, club) => {
+    const id = commandIdOf(value);
+    if (id === null || id === SKIP_DAY) return [SKIP_DAY];
+    // 社团占位符按**当时加入的社团**展开（与 plan.js 同口径）。
+    const effective = isClubSlot(id) ? clubCommandId(rules, club) : id;
+    if (effective === null) return [SKIP_DAY];
+    const command = rules.commands.find((c) => c.id === effective);
+    // 钉住了一条"此刻不可用"的社团指令（未解锁 / 不是当前社团）：引擎不会结算它（见
+    // `clubBlockReason`），所以这里也不给它任何效果——否则又是两套数。
+    if (!command || clubBlockReason(rules, command, club, date) !== null) return [SKIP_DAY];
+    return [effective];
+  };
+
   const slots = [];
   const daySlot = new Int32Array(settled.length);
   const weekSlotOf = new Map();
@@ -175,9 +203,15 @@ function buildProblem(rules, input) {
     if (weekSlotOf.has(day.weekStart)) continue;
     const club = clubAt(day.weekStart);
     const mandate = clubWeekMandate(rules, club, day.weekStart);
-    const cands = mandate ? [mandate] : availableCommandIds(rules, club, day.weekStart);
+    const pinnedWeek = input.weekCommands?.[day.weekStart];
+    const cands = pinnedWeek !== undefined
+      ? pinnedCandsOf(pinnedWeek, day.weekStart, club)
+      : mandate
+        ? [mandate]
+        : availableCommandIds(rules, club, day.weekStart);
     weekSlotOf.set(day.weekStart, slots.length);
-    slots.push({ kind: 'week', key: day.weekStart, isRestDay: false, cands, dayIdxs: [] });
+    // `mandate` 留着：首次社团规则要给"集训周强制的那几天"豁免（与 plan.js 同口径）。
+    slots.push({ kind: 'week', key: day.weekStart, isRestDay: false, mandate, cands, dayIdxs: [] });
   }
   for (let i = 0; i < settled.length; i += 1) {
     const day = settled[i];
@@ -187,8 +221,17 @@ function buildProblem(rules, input) {
     }
     const club = clubAt(day.date);
     // 集训周强制的是**周指令**（该周全部平日）；休息日没有这条强制（所有者 2026-10-06 明确）。
+    const pinnedDay = input.dayCommands?.[day.date];
     daySlotOf.set(day.date, slots.length);
-    slots.push({ kind: 'day', key: day.date, isRestDay: true, cands: availableDayCommandIds(rules, club, day.date), dayIdxs: [i] });
+    slots.push({
+      kind: 'day',
+      key: day.date,
+      isRestDay: true,
+      cands: pinnedDay !== undefined
+        ? pinnedCandsOf(pinnedDay, day.date, club)
+        : availableDayCommandIds(rules, club, day.date),
+      dayIdxs: [i],
+    });
   }
   for (const [start2, slot] of weekSlotOf) for (const i of slots[slot].dayIdxs) daySlot[i] = slot;
   for (const [, slot] of daySlotOf) daySlot[slots[slot].dayIdxs[0]] = slot;
@@ -219,6 +262,11 @@ function buildProblem(rules, input) {
   return {
     rules, input, calendar, settled, slots, daySlot, slotEff, ids, index, n, start, mins, maxs,
     ending, mini, global, lastIdx, miniIdx, makeGlobals, state, weekSlotOf, daySlotOf,
+    // 「第一次执行的社团指令必须是周日的日指令」（`rules.clubFirstCommand`）：
+    // 判定里已经实现（`plan.js` 逐日标注），搜索这边必须同口径——否则它会搜出一份
+    // 判定为不合格的日程。周日按定义就是休息日、只解析日指令，所以这里看 weekday 即可。
+    clubCommandIds: new Set(rules.commands.filter((c) => c.kind === 'club').map((c) => c.id)),
+    clubFirstWeekday: rules.clubFirstCommand?.weekday ?? null,
   };
 }
 
@@ -236,6 +284,8 @@ function evaluate(problem, x) {
   let globalPenalty = 0;
   let globalViolationDays = 0;
   let globalUnmetDays = 0;
+  let clubFirstViolations = 0;
+  let clubFirstSatisfied = problem.clubFirstWeekday === null;
   const globals = problem.makeGlobals();
   let finalState = null;
   const miniState = new Map();
@@ -244,6 +294,16 @@ function evaluate(problem, x) {
     const s = daySlot[i];
     const ci = x[s];
     if (ci >= 0) {
+      // 首次社团指令：在那之前还没出现合规的首次执行时，社团指令落在非周日就是违规。
+      const slot = problem.slots[s];
+      const chosen = slot.cands[ci];
+      // **集训周强制执行的社团指令豁免**（与 plan.js 同口径）：它是另一条硬约束，
+      // 当"已玩到"落在集训周中间时，本时间轴第一个社团指令必然是工作日，两条规则会互相判死。
+      const isMandatedClub = slot.kind === 'week' && slot.mandate !== undefined && slot.mandate === chosen;
+      if (chosen !== undefined && problem.clubCommandIds.has(chosen) && !isMandatedClub && !clubFirstSatisfied) {
+        if (settled[i].weekday === problem.clubFirstWeekday) clubFirstSatisfied = true;
+        else clubFirstViolations += 1;
+      }
       const eff = slotEff[s][ci];
       for (let a = 0; a < n; a += 1) {
         const pre = state[a] + eff[a];
@@ -319,20 +379,25 @@ function evaluate(problem, x) {
     }
   }
   // 分层权重：每层取值的上限都小于上一层的一个单位，所以低层改善永远盖不过上层改善。
+  // 两个**天数**层先除以总天数归一化到 0–1——否则 1000 天的量程会把层与层之间的分离吃掉，
+  // 权重就得相差一千倍以上，精度反过来又不够用了。
+  const dayCount = Math.max(1, settled.length);
   const score =
     globalUnmetCount * 1e9 +
-    globalViolationDays * 1e5 +
+    (globalViolationDays / dayCount) * 1e8 +
+    (clubFirstViolations / dayCount) * 1e6 +
     unmetMini * 1e4 +
     miniShortfall * 1e3 +
     unmetEnding * 1e2 +
     endingShortfall * 1e1 +
-    globalUnmetDays * 1e-3 +
+    (globalUnmetDays / dayCount) * 1e-1 +
     globalPenalty * 1e-5 +
     absorb * 1e-9;
   return {
     score,
     globalUnmetCount,
     globalViolationDays,
+    clubFirstViolations,
     globalUnmetDays,
     unmetMini,
     unmetEnding,
@@ -372,6 +437,7 @@ function toAssignments(problem, x) {
 function betterThan(a, b) {
   if (a.globalUnmetCount !== b.globalUnmetCount) return a.globalUnmetCount < b.globalUnmetCount;
   if (a.globalViolationDays !== b.globalViolationDays) return a.globalViolationDays < b.globalViolationDays;
+  if (a.clubFirstViolations !== b.clubFirstViolations) return a.clubFirstViolations < b.clubFirstViolations;
   if (a.unmetMini !== b.unmetMini) return a.unmetMini < b.unmetMini;
   if (Math.abs(a.miniShortfall - b.miniShortfall) > 1e-9) return a.miniShortfall < b.miniShortfall;
   if (a.unmetEnding !== b.unmetEnding) return a.unmetEnding < b.unmetEnding;
@@ -512,7 +578,7 @@ export async function runDescent(rules, input, options = {}) {
 
   /** 调试日志用的一行摘要（分层顺序）。 */
   const describe = (r) =>
-    `(全局未达成${r.globalUnmetCount}条/违反${r.globalViolationDays}天, 小${r.unmetMini}/${r.miniShortfall.toFixed(3)}, 结局${r.unmetEnding}/${r.endingShortfall.toFixed(3)}, 达标日${r.globalUnmetDays}, 吸收${r.absorb.toFixed(1)})`;
+    `(全局未达成${r.globalUnmetCount}条/违反${r.globalViolationDays}天, 首次社团违规${r.clubFirstViolations}天, 小${r.unmetMini}/${r.miniShortfall.toFixed(3)}, 结局${r.unmetEnding}/${r.endingShortfall.toFixed(3)}, 达标日${r.globalUnmetDays}, 吸收${r.absorb.toFixed(1)})`;
 
   const snapshot = () => {
     bestX.set(x);
@@ -585,6 +651,7 @@ export async function runDescent(rules, input, options = {}) {
         searchUnmet: best.unmet,
         searchShortfall: best.shortfall,
         searchHardViolationDays: best.globalViolationDays,
+        searchClubFirstViolations: best.clubFirstViolations,
         searchGlobalUnmetCount: best.globalUnmetCount,
         searchGlobalUnmetDays: best.globalUnmetDays,
         searchUnmetMini: best.unmetMini,

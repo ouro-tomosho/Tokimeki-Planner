@@ -1711,17 +1711,21 @@ function evaluateCheckpoints(rules, input, days) {
   // 两个顶层判定，对应「硬约束 / 目标」两分（GLOSSARY）：
   //   `ok`    目标是否全部达标——只看参与判定的项（终点目标 + 小目标）。
   //   `valid` 该日程是否合格——没有任何硬违反。本函数能判定的硬约束是**全局约束的硬阶段**
-  //           （压力上限由 `gc-stress` 这条全局规则表达）与**社团集训周**（violating days 由
-  //           `plan` 在解析出实际执行的指令后逐日标注 `clubWeekViolation`）；社团解锁/互斥
-  //           与钉住的槽位由日历与求解器在结构上保证，一份排好的日程里不会出现。
+  //           （压力上限由 `gc-stress` 这条全局规则表达）、**社团集训周**与**首次社团指令
+  //           必须是周日**（violating days 由 `plan` 在解析出实际执行的指令后逐日标注
+  //           `clubWeekViolation` / `clubFirstViolation`）；社团解锁/互斥与钉住的槽位由日历与
+  //           求解器在结构上保证，一份排好的日程里不会出现。
   const gated = items.filter((item) => item.gate !== false && item.state !== 'unset');
   const hardViolations = items.reduce((sum, item) => sum + (item.hardViolations ?? 0), 0);
   const clubWeekViolations = days.filter((day) => day.clubWeekViolation === true).length;
+  // 「第一次执行的社团指令必须是周日的日指令」（`rules.clubFirstCommand`，由 `plan` 逐日标注）。
+  const clubFirstViolations = days.filter((day) => day.clubFirstViolation === true).length;
   return {
     ok: gated.every((item) => item.state === 'met'),
-    valid: hardViolations === 0 && clubWeekViolations === 0,
+    valid: hardViolations === 0 && clubWeekViolations === 0 && clubFirstViolations === 0,
     hardViolations,
     clubWeekViolations,
+    clubFirstViolations,
     items,
     gated,
   };
@@ -2127,8 +2131,9 @@ return { allocateQuota };
 })();
 __planCoreNs["src/descent.js"] = (() => {
 const { buildCalendar } = __planCoreNs["src/calendar.js"];
+const { SKIP_DAY, commandIdOf, isClubSlot } = __planCoreNs["src/commands.js"];
 const { clubWeekMandate } = __planCoreNs["src/checkpoints.js"];
-const { availableCommandIds, availableDayCommandIds, clubCommandId, createClubLookup } = __planCoreNs["src/clubs.js"];
+const { availableCommandIds, availableDayCommandIds, clubBlockReason, clubCommandId, createClubLookup } = __planCoreNs["src/clubs.js"];
 const { clubExperienceGainOn, expectedEffects, REST_DAY, WEEKDAY } = __planCoreNs["src/settlement.js"];
 const { allocateQuota } = __planCoreNs["src/quota.js"];
 // **产品求解器**：构造式启发式排布搜索，直接对**真实结算内核**（`settlement.js` 的 `apply`）
@@ -2145,7 +2150,8 @@ const { allocateQuota } = __planCoreNs["src/quota.js"];
 //   · 本模块负责**找解**，每一次评价都是同一份 `expectedEffects` 口径下的逐日推进；
 //   · 对外结论一律由 `plan()`（真实引擎复核）给出，本模块的自评只用于搜索排序。
 //
-// 评价口径就是所有者定的优先级（全局约束 → 小目标 → 结局目标），逐层比较、不共享刻度，
+// 评价口径就是所有者定的优先级（全局约束 → 小目标 → 结局目标）加上两条**合格性**规则
+// （已达成后跌破、首次社团指令必须是周日），逐层比较、不共享刻度，
 // 详见 `betterThan` 上方的说明；曾把顺序写反（目标在前、全局在后）导致放松结局目标时丢掉
 // 全局约束、35% 成功率下给出 1161 天硬违反——那条弯路记在 ADR-0009 里。
 //
@@ -2160,6 +2166,7 @@ const { allocateQuota } = __planCoreNs["src/quota.js"];
 //
 // **协作式取消**：每次全槽下降之后、每轮 ILS 之前让出一次宏任务并查 `shouldStop()`；
 // 不让出的话 Worker 收不到取消消息（搜索整体是同步的），取消按钮等于失效。
+
 
 
 
@@ -2298,6 +2305,26 @@ function buildProblem(rules, input) {
   };
 
   // ---- 决策槽 ----
+  //
+  // **使用者钉住的指令必须原样成为候选**（唯一候选）：`plan()` 解析时钉住优先于求解器的填空
+  // （见 calendar.js 的 `resolveCommand`），所以搜索若在这里自由选择，它优化的就不是最终那份日程。
+  // 这条曾经漏掉过（2026-10-09 查出）：实测钉住 `1995-04-23 = cmd-rest` 时，搜索按自己的选择
+  // 继续按 `cmd-chat` 推进，与真实轨迹到 11 月已差 9.5 点人气，最终交出一份 `valid=false` 的日程
+  // （全局约束破了 2 天）而自评完全看不到。`skippedDays` 与"显式清空"的日子由 `isSettled` 排除，
+  // 不会进槽。
+  const pinnedCandsOf = (value, date, club) => {
+    const id = commandIdOf(value);
+    if (id === null || id === SKIP_DAY) return [SKIP_DAY];
+    // 社团占位符按**当时加入的社团**展开（与 plan.js 同口径）。
+    const effective = isClubSlot(id) ? clubCommandId(rules, club) : id;
+    if (effective === null) return [SKIP_DAY];
+    const command = rules.commands.find((c) => c.id === effective);
+    // 钉住了一条"此刻不可用"的社团指令（未解锁 / 不是当前社团）：引擎不会结算它（见
+    // `clubBlockReason`），所以这里也不给它任何效果——否则又是两套数。
+    if (!command || clubBlockReason(rules, command, club, date) !== null) return [SKIP_DAY];
+    return [effective];
+  };
+
   const slots = [];
   const daySlot = new Int32Array(settled.length);
   const weekSlotOf = new Map();
@@ -2308,9 +2335,15 @@ function buildProblem(rules, input) {
     if (weekSlotOf.has(day.weekStart)) continue;
     const club = clubAt(day.weekStart);
     const mandate = clubWeekMandate(rules, club, day.weekStart);
-    const cands = mandate ? [mandate] : availableCommandIds(rules, club, day.weekStart);
+    const pinnedWeek = input.weekCommands?.[day.weekStart];
+    const cands = pinnedWeek !== undefined
+      ? pinnedCandsOf(pinnedWeek, day.weekStart, club)
+      : mandate
+        ? [mandate]
+        : availableCommandIds(rules, club, day.weekStart);
     weekSlotOf.set(day.weekStart, slots.length);
-    slots.push({ kind: 'week', key: day.weekStart, isRestDay: false, cands, dayIdxs: [] });
+    // `mandate` 留着：首次社团规则要给"集训周强制的那几天"豁免（与 plan.js 同口径）。
+    slots.push({ kind: 'week', key: day.weekStart, isRestDay: false, mandate, cands, dayIdxs: [] });
   }
   for (let i = 0; i < settled.length; i += 1) {
     const day = settled[i];
@@ -2320,8 +2353,17 @@ function buildProblem(rules, input) {
     }
     const club = clubAt(day.date);
     // 集训周强制的是**周指令**（该周全部平日）；休息日没有这条强制（所有者 2026-10-06 明确）。
+    const pinnedDay = input.dayCommands?.[day.date];
     daySlotOf.set(day.date, slots.length);
-    slots.push({ kind: 'day', key: day.date, isRestDay: true, cands: availableDayCommandIds(rules, club, day.date), dayIdxs: [i] });
+    slots.push({
+      kind: 'day',
+      key: day.date,
+      isRestDay: true,
+      cands: pinnedDay !== undefined
+        ? pinnedCandsOf(pinnedDay, day.date, club)
+        : availableDayCommandIds(rules, club, day.date),
+      dayIdxs: [i],
+    });
   }
   for (const [start2, slot] of weekSlotOf) for (const i of slots[slot].dayIdxs) daySlot[i] = slot;
   for (const [, slot] of daySlotOf) daySlot[slots[slot].dayIdxs[0]] = slot;
@@ -2352,6 +2394,11 @@ function buildProblem(rules, input) {
   return {
     rules, input, calendar, settled, slots, daySlot, slotEff, ids, index, n, start, mins, maxs,
     ending, mini, global, lastIdx, miniIdx, makeGlobals, state, weekSlotOf, daySlotOf,
+    // 「第一次执行的社团指令必须是周日的日指令」（`rules.clubFirstCommand`）：
+    // 判定里已经实现（`plan.js` 逐日标注），搜索这边必须同口径——否则它会搜出一份
+    // 判定为不合格的日程。周日按定义就是休息日、只解析日指令，所以这里看 weekday 即可。
+    clubCommandIds: new Set(rules.commands.filter((c) => c.kind === 'club').map((c) => c.id)),
+    clubFirstWeekday: rules.clubFirstCommand?.weekday ?? null,
   };
 }
 
@@ -2369,6 +2416,8 @@ function evaluate(problem, x) {
   let globalPenalty = 0;
   let globalViolationDays = 0;
   let globalUnmetDays = 0;
+  let clubFirstViolations = 0;
+  let clubFirstSatisfied = problem.clubFirstWeekday === null;
   const globals = problem.makeGlobals();
   let finalState = null;
   const miniState = new Map();
@@ -2377,6 +2426,16 @@ function evaluate(problem, x) {
     const s = daySlot[i];
     const ci = x[s];
     if (ci >= 0) {
+      // 首次社团指令：在那之前还没出现合规的首次执行时，社团指令落在非周日就是违规。
+      const slot = problem.slots[s];
+      const chosen = slot.cands[ci];
+      // **集训周强制执行的社团指令豁免**（与 plan.js 同口径）：它是另一条硬约束，
+      // 当"已玩到"落在集训周中间时，本时间轴第一个社团指令必然是工作日，两条规则会互相判死。
+      const isMandatedClub = slot.kind === 'week' && slot.mandate !== undefined && slot.mandate === chosen;
+      if (chosen !== undefined && problem.clubCommandIds.has(chosen) && !isMandatedClub && !clubFirstSatisfied) {
+        if (settled[i].weekday === problem.clubFirstWeekday) clubFirstSatisfied = true;
+        else clubFirstViolations += 1;
+      }
       const eff = slotEff[s][ci];
       for (let a = 0; a < n; a += 1) {
         const pre = state[a] + eff[a];
@@ -2452,20 +2511,25 @@ function evaluate(problem, x) {
     }
   }
   // 分层权重：每层取值的上限都小于上一层的一个单位，所以低层改善永远盖不过上层改善。
+  // 两个**天数**层先除以总天数归一化到 0–1——否则 1000 天的量程会把层与层之间的分离吃掉，
+  // 权重就得相差一千倍以上，精度反过来又不够用了。
+  const dayCount = Math.max(1, settled.length);
   const score =
     globalUnmetCount * 1e9 +
-    globalViolationDays * 1e5 +
+    (globalViolationDays / dayCount) * 1e8 +
+    (clubFirstViolations / dayCount) * 1e6 +
     unmetMini * 1e4 +
     miniShortfall * 1e3 +
     unmetEnding * 1e2 +
     endingShortfall * 1e1 +
-    globalUnmetDays * 1e-3 +
+    (globalUnmetDays / dayCount) * 1e-1 +
     globalPenalty * 1e-5 +
     absorb * 1e-9;
   return {
     score,
     globalUnmetCount,
     globalViolationDays,
+    clubFirstViolations,
     globalUnmetDays,
     unmetMini,
     unmetEnding,
@@ -2505,6 +2569,7 @@ function toAssignments(problem, x) {
 function betterThan(a, b) {
   if (a.globalUnmetCount !== b.globalUnmetCount) return a.globalUnmetCount < b.globalUnmetCount;
   if (a.globalViolationDays !== b.globalViolationDays) return a.globalViolationDays < b.globalViolationDays;
+  if (a.clubFirstViolations !== b.clubFirstViolations) return a.clubFirstViolations < b.clubFirstViolations;
   if (a.unmetMini !== b.unmetMini) return a.unmetMini < b.unmetMini;
   if (Math.abs(a.miniShortfall - b.miniShortfall) > 1e-9) return a.miniShortfall < b.miniShortfall;
   if (a.unmetEnding !== b.unmetEnding) return a.unmetEnding < b.unmetEnding;
@@ -2645,7 +2710,7 @@ async function runDescent(rules, input, options = {}) {
 
   /** 调试日志用的一行摘要（分层顺序）。 */
   const describe = (r) =>
-    `(全局未达成${r.globalUnmetCount}条/违反${r.globalViolationDays}天, 小${r.unmetMini}/${r.miniShortfall.toFixed(3)}, 结局${r.unmetEnding}/${r.endingShortfall.toFixed(3)}, 达标日${r.globalUnmetDays}, 吸收${r.absorb.toFixed(1)})`;
+    `(全局未达成${r.globalUnmetCount}条/违反${r.globalViolationDays}天, 首次社团违规${r.clubFirstViolations}天, 小${r.unmetMini}/${r.miniShortfall.toFixed(3)}, 结局${r.unmetEnding}/${r.endingShortfall.toFixed(3)}, 达标日${r.globalUnmetDays}, 吸收${r.absorb.toFixed(1)})`;
 
   const snapshot = () => {
     bestX.set(x);
@@ -2718,6 +2783,7 @@ async function runDescent(rules, input, options = {}) {
         searchUnmet: best.unmet,
         searchShortfall: best.shortfall,
         searchHardViolationDays: best.globalViolationDays,
+        searchClubFirstViolations: best.clubFirstViolations,
         searchGlobalUnmetCount: best.globalUnmetCount,
         searchGlobalUnmetDays: best.globalUnmetDays,
         searchUnmetMini: best.unmetMini,
@@ -3057,6 +3123,16 @@ function checkTimeline(rules, note) {
   }
   if (!isDate(rules.clubUnlockDate)) {
     note(`clubUnlockDate 格式错误：${rules.clubUnlockDate}`);
+  }
+  const first = rules.clubFirstCommand;
+  if (first !== undefined) {
+    const weekday = first?.weekday;
+    if (!Number.isInteger(weekday) || weekday < 0 || weekday > 6) {
+      note(`clubFirstCommand.weekday 必须是 0–6 的整数：${weekday}`);
+    }
+    if (typeof first?.note !== 'string' || first.note.trim() === '') {
+      note('clubFirstCommand.note 必须是非空字符串（说明这条规则）');
+    }
   }
 }
 
@@ -3561,6 +3637,14 @@ function createPlanner(rules) {
     const schedule = buildCheckpointSchedule(rules, input, calendar.days);
     let state = { attributes: { ...input.attributes } };
 
+    // 「第一次执行的社团指令必须是周日的日指令」（数据见 `rules.clubFirstCommand`）。
+    // 休息日只会解析到**日指令**（见 calendar.js 的 `resolveCommand`：休息日读 `dayCommands`），
+    // 而周日按定义就是休息日——所以"周日的日指令"落到判定上就是"该天的 weekday 等于规则里的值"。
+    // 未配置这条规则时 `clubFirstSatisfied` 直接为真，判定不受影响。
+    const clubCommandIds = new Set(rules.commands.filter((c) => c.kind === 'club').map((c) => c.id));
+    const clubFirstWeekday = rules.clubFirstCommand?.weekday ?? null;
+    let clubFirstSatisfied = clubFirstWeekday === null;
+
     const days = calendar.days.map((day) => {
       const club = clubAt(day.date);
       // 「当前社团指令」占位符在这里展开：具体是哪一条取决于**当时加入的社团**。
@@ -3590,12 +3674,27 @@ function createPlanner(rules) {
         && (day.isSettled || day.isEmpty)
         && executed !== mandate;
 
+      // 首次社团指令：只有在**那之前**还没出现过合规的首次执行时才算违规。
+      // 于是"先在工作日用了社团指令、之后才在周日补一次"仍然违规（违规天 = 周日那次之前的社团天），
+      // 而"第一个社团指令就落在周日"完全合规。
+      //
+      // **集训周强制的那几天豁免**：集训周是另一条硬约束（必须执行社团指令），当"已玩到"落在
+      // 集训周中间时，本时间轴上第一个社团指令**必然**是工作日——两条规则会互相判死。
+      // 所以这条规则只管**自由选择**的社团指令：强制执行的既不算合规、也不算违规。
+      const isMandatedClub = mandate !== null && !day.isRestDay && executed === mandate;
+      let clubFirstViolation = false;
+      if (executed !== null && clubCommandIds.has(executed) && !isMandatedClub && !clubFirstSatisfied) {
+        if (day.weekday === clubFirstWeekday) clubFirstSatisfied = true;
+        else clubFirstViolation = true;
+      }
+
       return {
         ...day,
         // 占位符已展开成实际执行的指令；界面要显示"这一格真正跑的是什么"。
         effectiveCommandId,
         commandBlocked,
         clubWeekViolation,
+        clubFirstViolation,
         attributes: { ...state.attributes },
         // 结算前的值：小目标 / 结局目标的判定基准（见上面的注释）。
         attributesBefore,
@@ -3729,6 +3828,7 @@ function createSolver(rules, options = {}) {
         gatesTotal: gated.length,
         hardViolations: goals ? goals.hardViolations : null,
         clubWeekViolations: goals ? goals.clubWeekViolations : null,
+        clubFirstViolations: goals ? goals.clubFirstViolations : null,
         unmet,
       },
     };
@@ -3774,7 +3874,7 @@ async function suggestSuccessRate(rules, input, options = {}) {
 }
 return { MAIN_THREAD_BUDGET_MS, WORKER_BUDGET_MS, createSolver, SUGGEST_LADDER, suggestSuccessRate };
 })();
-__planCoreNs["data/rules.json"] = {"timeline":{"start":"1995-04-04","end":"1998-03-01","lastSettlement":"1998-02-28"},"clubUnlockDate":"1995-04-09","restDayBonus":{"daily":4,"club":4,"stressReduction":4},"clubExperienceGain":{"weekday":1,"restDay":4,"augustWeekday":2},"attributes":[{"id":"stamina","name":"体力","direction":"up","min":0,"max":999,"default":100},{"id":"literature","name":"文科","direction":"up","min":0,"max":999,"default":40},{"id":"science","name":"理科","direction":"up","min":0,"max":999,"default":40},{"id":"art","name":"艺术","direction":"up","min":0,"max":999,"default":40},{"id":"sports","name":"运动","direction":"up","min":0,"max":999,"default":40},{"id":"popularity","name":"人缘","direction":"up","min":0,"max":999,"default":32},{"id":"appearance","name":"容姿","direction":"up","min":0,"max":999,"default":60},{"id":"grit","name":"毅力","direction":"up","min":0,"max":999,"default":5},{"id":"stress","name":"压力","direction":"down","min":0,"max":999,"default":0},{"id":"clubExperience","name":"社团经验","direction":"up","min":0,"max":999,"default":0}],"clubs":[{"id":"literature-club","name":"文艺社"},{"id":"drama-club","name":"话剧社"},{"id":"science-club","name":"科学社"},{"id":"computer-club","name":"电脑社"},{"id":"art-club","name":"美术社"},{"id":"brass-band-club","name":"管乐社"},{"id":"baseball-club","name":"棒球社"},{"id":"soccer-club","name":"足球社"},{"id":"tennis-club","name":"网球社"},{"id":"swimming-club","name":"游泳社"},{"id":"basketball-club","name":"篮球社"}],"commands":[{"id":"cmd-study-literature","name":"研读文科","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-0.75,"literature":0.9375,"science":0.0625,"art":0.0625,"sports":-0.375,"popularity":0.25,"appearance":-0.25,"grit":-0.0625,"stress":0.75,"clubExperience":0}},{"id":"cmd-study-science","name":"研读理科","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-0.75,"literature":0.0625,"science":0.9375,"art":0.0625,"sports":-0.75,"popularity":0.125,"appearance":-0.4375,"grit":0.25,"stress":0.25,"clubExperience":0}},{"id":"cmd-practice-art","name":"培养艺术气质","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-0.75,"literature":0.0625,"science":0.0625,"art":0.9375,"sports":-0.4375,"popularity":0.0625,"appearance":-0.125,"grit":-0.0625,"stress":-0.25,"clubExperience":0}},{"id":"cmd-exercise","name":"运动","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-2.375,"literature":-0.125,"science":-0.125,"art":-0.125,"sports":3.25,"popularity":0.0625,"appearance":-0.4375,"grit":1.375,"stress":0.0625,"clubExperience":0}},{"id":"cmd-chat","name":"和同学闲聊","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-1.1875,"literature":-0.25,"science":-0.25,"art":-0.25,"sports":0.1875,"popularity":1.5,"appearance":0.75,"grit":-0.375,"stress":-0.875,"clubExperience":0}},{"id":"cmd-groom","name":"整理仪容","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-0.625,"literature":-0.125,"science":-0.125,"art":-0.0625,"sports":-0.0625,"popularity":0.5,"appearance":2.0625,"grit":-0.625,"stress":-0.0625,"clubExperience":0}},{"id":"cmd-rest","name":"休息","kind":"daily","clubId":null,"successRate":1,"effects":{"stamina":3.0625,"literature":0,"science":0,"art":0,"sports":0,"popularity":-0.625,"appearance":-0.75,"grit":-0.0625,"stress":-2.9375,"clubExperience":0}},{"id":"cmd-club-literature","name":"文艺社","kind":"club","clubId":"literature-club","successRate":0.35,"effects":{"stamina":-0.75,"literature":0.75,"science":0.25,"art":0.125,"sports":0,"popularity":0.0625,"appearance":-0.25,"grit":-0.0625,"stress":1.125,"clubExperience":0}},{"id":"cmd-club-drama","name":"话剧社","kind":"club","clubId":"drama-club","successRate":0.35,"effects":{"stamina":-0.875,"literature":0.875,"science":0,"art":0.375,"sports":0.125,"popularity":0.0625,"appearance":-0.125,"grit":0.0625,"stress":1.0625,"clubExperience":0}},{"id":"cmd-club-science","name":"科学社","kind":"club","clubId":"science-club","successRate":0.35,"effects":{"stamina":-0.8125,"literature":0.0625,"science":0.9375,"art":0.25,"sports":0,"popularity":0.0625,"appearance":-0.25,"grit":0.25,"stress":1.375,"clubExperience":0}},{"id":"cmd-club-computer","name":"电脑社","kind":"club","clubId":"computer-club","successRate":0.35,"effects":{"stamina":-0.8125,"literature":0.0625,"science":0.875,"art":0.375,"sports":0,"popularity":0.25,"appearance":-0.375,"grit":0.25,"stress":1.625,"clubExperience":0}},{"id":"cmd-club-art","name":"美术社","kind":"club","clubId":"art-club","successRate":0.35,"effects":{"stamina":-0.875,"literature":0.125,"science":0,"art":0.9375,"sports":0.0625,"popularity":0.0625,"appearance":-0.0625,"grit":-0.125,"stress":0.9375,"clubExperience":0}},{"id":"cmd-club-brass-band","name":"管乐社","kind":"club","clubId":"brass-band-club","successRate":0.35,"effects":{"stamina":-0.875,"literature":0.0625,"science":0.0625,"art":0.875,"sports":0.1875,"popularity":0.125,"appearance":-0.1875,"grit":0.0625,"stress":0.875,"clubExperience":0}},{"id":"cmd-club-baseball","name":"棒球社","kind":"club","clubId":"baseball-club","successRate":0.35,"effects":{"stamina":-1.875,"literature":-0.0625,"science":-0.0625,"art":-0.0625,"sports":0.875,"popularity":0.0625,"appearance":-0.25,"grit":0.75,"stress":0.1875,"clubExperience":0}},{"id":"cmd-club-soccer","name":"足球社","kind":"club","clubId":"soccer-club","successRate":0.35,"effects":{"stamina":-1.875,"literature":-0.0625,"science":-0.0625,"art":-0.0625,"sports":0.9375,"popularity":0.125,"appearance":-0.1875,"grit":0.6875,"stress":0.25,"clubExperience":0}},{"id":"cmd-club-tennis","name":"网球社","kind":"club","clubId":"tennis-club","successRate":0.35,"effects":{"stamina":-1.5625,"literature":-0.0625,"science":-0.0625,"art":0,"sports":0.8125,"popularity":0.125,"appearance":-0.0625,"grit":0.5625,"stress":0.5,"clubExperience":0}},{"id":"cmd-club-swimming","name":"游泳社","kind":"club","clubId":"swimming-club","successRate":0.35,"effects":{"stamina":-1.9375,"literature":-0.0625,"science":-0.0625,"art":0,"sports":0.9375,"popularity":0,"appearance":-0.125,"grit":0.6875,"stress":0.1875,"clubExperience":0}},{"id":"cmd-club-basketball","name":"篮球社","kind":"club","clubId":"basketball-club","successRate":0.35,"effects":{"stamina":-1.8125,"literature":-0.0625,"science":-0.0625,"art":-0.0625,"sports":0.875,"popularity":0.0625,"appearance":-0.1875,"grit":0.625,"stress":0.4375,"clubExperience":0}}],"checkpoints":[{"id":"gc-stamina","date":null,"attribute":"stamina","op":">=","value":20,"source":"global"},{"id":"gc-popularity","date":null,"attribute":"popularity","op":">=","value":100,"source":"global"},{"id":"gc-appearance","date":null,"attribute":"appearance","op":">=","value":35,"source":"global"},{"id":"gc-stress","date":null,"attribute":"stress","op":"<","value":70,"source":"global"},{"id":"mg-literature-science-art","date":"1998-02-23","attributes":["literature","science","art"],"op":">=","value":561,"source":"mini"},{"id":"mg-clubExperience","date":"1998-01-02","attributes":["clubExperience"],"op":">=","value":380,"source":"mini"},{"id":"eg-stamina","date":"1998-03-01","attribute":"stamina","op":">=","value":50,"source":"ending"},{"id":"eg-literature","date":"1998-03-01","attribute":"literature","op":">=","value":130,"source":"ending"},{"id":"eg-science","date":"1998-03-01","attribute":"science","op":">=","value":130,"source":"ending"},{"id":"eg-art","date":"1998-03-01","attribute":"art","op":">=","value":130,"source":"ending"},{"id":"eg-sports","date":"1998-03-01","attribute":"sports","op":">=","value":130,"source":"ending"},{"id":"eg-popularity","date":"1998-03-01","attribute":"popularity","op":">=","value":120,"source":"ending"},{"id":"eg-appearance","date":"1998-03-01","attribute":"appearance","op":">=","value":100,"source":"ending"},{"id":"eg-grit","date":"1998-03-01","attribute":"grit","op":">=","value":100,"source":"ending"},{"id":"eg-stress","date":"1998-03-01","attribute":"stress","op":"<","value":50,"source":"ending"}],"defaultClub":"brass-band-club","calendar":{"note":"游戏固定日历：休息日（节假日/庆典）与社团集训周。由所有者逐日核对过，解析器只读。","restDays":["1995-04-29","1995-05-03","1995-05-04","1995-05-05","1995-09-15","1995-09-23","1995-10-10","1995-11-03","1995-11-23","1995-12-23","1996-01-15","1996-02-12","1996-03-20","1996-04-29","1996-05-03","1996-05-04","1996-05-06","1996-09-16","1996-09-23","1996-10-10","1996-11-04","1996-11-23","1996-12-23","1997-01-15","1997-02-11","1997-03-21","1997-04-29","1997-05-03","1997-05-05","1997-07-21","1997-09-15","1997-09-23","1997-10-10","1997-11-03","1997-11-24","1997-12-23","1998-01-15","1998-02-11"],"clubWeeks":[{"date":"1995-08-13","command":"club"},{"date":"1995-10-08","command":"club"},{"date":"1996-08-11","command":"club"},{"date":"1996-10-06","command":"club"},{"date":"1997-08-10","command":"club"},{"date":"1997-10-05","command":"club"}]}};
+__planCoreNs["data/rules.json"] = {"timeline":{"start":"1995-04-04","end":"1998-03-01","lastSettlement":"1998-02-28"},"clubUnlockDate":"1995-04-09","clubFirstCommand":{"weekday":0,"note":"第一次执行的社团指令必须是周日的日指令（社团活动从周日的日指令开始）"},"restDayBonus":{"daily":4,"club":4,"stressReduction":4},"clubExperienceGain":{"weekday":1,"restDay":4,"augustWeekday":2},"attributes":[{"id":"stamina","name":"体力","direction":"up","min":0,"max":999,"default":100},{"id":"literature","name":"文科","direction":"up","min":0,"max":999,"default":40},{"id":"science","name":"理科","direction":"up","min":0,"max":999,"default":40},{"id":"art","name":"艺术","direction":"up","min":0,"max":999,"default":40},{"id":"sports","name":"运动","direction":"up","min":0,"max":999,"default":40},{"id":"popularity","name":"人缘","direction":"up","min":0,"max":999,"default":32},{"id":"appearance","name":"容姿","direction":"up","min":0,"max":999,"default":60},{"id":"grit","name":"毅力","direction":"up","min":0,"max":999,"default":5},{"id":"stress","name":"压力","direction":"down","min":0,"max":999,"default":0},{"id":"clubExperience","name":"社团经验","direction":"up","min":0,"max":999,"default":0}],"clubs":[{"id":"literature-club","name":"文艺社"},{"id":"drama-club","name":"话剧社"},{"id":"science-club","name":"科学社"},{"id":"computer-club","name":"电脑社"},{"id":"art-club","name":"美术社"},{"id":"brass-band-club","name":"管乐社"},{"id":"baseball-club","name":"棒球社"},{"id":"soccer-club","name":"足球社"},{"id":"tennis-club","name":"网球社"},{"id":"swimming-club","name":"游泳社"},{"id":"basketball-club","name":"篮球社"}],"commands":[{"id":"cmd-study-literature","name":"研读文科","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-0.75,"literature":0.9375,"science":0.0625,"art":0.0625,"sports":-0.375,"popularity":0.25,"appearance":-0.25,"grit":-0.0625,"stress":0.75,"clubExperience":0}},{"id":"cmd-study-science","name":"研读理科","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-0.75,"literature":0.0625,"science":0.9375,"art":0.0625,"sports":-0.75,"popularity":0.125,"appearance":-0.4375,"grit":0.25,"stress":0.25,"clubExperience":0}},{"id":"cmd-practice-art","name":"培养艺术气质","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-0.75,"literature":0.0625,"science":0.0625,"art":0.9375,"sports":-0.4375,"popularity":0.0625,"appearance":-0.125,"grit":-0.0625,"stress":-0.25,"clubExperience":0}},{"id":"cmd-exercise","name":"运动","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-2.375,"literature":-0.125,"science":-0.125,"art":-0.125,"sports":3.25,"popularity":0.0625,"appearance":-0.4375,"grit":1.375,"stress":0.0625,"clubExperience":0}},{"id":"cmd-chat","name":"和同学闲聊","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-1.1875,"literature":-0.25,"science":-0.25,"art":-0.25,"sports":0.1875,"popularity":1.5,"appearance":0.75,"grit":-0.375,"stress":-0.875,"clubExperience":0}},{"id":"cmd-groom","name":"整理仪容","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-0.625,"literature":-0.125,"science":-0.125,"art":-0.0625,"sports":-0.0625,"popularity":0.5,"appearance":2.0625,"grit":-0.625,"stress":-0.0625,"clubExperience":0}},{"id":"cmd-rest","name":"休息","kind":"daily","clubId":null,"successRate":1,"effects":{"stamina":3.0625,"literature":0,"science":0,"art":0,"sports":0,"popularity":-0.625,"appearance":-0.75,"grit":-0.0625,"stress":-2.9375,"clubExperience":0}},{"id":"cmd-club-literature","name":"文艺社","kind":"club","clubId":"literature-club","successRate":0.35,"effects":{"stamina":-0.75,"literature":0.75,"science":0.25,"art":0.125,"sports":0,"popularity":0.0625,"appearance":-0.25,"grit":-0.0625,"stress":1.125,"clubExperience":0}},{"id":"cmd-club-drama","name":"话剧社","kind":"club","clubId":"drama-club","successRate":0.35,"effects":{"stamina":-0.875,"literature":0.875,"science":0,"art":0.375,"sports":0.125,"popularity":0.0625,"appearance":-0.125,"grit":0.0625,"stress":1.0625,"clubExperience":0}},{"id":"cmd-club-science","name":"科学社","kind":"club","clubId":"science-club","successRate":0.35,"effects":{"stamina":-0.8125,"literature":0.0625,"science":0.9375,"art":0.25,"sports":0,"popularity":0.0625,"appearance":-0.25,"grit":0.25,"stress":1.375,"clubExperience":0}},{"id":"cmd-club-computer","name":"电脑社","kind":"club","clubId":"computer-club","successRate":0.35,"effects":{"stamina":-0.8125,"literature":0.0625,"science":0.875,"art":0.375,"sports":0,"popularity":0.25,"appearance":-0.375,"grit":0.25,"stress":1.625,"clubExperience":0}},{"id":"cmd-club-art","name":"美术社","kind":"club","clubId":"art-club","successRate":0.35,"effects":{"stamina":-0.875,"literature":0.125,"science":0,"art":0.9375,"sports":0.0625,"popularity":0.0625,"appearance":-0.0625,"grit":-0.125,"stress":0.9375,"clubExperience":0}},{"id":"cmd-club-brass-band","name":"管乐社","kind":"club","clubId":"brass-band-club","successRate":0.35,"effects":{"stamina":-0.875,"literature":0.0625,"science":0.0625,"art":0.875,"sports":0.1875,"popularity":0.125,"appearance":-0.1875,"grit":0.0625,"stress":0.875,"clubExperience":0}},{"id":"cmd-club-baseball","name":"棒球社","kind":"club","clubId":"baseball-club","successRate":0.35,"effects":{"stamina":-1.875,"literature":-0.0625,"science":-0.0625,"art":-0.0625,"sports":0.875,"popularity":0.0625,"appearance":-0.25,"grit":0.75,"stress":0.1875,"clubExperience":0}},{"id":"cmd-club-soccer","name":"足球社","kind":"club","clubId":"soccer-club","successRate":0.35,"effects":{"stamina":-1.875,"literature":-0.0625,"science":-0.0625,"art":-0.0625,"sports":0.9375,"popularity":0.125,"appearance":-0.1875,"grit":0.6875,"stress":0.25,"clubExperience":0}},{"id":"cmd-club-tennis","name":"网球社","kind":"club","clubId":"tennis-club","successRate":0.35,"effects":{"stamina":-1.5625,"literature":-0.0625,"science":-0.0625,"art":0,"sports":0.8125,"popularity":0.125,"appearance":-0.0625,"grit":0.5625,"stress":0.5,"clubExperience":0}},{"id":"cmd-club-swimming","name":"游泳社","kind":"club","clubId":"swimming-club","successRate":0.35,"effects":{"stamina":-1.9375,"literature":-0.0625,"science":-0.0625,"art":0,"sports":0.9375,"popularity":0,"appearance":-0.125,"grit":0.6875,"stress":0.1875,"clubExperience":0}},{"id":"cmd-club-basketball","name":"篮球社","kind":"club","clubId":"basketball-club","successRate":0.35,"effects":{"stamina":-1.8125,"literature":-0.0625,"science":-0.0625,"art":-0.0625,"sports":0.875,"popularity":0.0625,"appearance":-0.1875,"grit":0.625,"stress":0.4375,"clubExperience":0}}],"checkpoints":[{"id":"gc-stamina","date":null,"attribute":"stamina","op":">=","value":20,"source":"global"},{"id":"gc-popularity","date":null,"attribute":"popularity","op":">=","value":100,"source":"global"},{"id":"gc-appearance","date":null,"attribute":"appearance","op":">=","value":35,"source":"global"},{"id":"gc-stress","date":null,"attribute":"stress","op":"<","value":70,"source":"global"},{"id":"mg-literature-science-art","date":"1998-02-23","attributes":["literature","science","art"],"op":">=","value":561,"source":"mini"},{"id":"mg-clubExperience","date":"1998-01-02","attributes":["clubExperience"],"op":">=","value":380,"source":"mini"},{"id":"eg-stamina","date":"1998-03-01","attribute":"stamina","op":">=","value":50,"source":"ending"},{"id":"eg-literature","date":"1998-03-01","attribute":"literature","op":">=","value":130,"source":"ending"},{"id":"eg-science","date":"1998-03-01","attribute":"science","op":">=","value":130,"source":"ending"},{"id":"eg-art","date":"1998-03-01","attribute":"art","op":">=","value":130,"source":"ending"},{"id":"eg-sports","date":"1998-03-01","attribute":"sports","op":">=","value":130,"source":"ending"},{"id":"eg-popularity","date":"1998-03-01","attribute":"popularity","op":">=","value":120,"source":"ending"},{"id":"eg-appearance","date":"1998-03-01","attribute":"appearance","op":">=","value":100,"source":"ending"},{"id":"eg-grit","date":"1998-03-01","attribute":"grit","op":">=","value":100,"source":"ending"},{"id":"eg-stress","date":"1998-03-01","attribute":"stress","op":"<","value":50,"source":"ending"}],"defaultClub":"brass-band-club","calendar":{"note":"游戏固定日历：休息日（节假日/庆典）与社团集训周。由所有者逐日核对过，解析器只读。","restDays":["1995-04-29","1995-05-03","1995-05-04","1995-05-05","1995-09-15","1995-09-23","1995-10-10","1995-11-03","1995-11-23","1995-12-23","1996-01-15","1996-02-12","1996-03-20","1996-04-29","1996-05-03","1996-05-04","1996-05-06","1996-09-16","1996-09-23","1996-10-10","1996-11-04","1996-11-23","1996-12-23","1997-01-15","1997-02-11","1997-03-21","1997-04-29","1997-05-03","1997-05-05","1997-07-21","1997-09-15","1997-09-23","1997-10-10","1997-11-03","1997-11-24","1997-12-23","1998-01-15","1998-02-11"],"clubWeeks":[{"date":"1995-08-13","command":"club"},{"date":"1995-10-08","command":"club"},{"date":"1996-08-11","command":"club"},{"date":"1996-10-06","command":"club"},{"date":"1997-08-10","command":"club"},{"date":"1997-10-05","command":"club"}]}};
 
 self.__planCore = __planCoreNs;
 
@@ -6061,7 +6161,9 @@ function renderComputeRow() {
   } else if (dirty) {
     note.textContent = `${state.pending} 处改动待计算`;
   } else {
-    note.textContent = '已计算';
+    // 求解用的是"已玩到"那一刻的属性快照，真实游玩中随机事件会让实际属性与推算值逐渐分叉，
+    // 所以提醒每三个月回来校正一次（所有者 2026-10-09 要求把这句写在状态行里）。
+    note.textContent = '已计算｜每三个月通过“已玩到”和左侧的属性输入栏校正计算';
   }
   note.classList.toggle('error', Boolean(notice?.error));
 

@@ -192,6 +192,16 @@ function checkTimeline(rules, note) {
   if (!isDate(rules.clubUnlockDate)) {
     note(`clubUnlockDate 格式错误：${rules.clubUnlockDate}`);
   }
+  const first = rules.clubFirstCommand;
+  if (first !== undefined) {
+    const weekday = first?.weekday;
+    if (!Number.isInteger(weekday) || weekday < 0 || weekday > 6) {
+      note(`clubFirstCommand.weekday 必须是 0–6 的整数：${weekday}`);
+    }
+    if (typeof first?.note !== 'string' || first.note.trim() === '') {
+      note('clubFirstCommand.note 必须是非空字符串（说明这条规则）');
+    }
+  }
 }
 
 function checkConstants(rules, note) {

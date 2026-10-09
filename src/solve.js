@@ -92,6 +92,7 @@ export function createSolver(rules, options = {}) {
         gatesTotal: gated.length,
         hardViolations: goals ? goals.hardViolations : null,
         clubWeekViolations: goals ? goals.clubWeekViolations : null,
+        clubFirstViolations: goals ? goals.clubFirstViolations : null,
         unmet,
       },
     };

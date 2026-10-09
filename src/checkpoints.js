@@ -331,17 +331,21 @@ export function evaluateCheckpoints(rules, input, days) {
   // 两个顶层判定，对应「硬约束 / 目标」两分（GLOSSARY）：
   //   `ok`    目标是否全部达标——只看参与判定的项（终点目标 + 小目标）。
   //   `valid` 该日程是否合格——没有任何硬违反。本函数能判定的硬约束是**全局约束的硬阶段**
-  //           （压力上限由 `gc-stress` 这条全局规则表达）与**社团集训周**（violating days 由
-  //           `plan` 在解析出实际执行的指令后逐日标注 `clubWeekViolation`）；社团解锁/互斥
-  //           与钉住的槽位由日历与求解器在结构上保证，一份排好的日程里不会出现。
+  //           （压力上限由 `gc-stress` 这条全局规则表达）、**社团集训周**与**首次社团指令
+  //           必须是周日**（violating days 由 `plan` 在解析出实际执行的指令后逐日标注
+  //           `clubWeekViolation` / `clubFirstViolation`）；社团解锁/互斥与钉住的槽位由日历与
+  //           求解器在结构上保证，一份排好的日程里不会出现。
   const gated = items.filter((item) => item.gate !== false && item.state !== 'unset');
   const hardViolations = items.reduce((sum, item) => sum + (item.hardViolations ?? 0), 0);
   const clubWeekViolations = days.filter((day) => day.clubWeekViolation === true).length;
+  // 「第一次执行的社团指令必须是周日的日指令」（`rules.clubFirstCommand`，由 `plan` 逐日标注）。
+  const clubFirstViolations = days.filter((day) => day.clubFirstViolation === true).length;
   return {
     ok: gated.every((item) => item.state === 'met'),
-    valid: hardViolations === 0 && clubWeekViolations === 0,
+    valid: hardViolations === 0 && clubWeekViolations === 0 && clubFirstViolations === 0,
     hardViolations,
     clubWeekViolations,
+    clubFirstViolations,
     items,
     gated,
   };

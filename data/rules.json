@@ -5,6 +5,10 @@
     "lastSettlement": "1998-02-28"
   },
   "clubUnlockDate": "1995-04-09",
+  "clubFirstCommand": {
+    "weekday": 0,
+    "note": "第一次执行的社团指令必须是周日的日指令（社团活动从周日的日指令开始）"
+  },
   "restDayBonus": {
     "daily": 4,
     "club": 4,

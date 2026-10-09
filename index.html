@@ -2347,10 +2347,27 @@ const DEFAULT_PASSES = 5;
 const DEFAULT_ILS = 10;
 /** 扰动槽数上限（IL-搜索的"踢一脚"）。 */
 const DEFAULT_KICK = 8;
-/** A 阶段（冲目标）里全局硬违反的权重：低权重 = 先把目标补齐。 */
-const DEFAULT_GATES_WEIGHT = 1;
-/** 修硬约束阶段里全局硬违反的权重：高权重 = 在不丢目标的前提下压违反。 */
-const DEFAULT_VALIDITY_WEIGHT = 200;
+/**
+ * 评价的**分层顺序**（所有者 2026-10-08 的优先级：全局约束 → 小目标 → 结局目标）：
+ *
+ *   ① **始终没达成的全局约束条数**（0–4，二元）——"先满足它"
+ *   ② 已达成后被跌破的天数（全局硬违反）——"然后不得跌破"
+ *   ③ 未达标的小目标条数  ④ 小目标缺口
+ *   ⑤ 未达标的结局目标条数  ⑥ 结局缺口
+ *   ⑦ 尚未达成的天数（"尽早满足"，只作层内细化）  ⑧ 跌破幅度  ⑨ 夹逼吸收
+ *
+ * 层与层之间**不共享刻度**：上层任何改善都优先于下层的全部改善。下面那串权重只给搜索一个
+ * 梯度；**选优**一律回到 `betterThan` 的逐层比较。
+ *
+ * 旧版把顺序写成"未达标条数 → 缺口 → 全局违反 → 夹逼吸收"（目标在前、全局在后），
+ * 且 `else if (g.hard)` 让**从未达成的全局约束完全不进目标函数**。后果实测：
+ * 结局目标一放松，人缘就停在 91（全局要求 100）而启发式毫无察觉；35% 成功率下更是
+ * 给出 1161 天硬违反、4 条全局约束一条不剩的日程。
+ *
+ * ⚠ ① 必须是**二元条数**，不能写成"未达成天数 × 大权重"：那样"让人缘早一天达标"会盖过
+ * 全部结局目标，局部搜索于是靠不停聊天把达标日往前挪，把运动/毅力整条饿死
+ * （实测：运动 0/130、毅力 15.7/100，而人缘被刷到 196）。"尽早"只是 ⑦ 的细化。
+ */
 
 /** 阶段 2（先修硬约束）的轮数。 */
 const DEFAULT_REPAIR_FIRST = 10;
@@ -2510,13 +2527,14 @@ function buildProblem(rules, input) {
  * 一次全量评价：瘦重放（与 `apply` 同口径）+ 三类指标。
  * 返回的 `score` 只用于**搜索排序**；对外汇报的达标状态一律以 `plan()` 为准。
  */
-function evaluate(problem, x, validityWeight) {
+function evaluate(problem, x) {
   problem.evaluations += 1;
   const { settled, slotEff, daySlot, state, n, start, mins, maxs, ending, mini, miniIdx, lastIdx, index } = problem;
   state.set(start);
   let absorb = 0;
   let globalPenalty = 0;
-  let globalDays = 0;
+  let globalViolationDays = 0;
+  let globalUnmetDays = 0;
   const globals = problem.makeGlobals();
   let finalState = null;
   const miniState = new Map();
@@ -2538,40 +2556,95 @@ function evaluate(problem, x, validityWeight) {
       const met = g.op === '>=' ? v >= g.value : v < g.value;
       if (met) g.hard = true;
       else if (g.hard) {
+        // 已达成后又跌破：全局硬违反（分层①）
         globalPenalty += g.op === '>=' ? (g.value - v) / g.value : (v - g.value) / g.value;
-        globalDays += 1;
+        globalViolationDays += 1;
+      } else {
+        // **还没达成**：每一天记一天（分层②）。
+        // 旧版这里什么都不记——"从未达成的全局约束"因此在目标函数里毫无分量，
+        // 这就是放松结局目标后全局约束被丢掉的原因。
+        globalUnmetDays += 1;
       }
     }
     for (const [cpId, i0] of miniIdx) if (i0 === i) miniState.set(cpId, Float64Array.from(state));
     if (i === lastIdx) finalState = Float64Array.from(state);
   }
 
+  // ① 始终没达成的全局约束条数：`hard` 一旦置真就不再回落，所以循环结束后它仍为假 = 从没达成过。
+  let globalUnmetCount = 0;
+  for (const g of globals) if (!g.hard) globalUnmetCount += 1;
+
   const items = [];
   for (const cp of ending) {
     const id = cp.attribute ?? cp.attributes[0];
     const v = (finalState ?? state)[index[id]];
-    items.push({ id: cp.id, actual: v, op: cp.op, value: cp.value, ok: cp.op === '>=' ? v >= cp.value : v < cp.value });
+    items.push({
+      id: cp.id,
+      kind: 'ending',
+      actual: v,
+      op: cp.op,
+      value: cp.value,
+      ok: cp.op === '>=' ? v >= cp.value : v < cp.value,
+    });
   }
   for (const cp of mini) {
     const snap = miniState.get(cp.id);
     const names = cp.attributes ?? [cp.attribute];
     const v = names.reduce((sum, id) => sum + (snap ? snap[index[id]] : 0), 0);
-    items.push({ id: cp.id, actual: v, op: cp.op, value: cp.value, ok: cp.op === '>=' ? v >= cp.value : v < cp.value });
+    items.push({
+      id: cp.id,
+      kind: 'mini',
+      actual: v,
+      op: cp.op,
+      value: cp.value,
+      ok: cp.op === '>=' ? v >= cp.value : v < cp.value,
+    });
   }
-  let shortfall = 0;
-  let unmet = 0;
+  // 小目标与结局目标**分开计层**（所有者优先级：小目标先于结局目标）。
+  let unmetMini = 0;
+  let unmetEnding = 0;
+  let miniShortfall = 0;
+  let endingShortfall = 0;
   for (const item of items) {
     if (item.ok) continue;
-    unmet += 1;
     const need = item.op === '>=' ? item.value - item.actual : item.actual - item.value + 1e-9;
-    shortfall += Math.max(0, need) / Math.max(1, Math.abs(item.value));
+    const gap = Math.max(0, need) / Math.max(1, Math.abs(item.value));
+    if (item.kind === 'mini') {
+      unmetMini += 1;
+      miniShortfall += gap;
+    } else {
+      unmetEnding += 1;
+      endingShortfall += gap;
+    }
   }
-  // **字典序**（所有者口径：不要为了凑 valid 去牺牲 ok）：
-  //   ① 未达标的目标条数最少 ② 缺口合计最小 ③ 全局硬违反最少 ④ 夹逼吸收最少（不推荐套利）
-  // 用大权重把四层压成一个标量，但层与层之间**不共享刻度**——这是刻意的：
-  // 少一条未达标优先于任何其他层的改善。
-  const score = unmet * 1e6 + shortfall * 1e3 + globalPenalty * validityWeight + 1e-6 * absorb;
-  return { score, unmet, shortfall, globalPenalty, globalDays, absorb, items };
+  // 分层权重：每层取值的上限都小于上一层的一个单位，所以低层改善永远盖不过上层改善。
+  const score =
+    globalUnmetCount * 1e9 +
+    globalViolationDays * 1e5 +
+    unmetMini * 1e4 +
+    miniShortfall * 1e3 +
+    unmetEnding * 1e2 +
+    endingShortfall * 1e1 +
+    globalUnmetDays * 1e-3 +
+    globalPenalty * 1e-5 +
+    absorb * 1e-9;
+  return {
+    score,
+    globalUnmetCount,
+    globalViolationDays,
+    globalUnmetDays,
+    unmetMini,
+    unmetEnding,
+    miniShortfall,
+    endingShortfall,
+    // 合成值只为日志好读；**比较一律走 betterThan**，不看合成值。
+    unmet: unmetMini + unmetEnding,
+    shortfall: miniShortfall + endingShortfall,
+    globalPenalty,
+    globalDays: globalViolationDays,
+    absorb,
+    items,
+  };
 }
 
 // ---------------------------------------------------------------- 搜索
@@ -2589,14 +2662,20 @@ function toAssignments(problem, x) {
 }
 
 /**
- * **规范序**（与搜索的加权代价无关）：未达标条数 → 缺口合计 → 全局硬违反 → 夹逼吸收。
+ * **规范序**（与搜索用的加权标量无关，逐层比较、不经标量）：
+ *   全局硬违反天数 → 全局未达成天数 → 小目标未达标数 → 小目标缺口 →
+ *   结局未达标数 → 结局缺口 → 全局跌破幅度 → 夹逼吸收。
  *
- * 搜索用加权标量只是为了有梯度；**选优**必须回到这个规范序，否则换一个权重就可能选出
- * 更差的解。两个阶段（先冲目标、再修硬约束）的产物也用这个序比较。
+ * 这就是所有者定的"全局约束 → 小目标 → 结局目标"，一层都不能少。
  */
 function betterThan(a, b) {
-  if (a.unmet !== b.unmet) return a.unmet < b.unmet;
-  if (Math.abs(a.shortfall - b.shortfall) > 1e-9) return a.shortfall < b.shortfall;
+  if (a.globalUnmetCount !== b.globalUnmetCount) return a.globalUnmetCount < b.globalUnmetCount;
+  if (a.globalViolationDays !== b.globalViolationDays) return a.globalViolationDays < b.globalViolationDays;
+  if (a.unmetMini !== b.unmetMini) return a.unmetMini < b.unmetMini;
+  if (Math.abs(a.miniShortfall - b.miniShortfall) > 1e-9) return a.miniShortfall < b.miniShortfall;
+  if (a.unmetEnding !== b.unmetEnding) return a.unmetEnding < b.unmetEnding;
+  if (Math.abs(a.endingShortfall - b.endingShortfall) > 1e-9) return a.endingShortfall < b.endingShortfall;
+  if (a.globalUnmetDays !== b.globalUnmetDays) return a.globalUnmetDays < b.globalUnmetDays;
   if (Math.abs(a.globalPenalty - b.globalPenalty) > 1e-9) return a.globalPenalty < b.globalPenalty;
   return a.absorb < b.absorb;
 }
@@ -2653,10 +2732,6 @@ function runDescent(rules, input, options = {}) {
   const ils = options.ils ?? profile.ils;
   const kick = options.kick ?? DEFAULT_KICK;
   const seed = options.seed ?? 20261006;
-  // 各阶段里"全局硬违反"的权重：冲目标阶段低（权重 1，先把目标补齐），
-  // 修硬约束阶段高（在不丢目标的前提下压违反）。阶段顺序见 `runDescent` 上方的说明。
-  const gatesWeight = options.gatesWeight ?? DEFAULT_GATES_WEIGHT;
-  const repairWeight = options.repairWeight ?? DEFAULT_VALIDITY_WEIGHT;
   const repairFirst = options.repairFirst ?? profile.repairFirst;
   const repairLast = options.repairLast ?? profile.repairLast;
   const startedAt = Date.now();
@@ -2668,7 +2743,7 @@ function runDescent(rules, input, options = {}) {
   const x = warm.x;
 
   const order = [...problem.slots.keys()];
-  let current = evaluate(problem, x, gatesWeight);
+  let current = evaluate(problem, x);
   let best = current;
   const bestX = Int32Array.from(x);
   let cancelled = false;
@@ -2687,7 +2762,7 @@ function runDescent(rules, input, options = {}) {
    *
    * 取消/超时**不改变**已完成的轮数语义：它是安全阀，触发时把 `cancelled` 置真并立刻返回。
    */
-  function descend(weight) {
+  function descend() {
     for (let pass = 0; pass < passes; pass += 1) {
       let improved = false;
       for (let i = order.length - 1; i > 0; i -= 1) {
@@ -2701,7 +2776,7 @@ function runDescent(rules, input, options = {}) {
         for (let ci = 0; ci < problem.slots[s].cands.length; ci += 1) {
           if (ci === original) continue;
           x[s] = ci;
-          const result = evaluate(problem, x, weight);
+          const result = evaluate(problem, x);
           if (result.score < bestScore - 1e-12) {
             bestScore = result.score;
             bestCand = ci;
@@ -2721,13 +2796,17 @@ function runDescent(rules, input, options = {}) {
     return false;
   }
 
+  /** 调试日志用的一行摘要（分层顺序）。 */
+  const describe = (r) =>
+    `(全局未达成${r.globalUnmetCount}条/违反${r.globalViolationDays}天, 小${r.unmetMini}/${r.miniShortfall.toFixed(3)}, 结局${r.unmetEnding}/${r.endingShortfall.toFixed(3)}, 达标日${r.globalUnmetDays}, 吸收${r.absorb.toFixed(1)})`;
+
   const snapshot = () => {
     bestX.set(x);
     best = current;
   };
 
   /** 迭代局部搜索：扰动 k 个槽再下降，只接受**规范序**更优者。 */
-  function iterate(count, weight) {
+  function iterate(count) {
     let done = 0;
     for (let it = 0; it < count; it += 1) {
       const y = Int32Array.from(bestX);
@@ -2737,13 +2816,13 @@ function runDescent(rules, input, options = {}) {
         y[s] = Math.floor(rng() * problem.slots[s].cands.length);
       }
       x.set(y);
-      current = evaluate(problem, x, weight);
-      descend(weight);
+      current = evaluate(problem, x);
+      descend();
       done += 1;
       if (betterThan(current, best)) {
         if (typeof process !== 'undefined' && process.env?.DESCENT_DEBUG) {
           // eslint-disable-next-line no-console
-          console.log(`[iter ${it}] 改善：best(${best.unmet},${best.shortfall.toFixed(4)},${best.globalDays},${best.absorb.toFixed(1)}) → (${current.unmet},${current.shortfall.toFixed(4)},${current.globalDays},${current.absorb.toFixed(1)})`);
+          console.log(`[iter ${it}] 改善：${describe(best)} → ${describe(current)}`);
         }
         snapshot();
       }
@@ -2790,7 +2869,11 @@ function runDescent(rules, input, options = {}) {
         // 搜索层自评（只用于排序，**不作为对外结论**）
         searchUnmet: best.unmet,
         searchShortfall: best.shortfall,
-        searchHardViolationDays: best.globalDays,
+        searchHardViolationDays: best.globalViolationDays,
+        searchGlobalUnmetCount: best.globalUnmetCount,
+        searchGlobalUnmetDays: best.globalUnmetDays,
+        searchUnmetMini: best.unmetMini,
+        searchUnmetEnding: best.unmetEnding,
         absorption: best.absorb,
         slots: problem.slots.length,
         warmStart: options.warmStart === false ? 'rest' : 'quota',
@@ -2807,56 +2890,49 @@ function runDescent(rules, input, options = {}) {
 
   // ---- 四个**确定性阶段**，一路往下走，每个阶段结束都按规范序取一次优 ----
   //
-  // 为什么不是"跑一种参数"：这两个验收点要的工作量互相矛盾——
-  //   · 低成功率（35%）要把目标条数冲上去，必须多跑"冲目标"的 ILS；
-  //   · 高成功率（70%+）一旦 ILS 跑多，会被带进"11/11 但几百天硬违反"的角落，
-  //     而**初始下降 + 修硬约束**反而能直接拿到 11/11 且零违反。
-  // 所以按"先修硬约束 → 再冲目标 → 再修一次"的顺序走一遍，每个阶段结束都记录当前最好，
-  // 最后按**规范序**（与搜索权重无关）取优。阶段之间不重复劳动，整体仍然确定性。
-  descend(gatesWeight);
+  // 旧版让四个阶段轮流换"全局违反"的权重（先冲目标、再修硬约束），因为那时口径是
+  // "目标在前、全局在后"。现在评价本身就是所有者定的分层序（全局 → 小目标 → 结局），
+  // 换权重已经没有意义——所以四个阶段只是**同一口径下分段的搜索量**：
+  // 初始下降、再下降+ILS、继续 ILS、收尾。每个阶段结束都按规范序取一次优，整体仍然确定性。
+  descend();
   snapshot();
   if (typeof process !== 'undefined' && process.env?.DESCENT_DEBUG) {
     // eslint-disable-next-line no-console
-    console.log(`[阶段1 初始下降] passes=${passes} → (${best.unmet},${best.shortfall.toFixed(4)},${best.globalDays},${best.absorb.toFixed(1)})`);
+    console.log(`[阶段1 初始下降] passes=${passes} → ${describe(best)}`);
   }
 
   /** 从当前最好解出发，用给定权重跑一轮下降 + ILS，返回是否被取消。 */
-  function stage(label, weight, count, isRepair = false) {
+  function stage(label, count, isRepair = false) {
     if (cancelled || count <= 0) return;
     x.set(bestX);
-    current = evaluate(problem, x, weight);
-    descend(weight);
+    current = evaluate(problem, x);
+    descend();
     if (betterThan(current, best)) snapshot();
-    const done = iterate(count, weight);
+    const done = iterate(count);
     iterations += done;
     if (isRepair) repairIterations += done;
     if (typeof process !== 'undefined' && process.env?.DESCENT_DEBUG) {
       // eslint-disable-next-line no-console
-      console.log(`[${label}] → (${best.unmet},${best.shortfall.toFixed(4)},${best.globalDays},${best.absorb.toFixed(1)})`);
+      console.log(`[${label}] → ${describe(best)}`);
     }
   }
 
-  // 阶段 2：先修硬约束（高成功率下这一步就能给出"全达标 + 零违反"）
-  stage('阶段2 修硬约束', repairWeight, repairFirst, true);
-  const afterRepair = best;
-  const afterRepairX = Int32Array.from(bestX);
-  // 阶段 3：冲目标（低成功率下靠它把未达标条数压下去）
-  stage('阶段3 冲目标', gatesWeight, ils);
-  // 阶段 4：再修一次硬约束（只在没有丢掉目标的前提下）
-  stage('阶段4 再修', repairWeight, repairLast, true);
-  void afterRepair;
-  void afterRepairX;
+  // 阶段 2：再下降 + 一轮 ILS
+  stage('阶段2 再下降', repairFirst, true);
+  // 阶段 3：继续 ILS（扰动 + 下降，主要的多样子来源）
+  stage('阶段3 ILS', ils);
+  // 阶段 4：收尾
+  stage('阶段4 收尾', repairLast, true);
 
   if (typeof process !== 'undefined' && process.env?.DESCENT_DEBUG) {
-    const check = evaluate(problem, bestX, gatesWeight);
+    const check = evaluate(problem, bestX);
     // eslint-disable-next-line no-console
-    console.log('[descent-debug] best', { unmet: best.unmet, shortfall: best.shortfall, days: best.globalDays, absorb: best.absorb },
-      'bestX', { unmet: check.unmet, shortfall: check.shortfall, days: check.globalDays, absorb: check.absorb });
+    console.log('[descent-debug] best', describe(best), 'bestX', describe(check));
   }
 
   return finish();
 }
-return { DEFAULT_PASSES, DEFAULT_ILS, DEFAULT_KICK, DEFAULT_GATES_WEIGHT, DEFAULT_VALIDITY_WEIGHT, DEFAULT_REPAIR_FIRST, DEFAULT_REPAIR_LAST, DEFAULT_BUDGET_MS, MIN_VIABLE_BUDGET_MS, workProfileFor, runDescent };
+return { DEFAULT_PASSES, DEFAULT_ILS, DEFAULT_KICK, DEFAULT_REPAIR_FIRST, DEFAULT_REPAIR_LAST, DEFAULT_BUDGET_MS, MIN_VIABLE_BUDGET_MS, workProfileFor, runDescent };
 })();
 __planCoreNs["src/frontier.js"] = (() => {
 const { addDays } = __planCoreNs["src/dates.js"];

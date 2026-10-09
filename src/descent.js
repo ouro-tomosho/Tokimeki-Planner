@@ -1,31 +1,32 @@
-// 构造式启发式排布搜索：直接对**真实结算内核**（`settlement.js` 的 `apply`）做逐槽最速下降。
+// **产品求解器**：构造式启发式排布搜索，直接对**真实结算内核**（`settlement.js` 的 `apply`）
+// 做逐槽最速下降。所有者 2026-10-09 裁决：精确求解（HiGHS MILP）整个移除，求解回到本模块
+// （见 ADR-0009）。
 //
-// **它现在的角色是"候选生成器"，不是产品求解器**（所有者 2026-10-08 裁决，见 ADR-0009）。
-// 产品求解器是 HiGHS 精确求解（`src/solve.js` + `src/milp.js`）。为什么还要留着它：
-// 精确求解按 8 周块**严格滚动**，丢掉了跨期的容量分配——实测默认输入下它 10/11，
-// 而本模块在**整条时间轴上一次性**分配，15 s 就能拿到 11/11（含毅力 100），
-// 且同样过当前 `plan()` 判定（ok/valid、硬违反 0）。于是两者**并列产出候选**，
-// 由 `plan()` 这个唯一判定器挑更好的那一份。这是"排布器对体面负责、判定器对真实语义负责"
-// 的分层（ADR-0007），不是退回旧方案。
+// 为什么是它：
+//   · 它按**整条时间轴一次性**分配决策，而精确求解按 8 周块严格滚动——后者丢掉了跨期的容量
+//     分配（默认输入 8/9 结局 vs 本模块 9/9；35% 成功率 4/9 vs 7/9；放松结局目标时守全局约束
+//     也不占优）。它从来没有赢过。
+//   · 代价差两个数量级：内联的 WASM 占产物 94%（5.18 MB 里的 4.88 MB），现在产物 250 KB。
 //
-// 为什么当年不直接用它当结论：它靠**启发式排序**找解，没有最优性保证；把每日夹逼写成 MILP
-// 之后 LP 松弛里「凭空抬高」
-// （L>0 而 v>0）与真实吸收**同价**，整数最优解会大量靠假抬高去满足目标——开发期实测
-// 35% 全约束跑 600s，抽出的解有 1103 条终值与真实重放不一致。所以：
+// 它**没有最优性保证**——靠启发式排序 + 分层评价找解。所以纪律是分层的（ADR-0007）：
+//   · 本模块负责**找解**，每一次评价都是同一份 `expectedEffects` 口径下的逐日推进；
+//   · 对外结论一律由 `plan()`（真实引擎复核）给出，本模块的自评只用于搜索排序。
 //
-//   · 本模块负责**找解**：每一次评价都是真实引擎的一次逐日推进，不存在"声明值与重放值
-//     两套数"的问题；
-//   · 求解结果最终还要由 `plan()` + 逐日重放复核（见 `solve.js` 的指标口径）。
+// 评价口径就是所有者定的优先级（全局约束 → 小目标 → 结局目标），逐层比较、不共享刻度，
+// 详见 `betterThan` 上方的说明；曾把顺序写反（目标在前、全局在后）导致放松结局目标时丢掉
+// 全局约束、35% 成功率下给出 1161 天硬违反——那条弯路记在 ADR-0009 里。
 //
-// 结构（本文件头已自述）：
+// 结构：
 //   决策槽 = 每个"有结算平日的自然周"一个周指令 + 每个结算休息日一个日指令（含跳过）
-//   评价   = 一次瘦重放（与 apply 同口径），算 ① gate 归一化缺口 ② 全局硬违反 ③ 夹逼吸收
+//   评价   = 一次瘦重放（与 apply 同口径），按分层序算：全局未达成条数/违反天数 → 小目标
+//            → 结局目标 → 夹逼吸收
 //   搜索   = 逐槽最速下降（枚举该槽全部候选）+ 迭代局部搜索（扰动 k 槽再下降）
 //
 // **确定性**：PRNG 固定种子、槽遍历顺序固定、候选顺序固定、轮数与预算都只做"是否继续"
 // 的判断。同一输入连续求解两次结果逐位相同。
 //
-// **协作式取消**：每完成一个槽位就查一次 `shouldStop()`；为真则立刻返回当前最优。
+// **协作式取消**：每次全槽下降之后、每轮 ILS 之前让出一次宏任务并查 `shouldStop()`；
+// 不让出的话 Worker 收不到取消消息（搜索整体是同步的），取消按钮等于失效。
 
 import { buildCalendar } from './calendar.js';
 import { clubWeekMandate } from './checkpoints.js';
@@ -38,7 +39,7 @@ import { allocateQuota } from './quota.js';
  *   · 每个阶段先做 5 轮全槽下降，把配额暖启动推到局部最优；
  *   · 再按 `DEFAULT_ILS` / `DEFAULT_REPAIR_FIRST` / `DEFAULT_REPAIR_LAST` 跑扰动式改进。
  *
- * 这组数在本机标定为 14–21 s（Worker 预算 30 s），给更慢的浏览器留了余量。它是**主判据**：
+ * 这组数在本机标定为 14–21 s（Worker 预算 60 s），给更慢的浏览器留了余量。它是**主判据**：
  * 跑完它就停，与机器快慢无关；墙钟只作安全阀（见 `MIN_VIABLE_BUDGET_MS` 与 metrics
  * 的 `stopped` / `reproducible`）。
  */
@@ -423,7 +424,19 @@ function quotaVector(problem) {
   }
 }
 
-export function runDescent(rules, input, options = {}) {
+/**
+ * 让出一次**宏任务**。搜索整体是同步的（约 15–20 s），而 Worker 的取消消息是宏任务——
+ * 不让出的话，`shouldStop()` 在整个搜索期间永远不会变成真，取消按钮等于失效
+ * （实测：不让出时取消要等整段搜索跑完）。让出的位置在"每轮全槽下降之后"与"每次 ILS 之前"，
+ * 所以取消延迟是一轮下降的量级（亚秒），而搜索结果与让出无关——工作量档位仍然是确定的。
+ */
+function yieldToHost() {
+  return new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
+
+export async function runDescent(rules, input, options = {}) {
   const shouldStop = options.shouldStop ?? (() => false);
   const budgetMs = options.budgetMs ?? DEFAULT_BUDGET_MS;
   // 工作量：显式给定优先；否则由**请求的预算**决定一档固定值（见 workProfileFor）。
@@ -462,7 +475,7 @@ export function runDescent(rules, input, options = {}) {
    *
    * 取消/超时**不改变**已完成的轮数语义：它是安全阀，触发时把 `cancelled` 置真并立刻返回。
    */
-  function descend() {
+  async function descend() {
     for (let pass = 0; pass < passes; pass += 1) {
       let improved = false;
       for (let i = order.length - 1; i > 0; i -= 1) {
@@ -491,6 +504,7 @@ export function runDescent(rules, input, options = {}) {
           return improved;
         }
       }
+      await yieldToHost();
       if (!improved) break;
     }
     return false;
@@ -506,9 +520,10 @@ export function runDescent(rules, input, options = {}) {
   };
 
   /** 迭代局部搜索：扰动 k 个槽再下降，只接受**规范序**更优者。 */
-  function iterate(count) {
+  async function iterate(count) {
     let done = 0;
     for (let it = 0; it < count; it += 1) {
+      await yieldToHost();
       const y = Int32Array.from(bestX);
       const k = 1 + Math.floor(rng() * kick);
       for (let t = 0; t < k; t += 1) {
@@ -517,7 +532,7 @@ export function runDescent(rules, input, options = {}) {
       }
       x.set(y);
       current = evaluate(problem, x);
-      descend();
+      await descend();
       done += 1;
       if (betterThan(current, best)) {
         if (typeof process !== 'undefined' && process.env?.DESCENT_DEBUG) {
@@ -594,7 +609,7 @@ export function runDescent(rules, input, options = {}) {
   // "目标在前、全局在后"。现在评价本身就是所有者定的分层序（全局 → 小目标 → 结局），
   // 换权重已经没有意义——所以四个阶段只是**同一口径下分段的搜索量**：
   // 初始下降、再下降+ILS、继续 ILS、收尾。每个阶段结束都按规范序取一次优，整体仍然确定性。
-  descend();
+  await descend();
   snapshot();
   if (typeof process !== 'undefined' && process.env?.DESCENT_DEBUG) {
     // eslint-disable-next-line no-console
@@ -602,13 +617,13 @@ export function runDescent(rules, input, options = {}) {
   }
 
   /** 从当前最好解出发，用给定权重跑一轮下降 + ILS，返回是否被取消。 */
-  function stage(label, count, isRepair = false) {
+  async function stage(label, count, isRepair = false) {
     if (cancelled || count <= 0) return;
     x.set(bestX);
     current = evaluate(problem, x);
-    descend();
+    await descend();
     if (betterThan(current, best)) snapshot();
-    const done = iterate(count);
+    const done = await iterate(count);
     iterations += done;
     if (isRepair) repairIterations += done;
     if (typeof process !== 'undefined' && process.env?.DESCENT_DEBUG) {
@@ -618,11 +633,11 @@ export function runDescent(rules, input, options = {}) {
   }
 
   // 阶段 2：再下降 + 一轮 ILS
-  stage('阶段2 再下降', repairFirst, true);
+  await stage('阶段2 再下降', repairFirst, true);
   // 阶段 3：继续 ILS（扰动 + 下降，主要的多样子来源）
-  stage('阶段3 ILS', ils);
+  await stage('阶段3 ILS', ils);
   // 阶段 4：收尾
-  stage('阶段4 收尾', repairLast, true);
+  await stage('阶段4 收尾', repairLast, true);
 
   if (typeof process !== 'undefined' && process.env?.DESCENT_DEBUG) {
     const check = evaluate(problem, bestX);

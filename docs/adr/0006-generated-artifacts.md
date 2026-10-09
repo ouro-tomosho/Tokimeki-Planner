@@ -13,7 +13,7 @@ web/template.html   ── 只放 HTML 骨架、内联 CSS 与占位符，不放
         │                    （生成物，不进版本库）
         │
         └─► index.html       最终产物：模板 + plan-core.js 内联 + 全部数据内联
-                             + 内联 HiGHS（WASM base64，见 ADR-0008）
+                             （单文件、零外链、零网络请求）
 ```
 
 `web/template.html`、`plan-core.js`、根 `index.html` 中，**后两者是生成物，禁止手改**。`src/` 保持多模块形态，作为唯一的开发源。

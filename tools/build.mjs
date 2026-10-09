@@ -21,7 +21,6 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { listModules, collect, emit, bundleShared } from './bundle.mjs';
-import { buildInlineHighs, EXACT_MARKER } from './inline-highs.mjs';
 import { checkRulesDoc } from './rules-doc.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -30,11 +29,10 @@ const RULES_FILE = path.join(ROOT, 'data', 'rules.json');
 const TEMPLATE_FILE = path.join(ROOT, 'web', 'template.html');
 const WORKER_FILE = path.join(ROOT, 'web', 'worker.js');
 const APP_FILE = path.join(ROOT, 'web', 'app.js');
-const HIGHS_DIR = path.join(ROOT, 'node_modules', 'highs', 'build');
 
 // 产物落在仓库根目录：index.html 是 GitHub Pages 的站点入口，必须用这个文件名。
 export const OUTPUT_URL = new URL('../index.html', import.meta.url);
-/** 精确版产物（内联 HiGHS，约 5 MB）。默认版不受影响，见 ADR-0008。 */
+/** 核心段单独落盘（供 Node 直接 import 与 `npm run verify` 逐字节比对）。 */
 export const PLAN_CORE_URL = new URL('../plan-core.js', import.meta.url);
 
 const CORE_GLOBAL = '__planCore'; // 全局共享命名空间（主线程与 Worker 都看得到）
@@ -56,8 +54,6 @@ const PLACEHOLDERS = {
   worker: '/*__WORKER__*/',
   bootstrap: '/*__BOOTSTRAP__*/',
   app: '/*__APP__*/',
-  // 唯一产物：内联 HiGHS（ADR-0008 已改判为单产物，见 buildHtml）。
-  exactHighs: '/*__EXACT_HIGHS__*/',
 };
 
 // 引导脚本：见文件顶部说明。它由构建生成，模板里只留占位符（模板不放逻辑）。
@@ -65,17 +61,12 @@ const BOOTSTRAP_SOURCE = `// 构建管道引导：核心逻辑（#plan-core）�
 // 主线程已由上一个 <script> 执行它；这里把同一份文本前置给 Worker 源，
 // 使 Worker 与界面共用同一份核心，然后把 #plan-core 移出 DOM。
 //
-// 求解跑在 Worker 里，所以**精确版的内联 HiGHS 也要一并前置**——否则 Worker 里
-// 没有 createHighs()。默认版的那个脚本是空注释，拼过去也无害。
 (function () {
   var core = document.getElementById('plan-core');
   var worker = document.getElementById('worker-source');
   if (!core || !worker) return;
-  var inline = document.getElementById('inline-highs');
-  var inlineText = inline ? inline.textContent : '';
-  worker.textContent = core.textContent + '\\n' + inlineText + '\\n' + worker.textContent;
+  worker.textContent = core.textContent + '\\n' + worker.textContent;
   core.remove();
-  if (inline) inline.remove();
 })();`;
 
 // 已删除模块的特征字符串（ADR-0006：产物里不得出现已删除模块的引用，
@@ -321,35 +312,34 @@ function scriptBlocks(html) {
 }
 
 /**
- * 5 个脚本块的形态与顺序：plan-core → inline-highs → worker-source → 引导 → 应用。
+ * 4 个脚本块的形态与顺序：plan-core → worker-source → 引导 → 应用。
  * 顺序错了界面会静默失灵（Worker 拿不到核心），所以在这里挡掉而不是等浏览器报错。
  */
 function assertScriptBlockShape(html) {
   const blocks = scriptBlocks(html);
-  if (blocks.length !== 5) throw new Error(`index.html 应有 5 个脚本块，实际 ${blocks.length} 个`);
+  if (blocks.length !== 4) throw new Error(`index.html 应有 4 个脚本块，实际 ${blocks.length} 个`);
   const expected = [
     { index: 0, res: [/id="plan-core"/], label: '#plan-core' },
-    { index: 1, res: [/id="inline-highs"/], label: '#inline-highs' },
-    { index: 2, res: [/id="worker-source"/, /type="text\/plain"/], label: '#worker-source 且 type="text/plain"' },
+    { index: 1, res: [/id="worker-source"/, /type="text\/plain"/], label: '#worker-source 且 type="text/plain"' },
   ];
   for (const { index, res, label } of expected) {
     for (const re of res) {
       if (!re.test(blocks[index].attrs)) throw new Error(`第 ${index + 1} 块应为 ${label}，实际属性：${blocks[index].attrs}`);
     }
   }
-  for (const index of [3, 4]) {
+  for (const index of [2, 3]) {
     if (blocks[index].attrs.trim() !== '') {
-      throw new Error(`第 ${index + 1} 块（${index === 3 ? '引导' : '应用'}）不应带属性：${blocks[index].attrs}`);
+      throw new Error(`第 ${index + 1} 块（${index === 2 ? '引导' : '应用'}）不应带属性：${blocks[index].attrs}`);
     }
   }
   if (!/self\.__planCore\s*=/.test(blocks[0].source)) {
     throw new Error('核心块没有把命名空间挂到全局 __planCore');
   }
-  if (!/getElementById\('plan-core'\)/.test(blocks[3].source)) {
+  if (!/getElementById\('plan-core'\)/.test(blocks[2].source)) {
     throw new Error('引导脚本没有取 #plan-core');
   }
-  if (/\bself\.onmessage\s*=/.test(blocks[4].source)) {
-    throw new Error('第 5 块（应用）不应注册 Worker 的 onmessage——它取成了 worker 源');
+  if (/\bself\.onmessage\s*=/.test(blocks[3].source)) {
+    throw new Error('第 4 块（应用）不应注册 Worker 的 onmessage——它取成了 worker 源');
   }
 }
 
@@ -424,14 +414,10 @@ export function buildHtml({ coreSource = null } = {}) {
   assertPlaceholders(template);
   assertTemplateCoversAppIds(template, appSource);
 
-  // 唯一产物：`index.html` 内联 HiGHS（所有者 2026-10-06 改判，舍弃纯 JS 版本与双产物）。
-  const exactSource = buildInlineHighs(HIGHS_DIR);
-
   const html = template
     .replace(PLACEHOLDERS.core, () => core)
     .replace(PLACEHOLDERS.worker, () => workerSource)
     .replace(PLACEHOLDERS.bootstrap, () => BOOTSTRAP_SOURCE)
-    .replace(PLACEHOLDERS.exactHighs, () => exactSource)
     .replace(PLACEHOLDERS.app, () => appSource);
 
   // 生成声明先拼上，后面所有形态断言都对着**最终文本**——否则"第 1 行是声明"这类断言

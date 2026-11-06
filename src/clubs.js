@@ -4,34 +4,50 @@
 // 工具从不自行选择或切换社团。
 
 import { SKIP_DAY } from './commands.js';
+import { addDays, weekdayOf } from './dates.js';
 
 /**
- * 起点那一刻各社团的经验值，按 `scale` 转成定点整数。
- * 每个社团各自一份，由输入直接给出（`clubExperience` 是 `{ clubId: 值 }`），缺席的按 0 起算。
+ * 某一天所在社团的查询；附带待切换信息。
  *
- * 规划与求解都以它为初始状态，所以只此一处口径。
+ * - `input.club` 是当前实际社团。
+ * - `input.pendingClub` 是待切换目标：**键缺失 = 不切换**，`null` = 切到回家社。
+ * - `rules` 与 `isFreeSunday` 用来算切换/加入日：最近的、没有被活动占用的周日。
+ *
+ * 返回的 `clubAt(date)` 还带 `.oldClub` / `.target` / `.switchDate` / `.joinDate`。
  */
-export function seededClubExperience(rules, input, scale) {
-  const seeded = input.clubExperience ?? {};
-  return Object.fromEntries(
-    rules.clubs.map((club) => [club.id, (seeded[club.id] ?? 0) * scale]),
-  );
-}
+export function createClubLookupBase(input, rules = null, isFreeSunday = null) {
+  const oldClub = input.club ?? null;
+  const hasPending = Object.prototype.hasOwnProperty.call(input, 'pendingClub')
+    && input.pendingClub !== undefined;
+  const target = hasPending ? (input.pendingClub ?? null) : null;
+  const free = typeof isFreeSunday === 'function' ? isFreeSunday : () => true;
 
-/** @returns {(date: string) => string | null} */
-export function createClubLookup(input) {
-  const changes = [...input.clubChanges].sort((a, b) =>
-    a.date < b.date ? -1 : a.date > b.date ? 1 : 0,
-  );
-
-  return function clubAt(date) {
-    let club = input.initialClub;
-    for (const change of changes) {
-      if (change.date > date) break;
-      club = change.clubId;
+  const firstFreeSunday = () => {
+    if (!rules) return null;
+    let date = addDays(input.playedUpTo, 1);
+    date = addDays(date, (7 - weekdayOf(date)) % 7);
+    for (let i = 0; i < 80 && date <= rules.timeline.lastSettlement; i += 1) {
+      if (free(date, oldClub)) return date;
+      date = addDays(date, 7);
     }
-    return club;
+    return null;
   };
+
+  const switchDate = rules && hasPending && target !== oldClub ? firstFreeSunday() : null;
+  const joinDate = rules && oldClub !== null && input.playedUpTo < rules.clubUnlockDate
+    ? firstFreeSunday()
+    : null;
+
+  function clubAt(date) {
+    if (switchDate === null) return oldClub;
+    return date < switchDate ? oldClub : target;
+  }
+  clubAt.oldClub = oldClub;
+  clubAt.target = target;
+  clubAt.hasPending = hasPending;
+  clubAt.switchDate = switchDate;
+  clubAt.joinDate = joinDate;
+  return clubAt;
 }
 
 /**
@@ -48,9 +64,36 @@ export function clubBlockReason(rules, command, club, date) {
   return null;
 }
 
+/** 这一天是不是休息日（周日或固定节假日）——休息日专属指令的判定基准。 */
+export function isRestDate(rules, date) {
+  return weekdayOf(date) === 0 || (rules.calendar?.restDays ?? []).includes(date);
+}
+
+/**
+ * 休息日专属指令（电话/约会）在非休息日不可执行。
+ *
+ * 候选集与界面早就按 `restOnly` 过滤了，但**钉住**（使用者显式指定）曾经绕过这道闸门：
+ * 把 `cmd-date` 钉成整周周指令，周一到周六就会照常执行，且判定为合格。
+ * 它效果全 0，数值上看不出来，但「只在休息日可用」这条规则就没被兜住（2026-11-06 修）。
+ */
+export function restOnlyBlockReason(command, isRestDay) {
+  if (!command?.restOnly) return null;
+  return isRestDay ? null : 'rest-only';
+}
+
+/**
+ * 一条指令在某一天**不可执行**的原因；可执行返回 `null`。
+ *
+ * 与 `clubBlockReason` 同一形状，所以判定层、界面与「不结算」的显示都走同一条路。
+ */
+export function commandBlockReason(rules, command, club, date, isRestDay = isRestDate(rules, date)) {
+  return clubBlockReason(rules, command, club, date) ?? restOnlyBlockReason(command, isRestDay);
+}
+
 /** 这一天可选的指令 id（受解锁日与当前社团限制）。 */
 export function availableCommandIds(rules, club, date) {
   return rules.commands
+    .filter((command) => !command.restOnly)
     .filter((command) => clubBlockReason(rules, command, club, date) === null)
     .map((command) => command.id);
 }
@@ -68,12 +111,15 @@ export function clubCommandId(rules, club) {
 }
 
 /**
- * 休息日的**日指令**候选：可用指令 + 「跳过」。
+ * 休息日的**日指令**候选。
  *
- * 跳过是空过的等价物（见 `SKIP_DAY`）：它给休息日一个"这天什么都不做"的自由度——
- * 有些休息日执行任何指令都不如空过（属性被拖低、压力也未必划算）。
- * **周指令不在其中**：使用者仍可用「空过」把整周置空，那是输入层的 `null`。
+ * 不含电话/约会（`restOnly`）：它效果全 0，只作为游戏里的记录，**不进候选序列**
+ * （所有者 2026-11-06 裁决）——默认把它钉在月末两个周日等于每年白扔 24 天。
+ * 也不含「跳过」：求解器不再有"这天什么都不做"的自由度，跳过只作为活动日的硬空过存在。
  */
 export function availableDayCommandIds(rules, club, date) {
-  return [...availableCommandIds(rules, club, date), SKIP_DAY];
+  return rules.commands
+    .filter((command) => !command.restOnly)
+    .filter((command) => clubBlockReason(rules, command, club, date) === null)
+    .map((command) => command.id);
 }

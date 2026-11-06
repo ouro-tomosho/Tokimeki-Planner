@@ -4,19 +4,17 @@
 // 某个休息日的日期。同一个周日可以既是一个周锚点、又拥有自己的日指令——这两者
 // 并存是正确模型，不是冲突。
 //
-// 用「显式的 null」表示空过，用「键不存在」表示尚未指定（交由求解器决定）。
-// 这两种状态必须能穿过 JSON 往返而不被混淆。
+// 用「显式的 null」表示空过（旧存档的写法），用「键不存在」表示尚未指定（交由求解器决定）。
+// 两者都必须能穿过 JSON 往返而不被混淆；但界面上已经不再提供「空过/跳过」这个操作——
+// 跳过只作为活动日的硬空过存在（见 src/calendar.js），电话/约会也不再进候选。
 
 import { isDate, weekdayOf, weekStartOf } from './dates.js';
 import { CLUB_COMMAND, isClubSlot, isSkip } from './commands.js';
 import { attributeIds } from './lookup.js';
-import { createClubLookup } from './clubs.js';
+import { createClubLookup } from './calendar.js';
 import { commonSuccessRate } from './rules.js';
-// 集训周是硬约束，校验要在输入层就拦住违规日程（见 checkClubWeekMandate）。
-// 复用语义定义，避免"校验层"与"引擎层"各自实现一遍规则。
-import { clubWeekMandate } from './checkpoints.js';
 
-export const CURRENT_VERSION = 3;
+export const CURRENT_VERSION = 5;
 
 /**
  * 出厂成功率。
@@ -38,6 +36,14 @@ export function defaultInput(rules) {
   // 因为那是"能不能解出全部三类需求"的关键档位，而不是数据表里的一个统计量。
   const common = commonSuccessRate(rules);
   const successRate = DEFAULT_SUCCESS_RATE ?? common;
+  const initialClub = rules.defaultClub ?? null;
+  const attributes = Object.fromEntries(rules.attributes.map((a) => [a.id, a.default]));
+  // 每个社团各自的经验；当前社团的值与 attributes.clubExperience 一致。
+  const clubExperiences = Object.fromEntries(rules.clubs.map((club) => [club.id, 0]));
+  if (initialClub) clubExperiences[initialClub] = attributes.clubExperience;
+  // 出厂输入不带任何日指令：电话/约会**不再是候选**（所有者 2026-11-06 裁决），
+  // 也不会被默认钉在月末两个周日上——旧做法把软偏好写成了硬钉住，每次求解都白扔 70 天。
+  const dayCommands = {};
   return {
     version: CURRENT_VERSION,
     ...(successRate === null ? {} : { successRate }),
@@ -45,14 +51,12 @@ export function defaultInput(rules) {
     // 它是状态快照——当天不结算，规划从次日开始（见 ADR-0004）。
     // 默认等于时间轴起点，也就是"还没玩过"。
     playedUpTo: rules.timeline.start,
-    attributes: Object.fromEntries(rules.attributes.map((a) => [a.id, a.default])),
+    attributes,
+    clubExperiences,
+    club: initialClub,
     checkpoints: structuredClone(rules.checkpoints),
-    // 默认加入管乐社（由 data/rules.json 的 defaultClub 给出）。
-    initialClub: rules.defaultClub ?? null,
-    clubChanges: [],
     weekCommands: {},
-    dayCommands: {},
-    skippedDays: [],
+    dayCommands,
   };
 }
 
@@ -94,6 +98,31 @@ export function fromJson(text, rules) {
 const integerValue = (v) => Number.isInteger(v);
 
 /**
+ * v4 → v5：电话/约会退出候选，使用者也不再能标「跳过」。
+ *
+ * 旧默认值会把月末两个周日钉成 `cmd-date`（全 0 效果），旧界面还能把某天置成 `null`
+ * （空过/跳过）。两者现在都无处可设，所以导入旧存档时一并剥掉——否则它们会在新求解器里
+ * 继续当硬钉住，把目标达成度白扔掉。
+ */
+function stripManualOnlyCommands(input) {
+  const clean = (map) => {
+    if (!map || typeof map !== 'object') return map;
+    const next = {};
+    for (const [key, value] of Object.entries(map)) {
+      if (value === 'cmd-date' || value === null) continue;
+      next[key] = value;
+    }
+    return next;
+  };
+  return {
+    ...input,
+    version: CURRENT_VERSION,
+    dayCommands: clean(input.dayCommands),
+    weekCommands: clean(input.weekCommands),
+  };
+}
+
+/**
  * 旧版本迁移。
  *
  * v1 → v2：两个日期合成一个。v1 允许「起点」早于「已玩到」，于是需要冻结前缀那套
@@ -101,6 +130,7 @@ const integerValue = (v) => Number.isInteger(v);
  *          已玩过的那天再结算一遍）。
  * v2 → v3：三套目标数组（globalConstraints / endingGoals / miniGoals）合并成统一的
  *          `checkpoints`；社团经验升为第 10 个属性，输入里不再有 `clubExperience` 映射。
+ * v4 → v5：剥掉电话/约会与「跳过」的手工标记，见 `stripManualOnlyCommands`。
  */
 function migrate(input, rules) {
   if (!input || typeof input !== 'object') return input;
@@ -115,7 +145,12 @@ function migrate(input, rules) {
   }
 
   if (input.version === 1 || input.version === 2) {
-    input = { ...input, version: CURRENT_VERSION, checkpoints: checkpointsFromLegacy(input, rules) };
+    input = {
+      ...input,
+      version: CURRENT_VERSION,
+      checkpoints: checkpointsFromLegacy(input, rules),
+      club: input.club !== undefined ? input.club : (input.initialClub ?? null),
+    };
     delete input.globalConstraints;
     delete input.endingGoals;
     delete input.miniGoals;
@@ -131,6 +166,20 @@ function migrate(input, rules) {
       }
     }
     delete input.clubExperience;
+
+    // v3 之前没有 per-club 经验映射；用当前社团的值播种，其余社团为 0。
+    const currentClub = input.initialClub;
+    const currentValue = Number.isFinite(input.attributes?.clubExperience)
+      ? input.attributes.clubExperience
+      : 0;
+    input.clubExperiences = Object.fromEntries(rules.clubs.map((club) => [club.id, 0]));
+    if (currentClub && input.clubExperiences[currentClub] !== undefined) {
+      input.clubExperiences[currentClub] = currentValue;
+    }
+  }
+
+  if (input.version === 4) {
+    input = stripManualOnlyCommands(input);
   }
 
   return input;
@@ -191,12 +240,12 @@ export function validateInput(input, rules) {
   checkCheckpoints(input.checkpoints, rules, problems);
 
   checkClub(input, clubIds, inWeekAnchors, problems);
+  checkClubExperiences(input, rules, problems);
   const commandIds = new Set(rules.commands.map((c) => c.id));
   // 社团占位符要校验"那一天确实有社团指令可用"，所以需要一个按日期取社团的查询。
-  const clubAtForCheck = createClubLookup(input);
-  checkWeekCommands(input.weekCommands, commandIds, inWeekAnchors, clubAtForCheck, problems, rules);
+  const clubAtForCheck = createClubLookup(input, rules);
+  checkWeekCommands(input.weekCommands, commandIds, inWeekAnchors, clubAtForCheck, problems);
   checkDayCommands(input.dayCommands, commandIds, inTimeline, clubAtForCheck, problems);
-  checkDayList('skippedDays', input.skippedDays, inTimeline, problems);
 
   return problems;
 }
@@ -262,8 +311,13 @@ function checkCheckpoints(checkpoints, rules, problems) {
     }
     if (!Number.isFinite(cp?.value)) problems.push(`检查点 ${cp?.id} 的阈值不是数字`);
 
+    const isCount = cp?.kind === 'count';
+    if (isCount) {
+      if (cp.source !== 'mini') problems.push(`计数检查点 ${cp?.id} 必须是 mini`);
+      if (!Number.isInteger(cp.base) || cp.base < 0) problems.push(`计数检查点 ${cp?.id} 的 base 非法：${cp?.base}`);
+    }
     const names = cp?.attributes ?? (typeof cp?.attribute === 'string' ? [cp.attribute] : []);
-    if (names.length === 0) problems.push(`检查点 ${cp?.id} 没有指定属性`);
+    if (!isCount && names.length === 0) problems.push(`检查点 ${cp?.id} 没有指定属性`);
     for (const id of names) {
       if (!attributeIdSet.has(id)) problems.push(`检查点 ${cp?.id} 引用了未知属性 ${id}`);
     }
@@ -279,24 +333,38 @@ function checkCheckpoints(checkpoints, rules, problems) {
 }
 
 function checkClub(input, clubIds, inTimeline, problems) {
-  if (input.initialClub !== null && !clubIds.has(input.initialClub)) {
-    problems.push(`initialClub 引用了未知社团 ${input.initialClub}`);
+  if (input.club !== undefined && input.club !== null && !clubIds.has(input.club)) {
+    problems.push(`club 引用了未知社团 ${input.club}`);
   }
-  if (!Array.isArray(input.clubChanges)) {
-    problems.push('clubChanges 必须是数组');
+  if (input.pendingClub !== undefined && input.pendingClub !== null && !clubIds.has(input.pendingClub)) {
+    problems.push(`pendingClub 引用了未知社团 ${input.pendingClub}`);
+  }
+}
+
+/**
+ * 每个社团各自的经验映射；当前社团的值必须与 attributes.clubExperience 一致。
+ */
+function checkClubExperiences(input, rules, problems) {
+  const map = input.clubExperiences;
+  const attribute = rules.attributes.find((a) => a.id === 'clubExperience');
+  if (!attribute) return;
+  if (!map || typeof map !== 'object' || Array.isArray(map)) {
+    problems.push('缺少 clubExperiences');
     return;
   }
-  for (const change of input.clubChanges) {
-    if (!isDate(change?.date)) {
-      problems.push(`clubChanges 的日期格式错误：${change?.date}`);
-    } else if (!inTimeline(change.date)) {
-      problems.push(`clubChanges 的日期超出可切换范围：${change.date}`);
-    } else if (weekdayOf(change.date) !== 0) {
-      problems.push(`clubChanges 只能在周日切换社团：${change.date}`);
+  const known = new Set(rules.clubs.map((club) => club.id));
+  for (const [clubId, value] of Object.entries(map)) {
+    if (!known.has(clubId)) problems.push(`clubExperiences 含未知社团 ${clubId}`);
+    else if (!Number.isInteger(value) || value < attribute.min || value > attribute.max) {
+      problems.push(`clubExperiences.${clubId} 非法：${value}`);
     }
-    if (change?.clubId !== null && !clubIds.has(change?.clubId)) {
-      problems.push(`clubChanges 引用了未知社团 ${change?.clubId}`);
-    }
+  }
+  for (const club of rules.clubs) {
+    if (!(club.id in map)) problems.push(`clubExperiences 缺少 ${club.id}`);
+  }
+  const current = input.club ?? null;
+  if (current && map[current] !== input.attributes?.clubExperience) {
+    problems.push('当前社团经验与 clubExperiences 不一致');
   }
 }
 
@@ -315,7 +383,7 @@ function checkCommandValue(commandId, commandIds, date, clubAt, problems, where)
   if (!commandIds.has(commandId)) problems.push(`${where} 引用了未知指令 ${commandId}`);
 }
 
-function checkWeekCommands(map, commandIds, inTimeline, clubAt, problems, rules) {
+function checkWeekCommands(map, commandIds, inTimeline, clubAt, problems) {
   if (!map || typeof map !== 'object' || Array.isArray(map)) {
     problems.push('缺少 weekCommands');
     return;
@@ -329,29 +397,6 @@ function checkWeekCommands(map, commandIds, inTimeline, clubAt, problems, rules)
       problems.push(`weekCommands 的键必须是周日（周锚点）：${date}`);
     }
     checkCommandValue(commandId, commandIds, date, clubAt, problems, 'weekCommands');
-    checkClubWeekMandate(rules, clubAt, date, commandId, problems);
-  }
-}
-
-/**
- * 社团集训周是**硬约束**：该周全部平日必须执行当前社团的社团指令（ADR-0007 第三节）。
- *
- * 校验必须在**输入层**就报出来：此前 `validateInput` 不查这一条，于是一份 6 个集训周里
- * 5 个没执行社团指令的日程照样被 `plan()` 报成 `goals.ok = true`——"11/11 达标"随时可能
- * 被违规日程污染（solver 2026-10-06 实测踩到）。
- *
- * 回家社（`initialClub = null`）不受此约束；空过（`null`）与占位符按"违规"处理，
- * 因为它们在集训周里同样意味着"没有执行社团指令"。
- */
-function checkClubWeekMandate(rules, clubAt, date, commandId, problems) {
-  if (!isDate(date)) return;
-  const mandate = clubWeekMandate(rules, clubAt(date), date);
-  if (mandate === null) return;
-  if (commandId !== mandate) {
-    problems.push(
-      `集训周 ${date} 的周指令必须是当前社团的指令 ${mandate}（实际 ${commandId ?? '空过'}）：`
-      + '该周的平日被游戏强制为社团活动，见 ADR-0007。',
-    );
   }
 }
 

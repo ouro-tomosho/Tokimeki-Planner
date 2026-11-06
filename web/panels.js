@@ -14,19 +14,20 @@
 import { weekdayOf, weekStartOf } from '../src/dates.js';
 import {
   ATTRIBUTES,
-  CHOICE_EMPTY,
   CHOICE_NO_CLUB,
   CHECKPOINT_SOURCE_LABELS,
   CLUBS,
   RULES,
   TIMELINE,
   UNSET,
+  forcedCommandSource,
+  activityOn,
   attributeName,
   checkpointAttributeIds,
   checkpointAttributesText,
   checkpointLandingText,
   clubAt,
-  commandsAvailableAt,
+  commandsSelectableAt,
   defaultCheckpoint,
   evaluationOf,
   fmt1,
@@ -56,7 +57,6 @@ import {
   setClubChange,
   setCommands,
   setPlayedUpTo,
-  setSkipped,
   updateCheckpoint,
 } from './edits.js';
 import { jumpToDate, selectDate } from './calendar.js';
@@ -324,28 +324,32 @@ function openMenu(clientX, clientY, date) {
 
   const dates = selectedDates();
   const range = isRangeSelection();
-  const skipped = dates.filter((entry) => state.input.skippedDays.includes(entry));
+  const activity = activityOn(date);
   const checkpointsOnDate = state.input.checkpoints.filter((checkpoint) => checkpoint.date === date).length;
 
-  host.append(menuItem('指定指令…', () => openCommandPicker()));
+  // 活动日、社团加入/切换日、体育第 3 个周日：指令由日历与社团规则决定，不是使用者的指派。
+  // 指定或清除它们都会让界面与引擎说两套话（引擎会忽略这个选择），所以这里直接禁掉。
+  const forced = forcedCommandSource(date);
+  const forcedTitle = activity
+    ? `${activity.name}：活动日的指令由游戏日历决定，不能指定，也不能清除`
+    : forced === 'join'
+      ? '这是社团加入日：当天的指令固定为社团指令，不能指定'
+      : forced === 'switch'
+        ? '这是社团切换日：当天的指令固定为目标社团指令，不能指定'
+        : forced === 'sports'
+          ? '体育类社团每月第 3 个周日固定执行社团指令，不能指定'
+          : undefined;
+  host.append(
+    menuItem('指定指令…', () => openCommandPicker(), {
+      disabled: forced !== null,
+      title: forcedTitle,
+    }),
+  );
   host.append(
     menuItem('切换社团…', () => openClubPicker(state.selection.to), {
       disabled: weekdayOf(date) !== 0,
       title: weekdayOf(date) === 0 ? undefined : '社团只能在周日加入、更换或退出',
     }),
-  );
-  host.append(separator());
-  host.append(
-    menuItem(range ? `跳过这 ${dates.length} 天` : '跳过这一天', () => setSkipped(dates, true), {
-      disabled: dates.length === 0,
-    }),
-  );
-  host.append(
-    menuItem(
-      skipped.length > 0 ? `取消跳过（${skipped.length}）` : '取消跳过',
-      () => setSkipped(dates, false),
-      { disabled: skipped.length === 0 },
-    ),
   );
   host.append(separator());
   host.append(
@@ -390,9 +394,10 @@ function currentChoiceOf(dates) {
 
 /** 社团切换：只在周日可行，且工具绝不自行选择或切换（原规格故事 23）。 */
 function openClubPicker(date) {
-  const existing = state.input.clubChanges.find((entry) => entry.date === date);
-  const value =
-    existing === undefined ? UNSET : existing.clubId === null ? CHOICE_NO_CLUB : existing.clubId;
+  const pending = Object.prototype.hasOwnProperty.call(state.input, 'pendingClub')
+    ? state.input.pendingClub
+    : undefined;
+  const value = pending === undefined ? UNSET : pending === null ? CHOICE_NO_CLUB : pending;
   const select = selectOf(
     [
       [UNSET, '不切换（沿用之前的社团）'],
@@ -435,10 +440,12 @@ function openCommandPicker() {
   const anchor = state.selection.to;
   const entries = [
     [UNSET, '清除指定'],
-    [CHOICE_EMPTY, '空过'],
-    ...commandsAvailableAt(anchor).map((command) => [command.id, command.name]),
+    ...commandsSelectableAt(anchor).map((command) => [command.id, command.name]),
   ];
-  const select = selectOf(entries, currentChoiceOf(dates));
+  const current = currentChoiceOf(dates);
+  // 当前值不一定在候选里（旧存档的电话/约会、或已不可用的指令）。那种情况下原生 `<select>`
+  // 会显示空白——空白是骗人的，一律回落到「清除指定」，与其它日子的行为一致。
+  const select = selectOf(entries, entries.some(([value]) => value === current) ? current : UNSET);
 
   const dayCount = dates.filter((entry) => isRestOn(entry)).length;
   const weekdayDates = dates.filter((entry) => weekdayOf(entry) !== 0);
@@ -452,8 +459,18 @@ function openCommandPicker() {
       ? `将写入 ${dayCount} 天的日指令、${weeks.size} 周的周指令。周一至周六执行的是整周周指令，所以这些周里最多还有 ${spill} 个未被选中的平日会跟着改。`
       : '没有可写入的日期。';
 
+  // 硬规则日（活动 / 社团加入 / 切换 / 体育第 3 周日）的指令不由使用者决定，写进去也不生效。
+  const forcedDays = dates.filter((entry) => forcedCommandSource(entry) !== null);
   const body = document.createElement('div');
   body.append(field('指令', select), scope);
+  if (forcedDays.length > 0) {
+    const note = document.createElement('p');
+    note.className = 'hint';
+    note.textContent = `选区里有 ${forcedDays.length} 天由日历或社团规则固定了指令（${forcedDays
+      .slice(0, 3)
+      .join('、')}${forcedDays.length > 3 ? ' 等' : ''}）：这些天不受本次指定影响。`;
+    body.append(note);
+  }
 
   openModal({
     title: `指定指令（${dates.length} 天）`,

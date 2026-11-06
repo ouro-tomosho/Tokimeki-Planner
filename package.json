@@ -10,10 +10,10 @@
     "url": "git+https://github.com/ouro-tomosho/Tokimeki-Planner.git"
   },
   "scripts": {
-    "build": "node tools/rules-doc.mjs && node tools/build.mjs",
+    "build": "node tools/build.mjs",
     "build:core": "node tools/build.mjs --core-only",
     "build:html": "node tools/build.mjs --html-only",
-    "verify": "node tools/build.mjs --check && node tools/rules-doc.mjs --check"
+    "verify": "node tools/build.mjs --check"
   },
   "engines": {
     "node": ">=22"

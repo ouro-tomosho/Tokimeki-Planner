@@ -21,7 +21,6 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { listModules, collect, emit, bundleShared } from './bundle.mjs';
-import { checkRulesDoc } from './rules-doc.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const SRC_DIR = path.join(ROOT, 'src');
@@ -476,12 +475,8 @@ export function writeBuild() {
   assertDiskMatches(PLAN_CORE_URL, coreSource, 'plan-core.js');
   assertDiskMatches(OUTPUT_URL, html, 'index.html');
 
-  // 文档与数据也必须一致。放在这里而不是只放在 package.json 的脚本里，
-  // 是为了让**每一条**校验入口都覆盖它——否则 `node tools/build.mjs --check` 会报
-  // "校验通过"，而 RULES.md 可能早就与 data/rules.json 脱钩了。
-  const doc = checkRulesDoc();
-  if (!doc.ok) throw new Error(doc.message);
-  console.log(doc.message);
+  // RULES.md 已经与构建脱钩（2026-11-06）：它和 README 一样是**手写文档**，
+  // 由人维护，不再由 data/rules.json 生成，也不参与 `npm run verify`。
   return { coreSource, html };
 }
 
@@ -515,13 +510,7 @@ export async function verifyBuild() {
   assertDiskMatches(PLAN_CORE_URL, coreSource, 'plan-core.js');
   assertDiskMatches(OUTPUT_URL, html, 'index.html');
 
-  // 文档与数据也必须一致。放在这里而不是只放在 package.json 的脚本里，
-  // 是为了让**每一条**校验入口都覆盖它——否则 `node tools/build.mjs --check` 会报
-  // "校验通过"，而 RULES.md 可能早就与 data/rules.json 脱钩了。
-  const doc = checkRulesDoc();
-  if (!doc.ok) throw new Error(doc.message);
-  console.log(doc.message);
-
+  // 文档不在这里校验：RULES.md 与 README 一样是手写文档，构建只对产物负责。
   const coreFile = fileURLToPath(PLAN_CORE_URL);
   const module = await import(`${pathToFileURL(coreFile).href}?v=${Date.now()}`);
   if (!module.planCore) throw new Error('plan-core.js 未导出 planCore');

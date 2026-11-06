@@ -29,18 +29,11 @@
 // **协作式取消**：每次全槽下降之后、每轮 ILS 之前让出一次宏任务并查 `shouldStop()`；
 // 不让出的话 Worker 收不到取消消息（搜索整体是同步的），取消按钮等于失效。
 
-import { buildCalendar } from './calendar.js';
+import { buildCalendar, createClubLookup } from './calendar.js';
 import { weekStartOf } from './dates.js';
 import { SKIP_DAY, commandIdOf, isClubSlot } from './commands.js';
-import { clubWeekMandate } from './checkpoints.js';
-import {
-  availableCommandIds,
-  availableDayCommandIds,
-  clubBlockReason,
-  clubCommandId,
-  createClubLookup,
-} from './clubs.js';
-import { clubExperienceGainOn, expectedEffects, REST_DAY, WEEKDAY } from './settlement.js';
+import { availableCommandIds, availableDayCommandIds, clubCommandId, commandBlockReason } from './clubs.js';
+import { CLUB_EXPERIENCE_ID, clubExperienceGainOn, expectedEffects, REST_DAY, WEEKDAY } from './settlement.js';
 import { allocateQuota } from './quota.js';
 
 /**
@@ -145,15 +138,15 @@ function buildProblem(rules, input) {
   const maxs = Float64Array.from(attributes.map((a) => a.max));
   const start = Float64Array.from(attributes.map((a) => input.attributes[a.id]));
 
-  const calendar = buildCalendar(rules, input);
-  const clubAt = createClubLookup(input);
+  const clubAt = createClubLookup(input, rules);
+  const calendar = buildCalendar(rules, input, null, clubAt);
   const settled = calendar.days.filter((day) => day.isSettled);
 
   // 系数唯一来源：引擎的 expectedEffects（含成功率、休息日 ×4、失败分支）与
   // clubExperienceGainOn（含 8 月集训周加成）。工具与引擎不得各算一套。
   const cache = new Map();
-  const effectOf = (commandId, isRestDay, weekStart) => {
-    const key = `${commandId}|${isRestDay ? 'r' : 'w'}|${weekStart}`;
+  const effectOf = (commandId, isRestDay, weekStart, activityCommand = null) => {
+    const key = `${commandId}|${isRestDay ? 'r' : 'w'}|${weekStart}|${activityCommand ?? ''}`;
     const hit = cache.get(key);
     if (hit) return hit;
     const out = new Float64Array(n);
@@ -164,7 +157,11 @@ function buildProblem(rules, input) {
       for (let i = 0; i < n; i += 1) {
         let value = base[ids[i]];
         if (ids[i] === CLUB_EXPERIENCE && command.kind === 'club') {
-          value += clubExperienceGainOn(rules, isRestDay ? REST_DAY : WEEKDAY, { weekStart });
+          value += clubExperienceGainOn(
+            rules,
+            isRestDay ? REST_DAY : WEEKDAY,
+            activityCommand ? { activity: { command: activityCommand } } : null,
+          );
         }
         out[i] = value;
       }
@@ -181,7 +178,7 @@ function buildProblem(rules, input) {
   // 继续按 `cmd-chat` 推进，与真实轨迹到 11 月已差 9.5 点人气，最终交出一份 `valid=false` 的日程
   // （全局约束破了 2 天）而自评完全看不到。`skippedDays` 与"显式清空"的日子由 `isSettled` 排除，
   // 不会进槽。
-  const pinnedCandsOf = (value, date, club) => {
+  const pinnedCandsOf = (value, date, club, isRestDay) => {
     const id = commandIdOf(value);
     if (id === null || id === SKIP_DAY) return [SKIP_DAY];
     // 社团占位符按**当时加入的社团**展开（与 plan.js 同口径）。
@@ -190,7 +187,7 @@ function buildProblem(rules, input) {
     const command = rules.commands.find((c) => c.id === effective);
     // 钉住了一条"此刻不可用"的社团指令（未解锁 / 不是当前社团）：引擎不会结算它（见
     // `clubBlockReason`），所以这里也不给它任何效果——否则又是两套数。
-    if (!command || clubBlockReason(rules, command, club, date) !== null) return [SKIP_DAY];
+    if (!command || commandBlockReason(rules, command, club, date, isRestDay) !== null) return [SKIP_DAY];
     return [effective];
   };
 
@@ -198,45 +195,52 @@ function buildProblem(rules, input) {
   const daySlot = new Int32Array(settled.length);
   const weekSlotOf = new Map();
   const daySlotOf = new Map();
+
+  // 周指令槽：只覆盖**非日指令日**的平日（活动日/休息日走自己的日指令）。
   for (let i = 0; i < settled.length; i += 1) {
     const day = settled[i];
-    if (day.isRestDay) continue;
+    if (day.isDayCommandDay) continue;
     if (weekSlotOf.has(day.weekStart)) continue;
     const club = clubAt(day.weekStart);
-    const mandate = clubWeekMandate(rules, club, day.weekStart);
     const pinnedWeek = input.weekCommands?.[day.weekStart];
     const cands = pinnedWeek !== undefined
-      ? pinnedCandsOf(pinnedWeek, day.weekStart, club)
-      : mandate
-        ? [mandate]
-        : availableCommandIds(rules, club, day.weekStart);
+      ? pinnedCandsOf(pinnedWeek, day.weekStart, club, false)
+      : availableCommandIds(rules, club, day.weekStart);
     weekSlotOf.set(day.weekStart, slots.length);
-    slots.push({ kind: 'week', key: day.weekStart, isRestDay: false, cands, dayIdxs: [] });
+    slots.push({ kind: 'week', key: day.weekStart, weekStart: day.weekStart, isRestDay: false, cands, dayIdxs: [] });
   }
+
+  // 日指令槽：活动/体育强制的指令是唯一候选；非强制休息日走自由候选。
   for (let i = 0; i < settled.length; i += 1) {
     const day = settled[i];
-    if (!day.isRestDay) {
+    if (!day.isDayCommandDay) {
       slots[weekSlotOf.get(day.weekStart)].dayIdxs.push(i);
       continue;
     }
     const club = clubAt(day.date);
-    // 集训周强制的是**周指令**（该周全部平日）；休息日没有这条强制（所有者 2026-10-06 明确）。
-    const pinnedDay = input.dayCommands?.[day.date];
-    daySlotOf.set(day.date, slots.length);
+    const pinnedDay = day.isForced ? undefined : input.dayCommands?.[day.date];
+    const cands = day.isForced
+      ? [day.commandId]
+      : pinnedDay !== undefined
+        ? pinnedCandsOf(pinnedDay, day.date, club, day.isRestDay)
+        : availableDayCommandIds(rules, club, day.date);
+    const slot = slots.length;
     slots.push({
       kind: 'day',
       key: day.date,
-      isRestDay: true,
-      cands: pinnedDay !== undefined
-        ? pinnedCandsOf(pinnedDay, day.date, club)
-        : availableDayCommandIds(rules, club, day.date),
+      weekStart: day.weekStart,
+      isRestDay: day.isRestDay,
+      activity: day.activity,
+      cands,
       dayIdxs: [i],
     });
+    daySlot[i] = slot;
+    if (!day.isForced) daySlotOf.set(day.date, slot);
   }
   for (const [start2, slot] of weekSlotOf) for (const i of slots[slot].dayIdxs) daySlot[i] = slot;
   for (const [, slot] of daySlotOf) daySlot[slots[slot].dayIdxs[0]] = slot;
 
-  const slotEff = slots.map((slot) => slot.cands.map((cmd) => effectOf(cmd, slot.isRestDay, slot.key)));
+  const slotEff = slots.map((slot) => slot.cands.map((cmd) => effectOf(cmd, slot.isRestDay, slot.weekStart ?? slot.key, slot.activity?.command)));
 
   // ---- 目标 ----
   const checkpoints = input.checkpoints;
@@ -268,6 +272,10 @@ function buildProblem(rules, input) {
   return {
     rules, input, calendar, settled, slots, daySlot, slotEff, ids, index, n, start, mins, maxs,
     ending, mini, global, lastIdx, miniIdx, makeGlobals, state, weekSlotOf, daySlotOf,
+    switchDate: clubAt.switchDate,
+    switchTarget: clubAt.target,
+    clubExperiences: { ...(input.clubExperiences ?? {}) },
+    clubExpIdx: index[CLUB_EXPERIENCE_ID],
     // 「第一次执行的社团指令必须是周日的日指令」（`rules.clubFirstCommand`）：
     // 判定里已经实现（`plan.js` 逐日标注），搜索这边必须同口径——否则它会搜出一份
     // 判定为不合格的日程。周日按定义就是休息日、只解析日指令，所以这里看 weekday 即可。
@@ -285,7 +293,10 @@ function buildProblem(rules, input) {
  */
 function evaluate(problem, x) {
   problem.evaluations += 1;
-  const { settled, slotEff, daySlot, state, n, start, mins, maxs, ending, mini, miniIdx, lastIdx, index } = problem;
+  const {
+    settled, slotEff, daySlot, state, n, start, mins, maxs, ending, mini, miniIdx, lastIdx, index,
+    switchDate, switchTarget, clubExperiences, clubExpIdx,
+  } = problem;
   state.set(start);
   let absorb = 0;
   let globalPenalty = 0;
@@ -298,6 +309,9 @@ function evaluate(problem, x) {
   const miniState = new Map();
 
   for (let i = 0; i < settled.length; i += 1) {
+    if (switchDate !== null && settled[i].date === switchDate) {
+      state[clubExpIdx] = switchTarget ? (clubExperiences[switchTarget] ?? 0) : 0;
+    }
     const s = daySlot[i];
     const ci = x[s];
     if (ci >= 0) {
@@ -352,6 +366,25 @@ function evaluate(problem, x) {
     });
   }
   for (const cp of mini) {
+    if (cp.date < problem.input.playedUpTo) continue;
+    if (cp.kind === 'count') {
+      const snapshotIdx = miniIdx.get(cp.id);
+      let executed = 0;
+      for (let i = 0; i <= snapshotIdx; i += 1) {
+        const s = daySlot[i];
+        if (x[s] >= 0) executed += problem.slots[s].dayIdxs.length;
+      }
+      const count = (cp.base ?? 0) + executed;
+      items.push({
+        id: cp.id,
+        kind: 'mini',
+        actual: count,
+        op: cp.op,
+        value: cp.value,
+        ok: cp.op === '>=' ? count >= cp.value : count < cp.value,
+      });
+      continue;
+    }
     const snap = miniState.get(cp.id);
     const names = cp.attributes ?? [cp.attribute];
     const v = names.reduce((sum, id) => sum + (snap ? snap[index[id]] : 0), 0);

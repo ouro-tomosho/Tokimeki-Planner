@@ -15,7 +15,6 @@
 // 三类来源与目标优先级见 ADR-0007 与 ADR-0009。
 
 import { buildCalendar } from './calendar.js';
-import { clubCommandId } from './clubs.js';
 
 /** 检查点涉及的属性 id 列表（单属性或集合）；求解器与判定共用这一份口径。 */
 export const attributeIdOf = (checkpoint) =>
@@ -46,25 +45,6 @@ export function shortfallOf(actual, op, value) {
 /** 该实际值是否满足这个检查点。与 `shortfallOf === 0` 同一口径。 */
 export function meets(actual, op, value) {
   return op === '>=' ? actual >= value : actual < value;
-}
-
-/**
- * 社团集训周的硬约束：`rules.calendar.clubWeeks` 列出的那些自然周里，**该周全部平日
- * 必须执行当前社团的社团指令**。回家社（未加入任何社团）例外，按正常平日处理。
- *
- * 返回该周**强制执行的指令 id**；不是集训周、或回家社、或查不到对应社团指令时返回
- * `null`（都表示"这一周没有强制"）。数据里的 `clubWeeks` 元素形如
- * `{ date, command }`，`date` 是周锚点（周日）——见 `rules.json` 的 `calendar.clubWeeks`。
- *
- * **解锁日之前不强制**：社团指令自 `rules.clubUnlockDate` 起才可用（1995-04-09），
- * 在那之前的集训周没有可执行的社团指令——强制一条"此刻不可用"的指令既无意义，
- * 也会把"解锁日之前社团指令不被结算"这类合法情形误判为违规。
- */
-export function clubWeekMandate(rules, club, weekStart) {
-  if (!club) return null;
-  if (weekStart < rules.clubUnlockDate) return null;
-  const weeks = rules.calendar?.clubWeeks ?? [];
-  return weeks.some((week) => week.date === weekStart) ? clubCommandId(rules, club) : null;
 }
 
 /**
@@ -210,24 +190,16 @@ export function evaluateCheckpoints(rules, input, days) {
   // **一条**规则。逐落点汇报会产出几千行，没法用；所以每条规则只出一行，并给出最紧读数。
   const grouped = new Map();
   for (const checkpoint of schedule) {
-    const day = byDate.get(checkpoint.date);
-    // 全局约束看**当天结算后**的值；小目标 / 结局目标看**前 1 天的结算值**，
-    // 也就是 `plan` 在结算该日之前拍下的 `attributesBefore`（见 plan.js 主循环）。
-    // 落点当天不结算（起点快照 / 空过 / 跳过 / 时间轴终点）时两者相同，所以不用特例。
-    const basis = checkpoint.source === 'global'
-      ? day?.attributes
-      : day?.attributesBefore ?? day?.attributes;
-    const actual = actualOf(checkpoint, basis ?? startValues);
-    const shortfall = shortfallOf(actual, checkpoint.op, checkpoint.value);
-    const met = meets(actual, checkpoint.op, checkpoint.value);
+    // 过期：当前日期已经越过落点，这类目标不再参与判定（界面上显示「已跳过」）。
+    const expired = checkpoint.source !== 'global' && checkpoint.date < input.playedUpTo;
 
     let entry = grouped.get(checkpoint.id);
     if (!entry) {
       entry = {
         id: checkpoint.id,
         label: labelOf(checkpoint),
-        // 是否参与"全达标"（`ok`）判定。全局约束不参与 `ok`，它决定的是 `valid`。
-        gate: checkpoint.source !== 'global',
+        // 是否参与"全达标"（`ok`）判定。全局约束与过期目标不参与 `ok`。
+        gate: checkpoint.source !== 'global' && !expired,
         attribute: checkpoint.attribute ?? null,
         attributes: checkpoint.attributes ?? null,
         op: checkpoint.op,
@@ -241,13 +213,52 @@ export function evaluateCheckpoints(rules, input, days) {
         hardViolations: 0,
         achieved: false,
         firstAchievedDate: null,
-        lastActual: actual,
-        lastShortfall: shortfall,
-        worstActual: actual,
-        worstShortfall: shortfall,
+        lastActual: 0,
+        lastShortfall: 0,
+        worstActual: 0,
+        worstShortfall: 0,
+        expired,
       };
       grouped.set(checkpoint.id, entry);
     }
+    if (expired) continue;
+
+    // 指令计数小目标：base + 截止日前一天为止执行过的指令天数（含强制执行）。
+    if (checkpoint.kind === 'count') {
+      const deadline = checkpoint.date;
+      const executed = days.filter(
+        (day) => day.date < deadline && (day.effectiveCommandId ?? day.commandId),
+      ).length;
+      const actual = Number(checkpoint.base ?? 0) + executed;
+      const shortfall = shortfallOf(actual, checkpoint.op, checkpoint.value);
+      const met = meets(actual, checkpoint.op, checkpoint.value);
+      entry.landings += 1;
+      if (!met) {
+        entry.unmetLandings += 1;
+        if (entry.achieved) entry.hardViolations += 1;
+      } else if (!entry.achieved) {
+        entry.achieved = true;
+        entry.firstAchievedDate = deadline;
+      }
+      entry.lastActual = actual;
+      entry.lastShortfall = shortfall;
+      if (shortfall > entry.worstShortfall) {
+        entry.worstShortfall = shortfall;
+        entry.worstActual = actual;
+      }
+      continue;
+    }
+
+    const day = byDate.get(checkpoint.date);
+    // 全局约束看**当天结算后**的值；小目标 / 结局目标看**前 1 天的结算值**，
+    // 也就是 `plan` 在结算该日之前拍下的 `attributesBefore`（见 plan.js 主循环）。
+    // 落点当天不结算（起点快照 / 空过 / 跳过 / 时间轴终点）时两者相同，所以不用特例。
+    const basis = checkpoint.source === 'global'
+      ? day?.attributes
+      : day?.attributesBefore ?? day?.attributes;
+    const actual = actualOf(checkpoint, basis ?? startValues);
+    const shortfall = shortfallOf(actual, checkpoint.op, checkpoint.value);
+    const met = meets(actual, checkpoint.op, checkpoint.value);
 
     entry.landings += 1;
     if (!met) {
@@ -270,7 +281,9 @@ export function evaluateCheckpoints(rules, input, days) {
   }
 
   for (const entry of grouped.values()) {
-    const state = entry.hardViolations > 0 ? 'violated' : entry.achieved ? 'met' : 'unmet';
+    const state = entry.expired
+      ? 'expired'
+      : entry.hardViolations > 0 ? 'violated' : entry.achieved ? 'met' : 'unmet';
     items.push({
       id: entry.id,
       label: entry.label,
@@ -331,13 +344,12 @@ export function evaluateCheckpoints(rules, input, days) {
   // 两个顶层判定，对应「硬约束 / 目标」两分（GLOSSARY）：
   //   `ok`    目标是否全部达标——只看参与判定的项（终点目标 + 小目标）。
   //   `valid` 该日程是否合格——没有任何硬违反。本函数能判定的硬约束是**全局约束的硬阶段**
-  //           （压力上限由 `gc-stress` 这条全局规则表达）、**社团集训周**与**首次社团指令
-  //           必须是周日**（violating days 由 `plan` 在解析出实际执行的指令后逐日标注
-  //           `clubWeekViolation` / `clubFirstViolation`）；社团解锁/互斥与钉住的槽位由日历与
-  //           求解器在结构上保证，一份排好的日程里不会出现。
+  //           （压力上限由 `gc-stress` 这条全局规则表达）与**首次社团指令必须是周日**
+  //           （violating days 由 `plan` 在解析出实际执行的指令后逐日标注 `clubFirstViolation`）；
+  //           活动日的强制指令、社团解锁/互斥与钉住的槽位由日历与求解器在结构上保证。
   const gated = items.filter((item) => item.gate !== false && item.state !== 'unset');
   const hardViolations = items.reduce((sum, item) => sum + (item.hardViolations ?? 0), 0);
-  const clubWeekViolations = days.filter((day) => day.clubWeekViolation === true).length;
+  const clubWeekViolations = 0;
   // 「第一次执行的社团指令必须是周日的日指令」（`rules.clubFirstCommand`，由 `plan` 逐日标注）。
   const clubFirstViolations = days.filter((day) => day.clubFirstViolation === true).length;
   // 规则是否**整条豁免**（使用者已选社团 + 「已玩到」落在集训周内，见 plan.js）：如实带出去，

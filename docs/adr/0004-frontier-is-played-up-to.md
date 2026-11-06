@@ -1,6 +1,6 @@
 # 规划起点恒为已玩到，历史概念作废
 
-**Status**: accepted
+**Status**: superseded by ADR-0011（当前日期 = 下一个决策/事件槽）
 
 ## 决策
 

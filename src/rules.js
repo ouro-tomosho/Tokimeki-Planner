@@ -138,9 +138,14 @@ function checkCheckpoints(rules, note) {
     if (!OPS.has(cp.op)) note(`检查点 ${cp.id} 的 op 非法：${cp.op}`);
     if (!Number.isFinite(cp.value)) note(`检查点 ${cp.id} 的阈值不是数字`);
 
+    const isCount = cp.kind === 'count';
+    if (isCount) {
+      if (cp.source !== 'mini') note(`计数检查点 ${cp.id} 必须是 mini`);
+      if (!Number.isInteger(cp.base) || cp.base < 0) note(`计数检查点 ${cp.id} 的 base 非法：${cp.base}`);
+    }
     const single = typeof cp.attribute === 'string';
     const set = Array.isArray(cp.attributes);
-    if (!single && !set) note(`检查点 ${cp.id} 必须含 attribute 或 attributes`);
+    if (!isCount && !single && !set) note(`检查点 ${cp.id} 必须含 attribute 或 attributes`);
     if (single && set) note(`检查点 ${cp.id} 不能同时含 attribute 与 attributes`);
     for (const id of single ? [cp.attribute] : cp.attributes ?? []) {
       if (!attributeIds.has(id)) note(`检查点 ${cp.id} 引用未知属性：${id}`);
@@ -216,14 +221,8 @@ function checkConstants(rules, note) {
   const gain = rules.clubExperienceGain;
   if (!gain) note('clubExperienceGain 缺失');
   else {
-    for (const key of ['weekday', 'restDay']) {
+    for (const key of ['weekday', 'restDay', 'camp']) {
       if (!Number.isInteger(gain[key]) || gain[key] < 0) note(`clubExperienceGain.${key} 非法`);
-    }
-    // 8 月集训周加成（见 ADR-0007）：当前 6 个集训周里 8 月组有加成、10 月组没有。
-    // 字段缺失视为"无加成"，不属于错误——数据可以不含这条规则。
-    if (gain.augustWeekday !== undefined
-      && (!Number.isInteger(gain.augustWeekday) || gain.augustWeekday < 0)) {
-      note(`clubExperienceGain.augustWeekday 非法：${gain.augustWeekday}`);
     }
   }
 }

@@ -429,6 +429,15 @@
         color: var(--ink);
         word-break: break-all;
       }
+      .cell .dactivity {
+        display: block;
+        font-size: 10px;
+        line-height: 1.2;
+        color: var(--rose-deep);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
       .cell .flags {
         position: absolute;
         top: 2px;
@@ -941,9 +950,9 @@
         <div class="panel">
           <h2>社团</h2>
           <label class="field"
-            ><span>起始社团</span><select id="rail-initial-club"></select
+            ><span>当前社团</span><select id="rail-initial-club"></select
           ></label>
-          <p class="hint">社团只能在周日切换（在日历上右键该周日）；未加入时社团指令不可选。</p>
+          <p class="hint">切换社团只能在周日（在日历上右键该周日）；未加入时社团指令不可选。</p>
         </div>
       </aside>
 
@@ -964,7 +973,7 @@
             <span class="k-weekday"><i></i>平日</span>
             <span class="k-sun"><i></i>周日</span>
             <span class="k-rest"><i></i>休息日</span>
-            <span class="k-empty"><i></i>空过</span>
+            <span class="k-empty"><i></i>跳过</span>
             <span class="k-flag"><i></i>小目标截止</span>
             <span class="k-played"><i></i>已玩到</span>
           </div>
@@ -1062,6 +1071,9 @@ const SKIP_DAY = 'skip';
 /** **当前社团指令**的占位符。展开见 `resolveClubSlot`。 */
 const CLUB_COMMAND = 'club';
 
+/** **社团集训指令**的占位符：解析为当前社团指令，社团经验 +2。 */
+const CLUB_CAMP_COMMAND = 'clubCamp';
+
 /** 这个槽位取值是不是「跳过」。 */
 function isSkip(value) {
   return value === SKIP_DAY;
@@ -1070,6 +1082,11 @@ function isSkip(value) {
 /** 这个槽位取值是不是「当前社团指令」占位符。 */
 function isClubSlot(value) {
   return value === CLUB_COMMAND;
+}
+
+/** 这个槽位取值是不是「社团集训指令」占位符。 */
+function isClubCampSlot(value) {
+  return value === CLUB_CAMP_COMMAND;
 }
 
 /**
@@ -1094,37 +1111,173 @@ function commandIdOf(value) {
   if (value === undefined || value === null) return null;
   return isSkip(value) ? null : value;
 }
-return { SKIP_DAY, CLUB_COMMAND, isSkip, isClubSlot, resolveClubSlot, commandIdOf };
+return { SKIP_DAY, CLUB_COMMAND, CLUB_CAMP_COMMAND, isSkip, isClubSlot, isClubCampSlot, resolveClubSlot, commandIdOf };
+})();
+__planCoreNs["src/clubs.js"] = (() => {
+const { SKIP_DAY } = __planCoreNs["src/commands.js"];
+const { addDays, weekdayOf } = __planCoreNs["src/dates.js"];
+// 社团状态：某个日期上，使用者当前加入的是哪个社团。
+//
+// 社团切换只在周日发生、自该周日起生效，所以某一天的社团 = 不晚于该日的最后一次切换结果。
+// 工具从不自行选择或切换社团。
+
+
+
+
+/**
+ * 某一天所在社团的查询；附带待切换信息。
+ *
+ * - `input.club` 是当前实际社团。
+ * - `input.pendingClub` 是待切换目标：**键缺失 = 不切换**，`null` = 切到回家社。
+ * - `rules` 与 `isFreeSunday` 用来算切换/加入日：最近的、没有被活动占用的周日。
+ *
+ * 返回的 `clubAt(date)` 还带 `.oldClub` / `.target` / `.switchDate` / `.joinDate`。
+ */
+function createClubLookupBase(input, rules = null, isFreeSunday = null) {
+  const oldClub = input.club ?? null;
+  const hasPending = Object.prototype.hasOwnProperty.call(input, 'pendingClub')
+    && input.pendingClub !== undefined;
+  const target = hasPending ? (input.pendingClub ?? null) : null;
+  const free = typeof isFreeSunday === 'function' ? isFreeSunday : () => true;
+
+  const firstFreeSunday = () => {
+    if (!rules) return null;
+    let date = addDays(input.playedUpTo, 1);
+    date = addDays(date, (7 - weekdayOf(date)) % 7);
+    for (let i = 0; i < 80 && date <= rules.timeline.lastSettlement; i += 1) {
+      if (free(date, oldClub)) return date;
+      date = addDays(date, 7);
+    }
+    return null;
+  };
+
+  const switchDate = rules && hasPending && target !== oldClub ? firstFreeSunday() : null;
+  const joinDate = rules && oldClub !== null && input.playedUpTo < rules.clubUnlockDate
+    ? firstFreeSunday()
+    : null;
+
+  function clubAt(date) {
+    if (switchDate === null) return oldClub;
+    return date < switchDate ? oldClub : target;
+  }
+  clubAt.oldClub = oldClub;
+  clubAt.target = target;
+  clubAt.hasPending = hasPending;
+  clubAt.switchDate = switchDate;
+  clubAt.joinDate = joinDate;
+  return clubAt;
+}
+
+/**
+ * 这一天不能执行这条指令的原因；`null` 表示可以执行。
+ *   'club-not-unlocked'  还没到社团解锁日
+ *   'club-not-selected'  这个时点没有加入任何社团
+ *   'club-mismatch'      加入的是别的社团
+ */
+function clubBlockReason(rules, command, club, date) {
+  if (command.kind !== 'club') return null;
+  if (date < rules.clubUnlockDate) return 'club-not-unlocked';
+  if (club === null) return 'club-not-selected';
+  if (command.clubId !== club) return 'club-mismatch';
+  return null;
+}
+
+/** 这一天是不是休息日（周日或固定节假日）——休息日专属指令的判定基准。 */
+function isRestDate(rules, date) {
+  return weekdayOf(date) === 0 || (rules.calendar?.restDays ?? []).includes(date);
+}
+
+/**
+ * 休息日专属指令（电话/约会）在非休息日不可执行。
+ *
+ * 候选集与界面早就按 `restOnly` 过滤了，但**钉住**（使用者显式指定）曾经绕过这道闸门：
+ * 把 `cmd-date` 钉成整周周指令，周一到周六就会照常执行，且判定为合格。
+ * 它效果全 0，数值上看不出来，但「只在休息日可用」这条规则就没被兜住（2026-11-06 修）。
+ */
+function restOnlyBlockReason(command, isRestDay) {
+  if (!command?.restOnly) return null;
+  return isRestDay ? null : 'rest-only';
+}
+
+/**
+ * 一条指令在某一天**不可执行**的原因；可执行返回 `null`。
+ *
+ * 与 `clubBlockReason` 同一形状，所以判定层、界面与「不结算」的显示都走同一条路。
+ */
+function commandBlockReason(rules, command, club, date, isRestDay = isRestDate(rules, date)) {
+  return clubBlockReason(rules, command, club, date) ?? restOnlyBlockReason(command, isRestDay);
+}
+
+/** 这一天可选的指令 id（受解锁日与当前社团限制）。 */
+function availableCommandIds(rules, club, date) {
+  return rules.commands
+    .filter((command) => !command.restOnly)
+    .filter((command) => clubBlockReason(rules, command, club, date) === null)
+    .map((command) => command.id);
+}
+
+/**
+ * 某个社团对应的那条社团指令 id；`club` 为 null 或未知时返回 null。
+ *
+ * 用于展开「当前社团指令」占位符（见 `commands.js` 的 `CLUB_COMMAND`）：
+ * 记录器标的是「这一格执行社团指令」，而具体是哪一条取决于当时加入的社团。
+ */
+function clubCommandId(rules, club) {
+  if (!club) return null;
+  const command = rules.commands.find((c) => c.kind === 'club' && c.clubId === club);
+  return command ? command.id : null;
+}
+
+/**
+ * 休息日的**日指令**候选。
+ *
+ * 不含电话/约会（`restOnly`）：它效果全 0，只作为游戏里的记录，**不进候选序列**
+ * （所有者 2026-11-06 裁决）——默认把它钉在月末两个周日等于每年白扔 24 天。
+ * 也不含「跳过」：求解器不再有"这天什么都不做"的自由度，跳过只作为活动日的硬空过存在。
+ */
+function availableDayCommandIds(rules, club, date) {
+  return rules.commands
+    .filter((command) => !command.restOnly)
+    .filter((command) => clubBlockReason(rules, command, club, date) === null)
+    .map((command) => command.id);
+}
+return { createClubLookupBase, clubBlockReason, isRestDate, restOnlyBlockReason, commandBlockReason, availableCommandIds, clubCommandId, availableDayCommandIds };
 })();
 __planCoreNs["src/calendar.js"] = (() => {
 const { addDays, weekStartOf, weekdayOf } = __planCoreNs["src/dates.js"];
+const { clubCommandId, createClubLookupBase } = __planCoreNs["src/clubs.js"];
 const { commandIdOf, isSkip } = __planCoreNs["src/commands.js"];
 // 日历与决策点结构。
 //
 // 决策单位是周，结算单位是天。一个自然周 = 周日（第 1 天）+ 平日（周一至周六）。
+// **决策轴**与**加成轴**是分开的：
+//   - 日指令日（休息日 ∪ 活动日）读自己的日指令，即使落在平日；
+//   - 只有休息日享受 ×4 加成。
 // 纯函数：只吃规则与输入，不碰 DOM，因此同一份代码既能在内联 Worker 里跑，
 // 也能在 Node 测试里通过 plan(input) 直接断言。
 
 
 
 
+
 const WEEKDAY_NAMES = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 
-/** 该周的周指令是否被显式置空——该周的平日因此空过。 */
+/** 该周的周指令是否被显式置空——该周的**非日指令日**平日因此空过。 */
 function isWeekCleared(weekCommands, weekStart) {
   return weekCommands[weekStart] === null;
 }
 
 /**
- * 一天的「空过」有三个来源，返回是哪一个（`null` 表示照常结算）：
+ * 非活动日的「空过」来源（`null` 表示照常结算）：
  *   'day'          该日在 input.skippedDays 里（指定某一天跳过）
- *   'day-command'  该休息日的日指令被显式置空
- *   'week'         该日是平日，且其周锚点的周指令被显式置空
+ *   'day-command'  该日指令日的日指令被显式置空
+ *   'week'         该日是平日（非日指令日），且其周锚点的周指令被显式置空
+ *
+ * 活动日不适用使用者空过：活动绑定指令为 `跳过` 时才是空过，见 `buildCalendar`。
  */
-function resolveSkipSource(date, isRestDay, weekStart, input, skippedDaySet) {
-  if (skippedDaySet.has(date)) return 'day';
-  if (isRestDay && input.dayCommands[date] === null) return 'day-command';
-  if (!isRestDay && isWeekCleared(input.weekCommands, weekStart)) return 'week';
+function resolveSkipSource(date, isDayCommandDay, weekStart, input) {
+  if (isDayCommandDay && input.dayCommands[date] === null) return 'day-command';
+  if (!isDayCommandDay && isWeekCleared(input.weekCommands, weekStart)) return 'week';
   return null;
 }
 
@@ -1136,15 +1289,17 @@ function resolveSkipSource(date, isRestDay, weekStart, input, skippedDaySet) {
  *
  * 求解器可以选「跳过」（`SKIP_DAY`），它是空过的等价物，因此 `commandId` 解析为 `null`，
  * 但 `skip` 标记为 `true`，让界面能把"求解器跳过的"与"使用者显式空过的"分开显示。
+ *
+ * 活动日不走这里：活动绑定指令是硬强制，由 `buildCalendar` 直接写入 `commandId`。
  */
 function resolveCommand(input, assignments, slot) {
-  const { isRestDay, date, weekStart } = slot;
-  const pinned = isRestDay ? input.dayCommands[date] : input.weekCommands[weekStart];
+  const { isDayCommandDay, date, weekStart } = slot;
+  const pinned = isDayCommandDay ? input.dayCommands[date] : input.weekCommands[weekStart];
   if (pinned !== undefined) {
     return { commandId: commandIdOf(pinned), source: 'pinned', skip: false };
   }
 
-  const assigned = isRestDay
+  const assigned = isDayCommandDay
     ? assignments?.dayCommands?.[date]
     : assignments?.weekCommands?.[weekStart];
   if (assigned !== undefined) {
@@ -1154,14 +1309,68 @@ function resolveCommand(input, assignments, slot) {
   return { commandId: null, source: 'none', skip: false };
 }
 
-function buildCalendar(rules, input, assignments = null) {
+/**
+ * 活动条件是否命中当天社团。
+ *
+ * `when` 支持的字段：`clubId` / `clubCategory` / `excludeClubId` /
+ * `excludeClubCategory`。没有 `when` 表示无条件命中。
+ */
+function matchesWhen(when, club, rules) {
+  const definition = club ? rules.clubs.find((entry) => entry.id === club) : null;
+  const category = definition?.category ?? null;
+  if (when.clubId !== undefined && club !== when.clubId) return false;
+  if (when.clubCategory !== undefined && category !== when.clubCategory) return false;
+  if (when.excludeClubId !== undefined && club === when.excludeClubId) return false;
+  if (when.excludeClubCategory !== undefined && category === when.excludeClubCategory) return false;
+  return true;
+}
+
+/**
+ * 某一天命中的活动；按**当天所在社团**解析条件与变体，没有命中返回 `null`。
+ *
+ * 变体按顺序匹配，最后一个无 `when` 的变体作为默认。条件不匹配且没有默认时，
+ * 活动不生效（当天按普通日处理）。
+ */
+function resolveActivity(rules, clubAt, date) {
+  for (const activity of rules.calendar?.activities ?? []) {
+    if (date < activity.start || date > activity.end) continue;
+    const club = clubAt(date);
+    for (const variant of activity.variants ?? [activity]) {
+      if (!variant.when || matchesWhen(variant.when, club, rules)) {
+        return { name: variant.name, command: variant.command, activity };
+      }
+    }
+    return null;
+  }
+  return null;
+}
+
+/**
+ * 活动实际强制的指令；`null` 表示活动不强制（`跳过`，或 `club`/`clubCamp` 但当前是回家社）。
+ */
+function forcedActivityCommand(rules, clubAt, date, activity) {
+  if (!activity) return null;
+  if (activity.command === 'skip') return null;
+  if (activity.command === 'club' || activity.command === 'clubCamp') {
+    return clubCommandId(rules, clubAt(date));
+  }
+  return activity.command;
+}
+
+/**
+ * 日历口径的社团查询：切换/加入日要跳过被活动占用的周日。
+ */
+function createClubLookup(input, rules) {
+  return createClubLookupBase(input, rules, (date, club) =>
+    resolveActivity(rules, () => club, date) === null);
+}
+
+function buildCalendar(rules, input, assignments = null, clubAt = createClubLookup(input, rules)) {
   const { end, lastSettlement } = rules.timeline;
   // **休息日是游戏固定事实**，来自 `rules.calendar`，不是使用者的输入：
   // 周日天然是休息日，另有一批游戏内确定的节假日（由所有者逐日核对并写入规则）。
   const restDays = new Set(rules.calendar?.restDays ?? []);
-  const skippedDaySet = new Set(input.skippedDays);
   // 时间轴首日就是已玩到，它是**状态快照**：那一天的结算已经发生在游戏里，所以不结算。
-  // 这条原先是"仅当首日等于时间轴起点"的特例，合并起点与已玩到之后成为通则（见 ADR-0004）。
   const snapshotDay = input.playedUpTo;
 
   const days = [];
@@ -1170,20 +1379,58 @@ function buildCalendar(rules, input, assignments = null) {
     const weekStart = weekStartOf(date);
     const isRestDay = weekday === 0 || restDays.has(date);
 
-    const skipSource = resolveSkipSource(date, isRestDay, weekStart, input, skippedDaySet);
-    const isEmpty = skipSource !== null;
+    // 活动日：走日指令轴；`club`/`clubCamp` 在回家社时按普通日处理（不强制）。
+    const activity = resolveActivity(rules, clubAt, date);
+    const forcedCommand = forcedActivityCommand(rules, clubAt, date, activity);
+    const isActivitySkip = activity !== null && activity.command === 'skip';
+    const isActivity = activity !== null && (isActivitySkip || forcedCommand !== null);
+
+    // 社团加入/切换：最近的周日（跳过被活动占用的周日）；活动日优先。
+    const isJoin = clubAt.joinDate !== null && date === clubAt.joinDate;
+    const isSwitch = clubAt.switchDate !== null && date === clubAt.switchDate;
+    const switchTarget = isSwitch ? clubAt.target : null;
+    const joinCommand = isJoin ? clubCommandId(rules, clubAt.oldClub) : null;
+    const switchCommand = isSwitch && switchTarget !== null
+      ? clubCommandId(rules, switchTarget)
+      : null;
+
+    // 体育类社团：每月第 3 个周日的日指令强制为当前社团指令（活动/加入/切换优先）。
+    const club = clubAt(date);
+    const clubDefinition = club ? rules.clubs.find((entry) => entry.id === club) : null;
+    const dayOfMonth = Number(date.slice(8, 10));
+    const isThirdSunday = weekday === 0 && dayOfMonth >= 15 && dayOfMonth <= 21;
+    const sportsCommand = !isActivity && !isJoin && !isSwitch
+      && isThirdSunday && clubDefinition?.category === 'sports'
+      ? clubCommandId(rules, club)
+      : null;
+    const isSports = sportsCommand !== null;
+
+    const forced = isActivity
+      ? { commandId: forcedCommand, source: 'activity' }
+      : isSwitch && switchCommand !== null
+        ? { commandId: switchCommand, source: 'switch' }
+        : isJoin && joinCommand !== null
+          ? { commandId: joinCommand, source: 'join' }
+          : isSports
+            ? { commandId: sportsCommand, source: 'sports' }
+            : null;
+    const isForced = forced !== null;
+    const isDayCommandDay = isRestDay || isForced;
+
+    const skipSource = isForced
+      ? null
+      : resolveSkipSource(date, isDayCommandDay, weekStart, input);
+    const isEmpty = isActivity ? isActivitySkip : skipSource !== null;
     const isSnapshot = date === snapshotDay;
     const isTimelineEnd = date === end;
 
-    // 使用者显式指定（含显式 null = 空过）最优先；其次才是求解器的填空；都没有就留空（待定）。
-    // 空过就是「指令留空」（见 GLOSSARY）；界面要显示"本来会执行什么"时走同一个解析，
-    // 而不是让数据模型替界面记住。
-    const resolved = isEmpty
-      ? { commandId: null, source: 'none', skip: false }
-      : resolveCommand(input, assignments, { isRestDay, date, weekStart });
-    const commandId = resolved.commandId;
-    // `isSettled` 只表达"这一天在时间轴内、应结算"，与"有没有指令"无关：
-    // 空过与跳过的日子同样是 `isSettled: true` + `commandId: null`，规划与重放按 null 跳过结算。
+    const resolved = forced
+      ?? (isEmpty
+        ? { commandId: null, source: 'none', skip: false }
+        : resolveCommand(input, assignments, { isDayCommandDay, date, weekStart }));
+
+    // `isSettled` 表达"这一天要不要结算"：空过/跳过（`isEmpty`）、起点快照、终点都是 false，
+    // 所以它们不会进结算。指令缺失（`commandId === null`）另由 `plan()` 按 null 跳过。
     const isSettled = !isEmpty && !isSnapshot && !isTimelineEnd;
 
     days.push({
@@ -1192,11 +1439,21 @@ function buildCalendar(rules, input, assignments = null) {
       weekdayName: WEEKDAY_NAMES[weekday],
       weekStart,
       isRestDay,
+      isDayCommandDay,
+      isActivity,
+      isActivitySkip,
+      isSports,
+      isForced,
+      isJoin,
+      isSwitch,
+      switchTarget,
+      activity: activity ? { name: activity.name, command: activity.command } : null,
       isEmpty,
       skipSource,
       isSkipped: resolved.skip,
       isSettled,
-      commandId,
+      commandId: resolved.commandId,
+      commandSource: resolved.source,
     });
   }
 
@@ -1215,6 +1472,8 @@ function buildCalendar(rules, input, assignments = null) {
       settledDays: days.filter((d) => d.isSettled).length,
       emptyDays: days.filter((d) => d.isEmpty).length,
       restDays: days.filter((d) => d.isRestDay).length,
+      activityDays: days.filter((d) => d.isActivity).length,
+      forcedDays: days.filter((d) => d.isForced).length,
       weeks: new Set(days.map((d) => d.weekStart)).size,
     },
     lastSettlement,
@@ -1244,20 +1503,21 @@ function groupWeeks(days, clearedWeeks) {
 }
 
 /**
- * 时间轴上的有序事件。`kind` 取三种值：
- *   'day-command'   选择某一天的日指令
+ * 时间轴上的有序事件。`kind` 取四种值：
+ *   'activity'      活动日（事件槽：显示活动名称/绑定指令，只确认）
+ *   'day-command'   选择某个**非活动**日指令日的日指令
  *   'settle'        该日结算
  *   'week-command'  选择该周的周指令
  *
- * 完整周的次序是「周日日指令 → 周日结算 → 本周周指令 → 各平日结算」；被标记为
- * 休息日的平日，其日指令决策插在该日结算之前；首周没有周日落在时间轴内时，
- * 周指令决策落在首周第一次结算之前。空过或起止例外的日子不产生任何事件。
+ * 完整周的次序是「周日事件/日指令 → 周日结算 → 本周周指令 → 各平日结算」；
+ * 活动日不产生日指令决策（指令是强制的）。首周没有周日落在时间轴内时，周指令决策
+ * 落在首周第一次结算之前。空过或起止例外的日子不产生任何事件。
  */
 function buildSequence(days) {
-  // 只有存在「会结算的平日」时，这一周才真的需要一个周指令决策。
+  // 只有存在「会结算、且不是日指令日的平日」时，这一周才真的需要一个周指令决策。
   const weekHasSettledWeekday = new Set();
   for (const day of days) {
-    if (day.weekday !== 0 && day.isSettled) weekHasSettledWeekday.add(day.weekStart);
+    if (!day.isDayCommandDay && day.isSettled) weekHasSettledWeekday.add(day.weekStart);
   }
 
   const entries = [];
@@ -1271,113 +1531,31 @@ function buildSequence(days) {
       handledWeek.add(day.weekStart);
 
       if (day.date === day.weekStart) {
-        if (day.isSettled) push('day-command');
+        if (day.isForced) push('activity');
+        else if (day.isDayCommandDay && day.isSettled) push('day-command');
         if (day.isSettled) push('settle');
         if (needsWeekCommand) push('week-command');
       } else {
         // 首周没有周日落在时间轴内：周指令决策落在首周第一次结算之前
         if (needsWeekCommand) push('week-command');
-        if (day.isRestDay && day.isSettled) push('day-command');
+        if (day.isForced) push('activity');
         if (day.isSettled) push('settle');
       }
       continue;
     }
 
-    // 本周内被标记为休息日的日子，在该日结算之前插入它的日指令决策
-    if (day.isRestDay && day.isSettled) push('day-command');
+    // 本周内的日子：活动/体育强制是事件；非强制的日指令日有日指令决策；再结算。
+    if (day.isForced) push('activity');
+    if (day.isDayCommandDay && !day.isForced && day.isSettled) push('day-command');
     if (day.isSettled) push('settle');
   }
 
   return entries.map((entry, order) => ({ ...entry, order }));
 }
-return { WEEKDAY_NAMES, resolveCommand, buildCalendar };
-})();
-__planCoreNs["src/clubs.js"] = (() => {
-const { SKIP_DAY } = __planCoreNs["src/commands.js"];
-// 社团状态：某个日期上，使用者当前加入的是哪个社团。
-//
-// 社团切换只在周日发生、自该周日起生效，所以某一天的社团 = 不晚于该日的最后一次切换结果。
-// 工具从不自行选择或切换社团。
-
-
-
-/**
- * 起点那一刻各社团的经验值，按 `scale` 转成定点整数。
- * 每个社团各自一份，由输入直接给出（`clubExperience` 是 `{ clubId: 值 }`），缺席的按 0 起算。
- *
- * 规划与求解都以它为初始状态，所以只此一处口径。
- */
-function seededClubExperience(rules, input, scale) {
-  const seeded = input.clubExperience ?? {};
-  return Object.fromEntries(
-    rules.clubs.map((club) => [club.id, (seeded[club.id] ?? 0) * scale]),
-  );
-}
-
-/** @returns {(date: string) => string | null} */
-function createClubLookup(input) {
-  const changes = [...input.clubChanges].sort((a, b) =>
-    a.date < b.date ? -1 : a.date > b.date ? 1 : 0,
-  );
-
-  return function clubAt(date) {
-    let club = input.initialClub;
-    for (const change of changes) {
-      if (change.date > date) break;
-      club = change.clubId;
-    }
-    return club;
-  };
-}
-
-/**
- * 这一天不能执行这条指令的原因；`null` 表示可以执行。
- *   'club-not-unlocked'  还没到社团解锁日
- *   'club-not-selected'  这个时点没有加入任何社团
- *   'club-mismatch'      加入的是别的社团
- */
-function clubBlockReason(rules, command, club, date) {
-  if (command.kind !== 'club') return null;
-  if (date < rules.clubUnlockDate) return 'club-not-unlocked';
-  if (club === null) return 'club-not-selected';
-  if (command.clubId !== club) return 'club-mismatch';
-  return null;
-}
-
-/** 这一天可选的指令 id（受解锁日与当前社团限制）。 */
-function availableCommandIds(rules, club, date) {
-  return rules.commands
-    .filter((command) => clubBlockReason(rules, command, club, date) === null)
-    .map((command) => command.id);
-}
-
-/**
- * 某个社团对应的那条社团指令 id；`club` 为 null 或未知时返回 null。
- *
- * 用于展开「当前社团指令」占位符（见 `commands.js` 的 `CLUB_COMMAND`）：
- * 记录器标的是「这一格执行社团指令」，而具体是哪一条取决于当时加入的社团。
- */
-function clubCommandId(rules, club) {
-  if (!club) return null;
-  const command = rules.commands.find((c) => c.kind === 'club' && c.clubId === club);
-  return command ? command.id : null;
-}
-
-/**
- * 休息日的**日指令**候选：可用指令 + 「跳过」。
- *
- * 跳过是空过的等价物（见 `SKIP_DAY`）：它给休息日一个"这天什么都不做"的自由度——
- * 有些休息日执行任何指令都不如空过（属性被拖低、压力也未必划算）。
- * **周指令不在其中**：使用者仍可用「空过」把整周置空，那是输入层的 `null`。
- */
-function availableDayCommandIds(rules, club, date) {
-  return [...availableCommandIds(rules, club, date), SKIP_DAY];
-}
-return { seededClubExperience, createClubLookup, clubBlockReason, availableCommandIds, clubCommandId, availableDayCommandIds };
+return { WEEKDAY_NAMES, resolveCommand, resolveActivity, createClubLookup, buildCalendar };
 })();
 __planCoreNs["src/checkpoints.js"] = (() => {
 const { buildCalendar } = __planCoreNs["src/calendar.js"];
-const { clubCommandId } = __planCoreNs["src/clubs.js"];
 // 检查点：目标的唯一表达方式。
 //
 // 原先的三类目标（结局目标 / 小目标 / 全局约束）在这里统一成一种结构。每个检查点
@@ -1393,7 +1571,6 @@ const { clubCommandId } = __planCoreNs["src/clubs.js"];
 // 每条属性的**起点值**隐式构成它的第一个检查点，不由数据录入。
 //
 // 三类来源与目标优先级见 ADR-0007 与 ADR-0009。
-
 
 
 
@@ -1426,25 +1603,6 @@ function shortfallOf(actual, op, value) {
 /** 该实际值是否满足这个检查点。与 `shortfallOf === 0` 同一口径。 */
 function meets(actual, op, value) {
   return op === '>=' ? actual >= value : actual < value;
-}
-
-/**
- * 社团集训周的硬约束：`rules.calendar.clubWeeks` 列出的那些自然周里，**该周全部平日
- * 必须执行当前社团的社团指令**。回家社（未加入任何社团）例外，按正常平日处理。
- *
- * 返回该周**强制执行的指令 id**；不是集训周、或回家社、或查不到对应社团指令时返回
- * `null`（都表示"这一周没有强制"）。数据里的 `clubWeeks` 元素形如
- * `{ date, command }`，`date` 是周锚点（周日）——见 `rules.json` 的 `calendar.clubWeeks`。
- *
- * **解锁日之前不强制**：社团指令自 `rules.clubUnlockDate` 起才可用（1995-04-09），
- * 在那之前的集训周没有可执行的社团指令——强制一条"此刻不可用"的指令既无意义，
- * 也会把"解锁日之前社团指令不被结算"这类合法情形误判为违规。
- */
-function clubWeekMandate(rules, club, weekStart) {
-  if (!club) return null;
-  if (weekStart < rules.clubUnlockDate) return null;
-  const weeks = rules.calendar?.clubWeeks ?? [];
-  return weeks.some((week) => week.date === weekStart) ? clubCommandId(rules, club) : null;
 }
 
 /**
@@ -1590,24 +1748,16 @@ function evaluateCheckpoints(rules, input, days) {
   // **一条**规则。逐落点汇报会产出几千行，没法用；所以每条规则只出一行，并给出最紧读数。
   const grouped = new Map();
   for (const checkpoint of schedule) {
-    const day = byDate.get(checkpoint.date);
-    // 全局约束看**当天结算后**的值；小目标 / 结局目标看**前 1 天的结算值**，
-    // 也就是 `plan` 在结算该日之前拍下的 `attributesBefore`（见 plan.js 主循环）。
-    // 落点当天不结算（起点快照 / 空过 / 跳过 / 时间轴终点）时两者相同，所以不用特例。
-    const basis = checkpoint.source === 'global'
-      ? day?.attributes
-      : day?.attributesBefore ?? day?.attributes;
-    const actual = actualOf(checkpoint, basis ?? startValues);
-    const shortfall = shortfallOf(actual, checkpoint.op, checkpoint.value);
-    const met = meets(actual, checkpoint.op, checkpoint.value);
+    // 过期：当前日期已经越过落点，这类目标不再参与判定（界面上显示「已跳过」）。
+    const expired = checkpoint.source !== 'global' && checkpoint.date < input.playedUpTo;
 
     let entry = grouped.get(checkpoint.id);
     if (!entry) {
       entry = {
         id: checkpoint.id,
         label: labelOf(checkpoint),
-        // 是否参与"全达标"（`ok`）判定。全局约束不参与 `ok`，它决定的是 `valid`。
-        gate: checkpoint.source !== 'global',
+        // 是否参与"全达标"（`ok`）判定。全局约束与过期目标不参与 `ok`。
+        gate: checkpoint.source !== 'global' && !expired,
         attribute: checkpoint.attribute ?? null,
         attributes: checkpoint.attributes ?? null,
         op: checkpoint.op,
@@ -1621,13 +1771,52 @@ function evaluateCheckpoints(rules, input, days) {
         hardViolations: 0,
         achieved: false,
         firstAchievedDate: null,
-        lastActual: actual,
-        lastShortfall: shortfall,
-        worstActual: actual,
-        worstShortfall: shortfall,
+        lastActual: 0,
+        lastShortfall: 0,
+        worstActual: 0,
+        worstShortfall: 0,
+        expired,
       };
       grouped.set(checkpoint.id, entry);
     }
+    if (expired) continue;
+
+    // 指令计数小目标：base + 截止日前一天为止执行过的指令天数（含强制执行）。
+    if (checkpoint.kind === 'count') {
+      const deadline = checkpoint.date;
+      const executed = days.filter(
+        (day) => day.date < deadline && (day.effectiveCommandId ?? day.commandId),
+      ).length;
+      const actual = Number(checkpoint.base ?? 0) + executed;
+      const shortfall = shortfallOf(actual, checkpoint.op, checkpoint.value);
+      const met = meets(actual, checkpoint.op, checkpoint.value);
+      entry.landings += 1;
+      if (!met) {
+        entry.unmetLandings += 1;
+        if (entry.achieved) entry.hardViolations += 1;
+      } else if (!entry.achieved) {
+        entry.achieved = true;
+        entry.firstAchievedDate = deadline;
+      }
+      entry.lastActual = actual;
+      entry.lastShortfall = shortfall;
+      if (shortfall > entry.worstShortfall) {
+        entry.worstShortfall = shortfall;
+        entry.worstActual = actual;
+      }
+      continue;
+    }
+
+    const day = byDate.get(checkpoint.date);
+    // 全局约束看**当天结算后**的值；小目标 / 结局目标看**前 1 天的结算值**，
+    // 也就是 `plan` 在结算该日之前拍下的 `attributesBefore`（见 plan.js 主循环）。
+    // 落点当天不结算（起点快照 / 空过 / 跳过 / 时间轴终点）时两者相同，所以不用特例。
+    const basis = checkpoint.source === 'global'
+      ? day?.attributes
+      : day?.attributesBefore ?? day?.attributes;
+    const actual = actualOf(checkpoint, basis ?? startValues);
+    const shortfall = shortfallOf(actual, checkpoint.op, checkpoint.value);
+    const met = meets(actual, checkpoint.op, checkpoint.value);
 
     entry.landings += 1;
     if (!met) {
@@ -1650,7 +1839,9 @@ function evaluateCheckpoints(rules, input, days) {
   }
 
   for (const entry of grouped.values()) {
-    const state = entry.hardViolations > 0 ? 'violated' : entry.achieved ? 'met' : 'unmet';
+    const state = entry.expired
+      ? 'expired'
+      : entry.hardViolations > 0 ? 'violated' : entry.achieved ? 'met' : 'unmet';
     items.push({
       id: entry.id,
       label: entry.label,
@@ -1711,13 +1902,12 @@ function evaluateCheckpoints(rules, input, days) {
   // 两个顶层判定，对应「硬约束 / 目标」两分（GLOSSARY）：
   //   `ok`    目标是否全部达标——只看参与判定的项（终点目标 + 小目标）。
   //   `valid` 该日程是否合格——没有任何硬违反。本函数能判定的硬约束是**全局约束的硬阶段**
-  //           （压力上限由 `gc-stress` 这条全局规则表达）、**社团集训周**与**首次社团指令
-  //           必须是周日**（violating days 由 `plan` 在解析出实际执行的指令后逐日标注
-  //           `clubWeekViolation` / `clubFirstViolation`）；社团解锁/互斥与钉住的槽位由日历与
-  //           求解器在结构上保证，一份排好的日程里不会出现。
+  //           （压力上限由 `gc-stress` 这条全局规则表达）与**首次社团指令必须是周日**
+  //           （violating days 由 `plan` 在解析出实际执行的指令后逐日标注 `clubFirstViolation`）；
+  //           活动日的强制指令、社团解锁/互斥与钉住的槽位由日历与求解器在结构上保证。
   const gated = items.filter((item) => item.gate !== false && item.state !== 'unset');
   const hardViolations = items.reduce((sum, item) => sum + (item.hardViolations ?? 0), 0);
-  const clubWeekViolations = days.filter((day) => day.clubWeekViolation === true).length;
+  const clubWeekViolations = 0;
   // 「第一次执行的社团指令必须是周日的日指令」（`rules.clubFirstCommand`，由 `plan` 逐日标注）。
   const clubFirstViolations = days.filter((day) => day.clubFirstViolation === true).length;
   // 规则是否**整条豁免**（使用者已选社团 + 「已玩到」落在集训周内，见 plan.js）：如实带出去，
@@ -1739,10 +1929,9 @@ function labelOf(checkpoint) {
   const names = attributeIdOf(checkpoint);
   return names.length > 1 ? names.join('+') : names[0] ?? checkpoint.id;
 }
-return { attributeIdOf, actualOf, shortfallOf, meets, clubWeekMandate, buildCheckpointSchedule, createTrajectory, createTrajectoryIndex, valueAt, intervalAt, evaluateCheckpoints };
+return { attributeIdOf, actualOf, shortfallOf, meets, buildCheckpointSchedule, createTrajectory, createTrajectoryIndex, valueAt, intervalAt, evaluateCheckpoints };
 })();
 __planCoreNs["src/settlement.js"] = (() => {
-const { weekStartOf } = __planCoreNs["src/dates.js"];
 // 单日结算内核。
 //
 // 接缝是 `apply(rules, state, commandId, dayKind) → 新状态`：规则在这一层注入，
@@ -1753,7 +1942,6 @@ const { weekStartOf } = __planCoreNs["src/dates.js"];
 //
 // 期望值与结算共用同一份 `branches()`：求解器与规划必须同一口径，否则搜索会在与结算
 // 不同的世界里寻优，得出的日程一重放就对不上。
-
 
 
 const WEEKDAY = 'weekday';
@@ -1820,37 +2008,15 @@ function expectedEffects(rules, commandOrId, dayKind) {
 }
 
 /**
- * 这一天是否落在**有加成的社团集训周**里。
+ * 某一天的社团经验增益。
  *
- * `rules.calendar.clubWeeks` 的 6 条分两组：**8 月组**（1995-08-13、1996-08-11、1997-08-10）
- * 有社团经验加成，**10 月组**没有。加成的作用域严格是**那一周的平日**——集训周不含休息日，
- * 所以该周的休息日仍走基础值 `restDay`。
- *
- * 日期从字符串取，**不用 `new Date` 的本地时区**：跨时区跑会差一天。
+ * `社团集训指令`（`clubCamp`）**一律 +2**，不看星期/月份；普通社团指令平日 +1、休息日 +4。
+ * `rule` 是这一天的日历对象（含 `activity`）；拿不到活动信息时按普通规则处理。
  */
-function isAugustClubWeek(rules, weekStart) {
-  if (!weekStart) return false;
-  return (rules.calendar?.clubWeeks ?? []).some(
-    (week) => week.date === weekStart && week.date.slice(5, 7) === '08',
-  );
-}
-
-/**
- * 某一天的社团经验增益。加成只对**8 月集训周的平日**生效（见 `isAugustClubWeek`）。
- *
- * 判定优先级：
- *   1. `rule.weekStart`（最可靠——调用方手里有完整的日历对象）；
- *   2. `date`（退而求其次——从日期自己推周锚点，**用字符串运算，不碰时区**）；
- *   3. 两者都没有：退回基础值。这条是为了兼容大量只关心"平日 +1 / 休息日 +4"的
- *      既有测试调用点，代价是它们在 8 月集训周上会少算——所以 `apply` 在**能判定
- *      却判不出来**时会抛错，而不是静默给错值。
- */
-function clubExperienceGainOn(rules, dayKind, rule = null, date = null) {
+function clubExperienceGainOn(rules, dayKind, rule = null) {
   const gain = rules.clubExperienceGain;
-  if (dayKind === REST_DAY) return gain.restDay;
-  const weekStart = rule?.weekStart ?? (date ? weekStartOf(date) : null);
-  if (weekStart === null) return gain.weekday;
-  return isAugustClubWeek(rules, weekStart) ? gain.augustWeekday : gain.weekday;
+  if (rule?.activity?.command === 'clubCamp') return gain.camp;
+  return dayKind === REST_DAY ? gain.restDay : gain.weekday;
 }
 
 const clamp = (value, attribute) => Math.min(attribute.max, Math.max(attribute.min, value));
@@ -1861,12 +2027,10 @@ const clamp = (value, attribute) => Math.min(attribute.max, Math.max(attribute.m
  * `commandId` 为 `null` / `undefined` 表示**空过**：不执行、不判定成败、也不结算，
  * 状态原样带入下一天。`state` 不被修改。
  *
- * 第 5/6 参用于判断 **8 月集训周加成**，给任意一个即可（两个都不给则按基础增益处理）：
- *   - `rule`：这一天在日历里的身份 `{ date, isRestDay, weekStart }`；
- *   - `date`：只给日期也行，内部用**字符串运算**推周锚点，不碰时区。
- * 能拿到 `day` 的调用点（`plan` / `beam`）应当传 `day`。
+ * 第 5 参是这一天的日历对象（含 `activity`），用来判定 `clubCamp` 的社团经验 +2；
+ * 不传则按普通社团指令的增益处理。
  */
-function apply(rules, state, commandId, dayKind, rule = null, date = null) {
+function apply(rules, state, commandId, dayKind, rule = null) {
   const attributes = { ...state.attributes };
   const command = resolveCommand(rules, commandId);
 
@@ -1882,7 +2046,7 @@ function apply(rules, state, commandId, dayKind, rule = null, date = null) {
   // 落点是属性 `clubExperience`，**不是** `command.clubId`——后者是社团 id（如 `science-club`），
   // 根本不是属性。写错会让增益被静默丢弃（历史上真发生过）。
   if (command.kind === 'club') {
-    const gain = clubExperienceGainOn(rules, dayKind, rule, date ?? rule?.date ?? null);
+    const gain = clubExperienceGainOn(rules, dayKind, rule);
     const attribute = rules.attributes.find((a) => a.id === CLUB_EXPERIENCE_ID);
     if (!attribute) {
       throw new Error(`规则里缺少社团经验属性 ${CLUB_EXPERIENCE_ID}，社团指令的增益无处可加`);
@@ -1892,13 +2056,14 @@ function apply(rules, state, commandId, dayKind, rule = null, date = null) {
 
   return { ...state, attributes };
 }
-return { WEEKDAY, REST_DAY, CLUB_EXPERIENCE_ID, resolveCommand, branches, expectedEffects, isAugustClubWeek, clubExperienceGainOn, apply };
+return { WEEKDAY, REST_DAY, CLUB_EXPERIENCE_ID, resolveCommand, branches, expectedEffects, clubExperienceGainOn, apply };
 })();
 __planCoreNs["src/quota.js"] = (() => {
 const { addDays, weekStartOf } = __planCoreNs["src/dates.js"];
-const { availableCommandIds, availableDayCommandIds, clubCommandId, createClubLookup } = __planCoreNs["src/clubs.js"];
-const { CLUB_EXPERIENCE_ID, REST_DAY, WEEKDAY, expectedEffects } = __planCoreNs["src/settlement.js"];
+const { availableCommandIds, availableDayCommandIds, clubCommandId } = __planCoreNs["src/clubs.js"];
+const { CLUB_EXPERIENCE_ID, REST_DAY, WEEKDAY, clubExperienceGainOn, expectedEffects } = __planCoreNs["src/settlement.js"];
 const { buildCheckpointSchedule } = __planCoreNs["src/checkpoints.js"];
+const { createClubLookup, resolveActivity } = __planCoreNs["src/calendar.js"];
 // 周配额分配：先用**精确方法**求出"每条指令各用几周"，再交给排布层。
 //
 // 为什么需要它：每周只有一条周指令、作用于 6 个平日，所以**一个决策同时推动全部 10 个
@@ -1914,6 +2079,7 @@ const { buildCheckpointSchedule } = __planCoreNs["src/checkpoints.js"];
 // 于是"把 152 周分给各条主攻指令"就是一个**变量很少的整数规划**。这里用
 // 「缺口驱动的边际贪心 + 逐周最优分配」求解：每轮把一周交给"最能压低当前最大缺口"的
 // 指令，直到全部达标或周数用尽。它不需要任何权重表——缺口按**归一化比例**比较。
+
 
 
 
@@ -1946,19 +2112,53 @@ function endTargetsOf(rules, schedule) {
  * **休息日不能按"i === 0（周日）"硬编码**：`rules.calendar.restDays` 里还有一批游戏内
  * 确定的节假日，它们落在周一至周六，同样走各自的日指令。漏掉它们会把配额算错。
  */
-function weekStructure(rules, weekStart) {
+function weekStructure(rules, weekStart, input, clubAt) {
   const fixedRest = new Set(rules.calendar?.restDays ?? []);
   const weekdays = [];
   const restDays = [];
+  const activityDays = [];
   for (let i = 0; i < 7; i += 1) {
     const date = addDays(weekStart, i);
-    if (date < rules.timeline.start || date > rules.timeline.lastSettlement) continue;
-    if (date === rules.timeline.start) continue;
+    if (date < input.playedUpTo || date > rules.timeline.lastSettlement) continue;
+    if (date === input.playedUpTo) continue;
     const isRest = i === 0 || fixedRest.has(date);
+    const activity = resolveActivity(rules, clubAt, date);
+    const club = clubAt(date);
+    const clubDefinition = club ? rules.clubs.find((entry) => entry.id === club) : null;
+    const dayOfMonth = Number(date.slice(8, 10));
+    const isThirdSunday = i === 0 && dayOfMonth >= 15 && dayOfMonth <= 21;
+    const isJoin = clubAt.joinDate !== null && date === clubAt.joinDate;
+    const isSwitch = clubAt.switchDate !== null && date === clubAt.switchDate;
+    const joinCommand = isJoin ? clubCommandId(rules, clubAt.oldClub) : null;
+    const switchCommand = isSwitch && clubAt.target !== null
+      ? clubCommandId(rules, clubAt.target)
+      : null;
+    if (isJoin || isSwitch) {
+      activityDays.push({
+        date,
+        isRest,
+        command: isSwitch ? switchCommand : joinCommand,
+        switch: isSwitch ? clubAt.target : undefined,
+      });
+      continue;
+    }
+    const sportsCommand = !activity && isThirdSunday && clubDefinition?.category === 'sports'
+      ? clubCommandId(rules, club)
+      : null;
+    const forced = (activity !== null && (
+      activity.command === 'skip'
+      || ((activity.command === 'club' || activity.command === 'clubCamp')
+        ? Boolean(clubCommandId(rules, club))
+        : true)
+    )) || sportsCommand !== null;
+    if (forced) {
+      activityDays.push({ date, isRest, command: activity ? activity.command : sportsCommand });
+      continue;
+    }
     if (isRest) restDays.push(date);
     else weekdays.push(date);
   }
-  return { weekdays, restDays };
+  return { weekdays, restDays, activityDays };
 }
 
 /**
@@ -1967,8 +2167,8 @@ function weekStructure(rules, weekStart) {
  * @returns `{ plan, unmet, usedWeeks, weeks }`，`unmet` 是最终仍达不到的属性清单。
  */
 function allocateQuota(rules, input) {
-  const weeks = buildCalendarWeeks(rules, input);
-  const clubAt = createClubLookup(input);
+  const clubAt = createClubLookup(input, rules);
+  const weeks = buildCalendarWeeks(rules, input, clubAt);
   const schedule = buildCheckpointSchedule(rules, input);
   const targets = endTargetsOf(rules, schedule);
 
@@ -1977,6 +2177,7 @@ function allocateQuota(rules, input) {
     weekStart: week.weekStart,
     weekdayDates: week.weekdays,
     restDates: week.restDays,
+    activityDates: week.activityDays,
     pool: availableCommandIds(rules, clubAt(week.weekStart), week.weekStart),
   }));
 
@@ -1997,18 +2198,57 @@ function allocateQuota(rules, input) {
   }
   const vectorFor = (s, commandId) => vectors.get(s.pool.join('|') + '|' + s.weekdayDates.length).get(commandId);
 
-  const start = Object.fromEntries(rules.attributes.map((a) => [a.id, a.default]));
+  const start = { ...input.attributes };
   const active = rules.attributes.filter((a) => targets.has(a.id) && a.id !== CLUB_EXPERIENCE_ID);
 
-  /** 给定"每周选哪条"，算终值（含夹逼）。 */
+  const clubExperiences = { ...(input.clubExperiences ?? {}) };
+
+  /** 把一周里的固定活动日效果施加上去（活动日不是自由选择）。 */
+  const applyActivity = (state, activity) => {
+    if (activity.switch !== undefined) {
+      if (clubAt.oldClub) clubExperiences[clubAt.oldClub] = state[CLUB_EXPERIENCE_ID];
+      state[CLUB_EXPERIENCE_ID] = activity.switch ? (clubExperiences[activity.switch] ?? 0) : 0;
+    }
+    if (!activity || activity.command === 'skip') return;
+    const club = clubAt(activity.date);
+    const commandId = (activity.command === 'club' || activity.command === 'clubCamp')
+      ? clubCommandId(rules, club)
+      : activity.command;
+    if (!commandId) return;
+    const command = rules.commands.find((c) => c.id === commandId);
+    if (!command) return;
+    const perDay = expectedEffects(rules, command, activity.isRest ? REST_DAY : WEEKDAY);
+    for (const a of rules.attributes) {
+      state[a.id] = Math.max(a.min, Math.min(a.max, state[a.id] + perDay[a.id]));
+    }
+    if (command.kind === 'club') {
+      const gain = clubExperienceGainOn(
+        rules,
+        activity.isRest ? REST_DAY : WEEKDAY,
+        { activity: { command: activity.command } },
+      );
+      const attribute = rules.attributes.find((a) => a.id === CLUB_EXPERIENCE_ID);
+      if (attribute) {
+        state[CLUB_EXPERIENCE_ID] = Math.max(
+          attribute.min,
+          Math.min(attribute.max, state[CLUB_EXPERIENCE_ID] + gain),
+        );
+      }
+    }
+  };
+
+  /** 给定"每周选哪条"，算终值（含夹逼与活动日）。 */
   const evaluate = (choices) => {
     const state = { ...start };
     choices.forEach((commandId, index) => {
-      if (commandId === null) return;
-      const vector = vectorFor(structures[index], commandId);
-      for (const a of rules.attributes) {
-        state[a.id] = Math.max(a.min, Math.min(a.max, state[a.id] + vector[a.id]));
+      const s = structures[index];
+      if (commandId !== null) {
+        const vector = vectorFor(s, commandId);
+        for (const a of rules.attributes) {
+          state[a.id] = Math.max(a.min, Math.min(a.max, state[a.id] + vector[a.id]));
+        }
       }
+      for (const activity of s.activityDates) applyActivity(state, activity);
     });
     return state;
   };
@@ -2033,15 +2273,8 @@ function allocateQuota(rules, input) {
     return a.total - b.total;
   };
 
-  // 固定日历里的社团集训周：那段时间游戏里只能做社团指令，配额层照办、不再重选。
-  const pinnedClubWeeks = new Set((rules.calendar?.clubWeeks ?? []).map((w) => w.date));
-
-  // 初值：钉住的周用社团指令，其余先留空（下面迭代会填）。
-  const choices = structures.map((s) => {
-    if (!pinnedClubWeeks.has(s.weekStart)) return null;
-    const command = clubCommandId(rules, clubAt(s.weekStart));
-    return s.pool.includes(command) ? command : null;
-  });
+  // 初值：全部先留空（下面迭代会填）；活动日不是自由选择，不参与周指令分配。
+  const choices = structures.map(() => null);
   let best = keyOf(evaluate(choices));
   let bestChoices = [...choices];
 
@@ -2049,8 +2282,6 @@ function allocateQuota(rules, input) {
   for (let pass = 0; pass < 40; pass += 1) {
     let improved = false;
     for (let index = 0; index < structures.length; index += 1) {
-      // 固定日历钉住的社团集训周不参与重选。
-      if (pinnedClubWeeks.has(structures[index].weekStart)) continue;
       const original = choices[index];
       let localBest = original;
       let localKey = null;
@@ -2108,16 +2339,17 @@ function allocateQuota(rules, input) {
       }
       return { date, commandId: restBest };
     });
+    for (const activity of s.activityDates) applyActivity(state, activity);
     plan.push({ weekStart: s.weekStart, commandId, weekdayDates: s.weekdayDates, restCommands });
   });
 
   return { plan, unmet: keyOf(state), state };
 }
 
-function buildCalendarWeeks(rules, input) {
+function buildCalendarWeeks(rules, input, clubAt) {
   const weeks = [];
-  for (let anchor = weekStartOf(rules.timeline.start); anchor <= rules.timeline.lastSettlement; anchor = addDays(anchor, 7)) {
-    const structure = weekStructure(rules, anchor);
+  for (let anchor = weekStartOf(input.playedUpTo); anchor <= rules.timeline.lastSettlement; anchor = addDays(anchor, 7)) {
+    const structure = weekStructure(rules, anchor, input, clubAt);
     weeks.push({ weekStart: anchor, ...structure });
   }
   return weeks;
@@ -2134,12 +2366,11 @@ function buildCalendarWeeks(rules, input) {
 return { allocateQuota };
 })();
 __planCoreNs["src/descent.js"] = (() => {
-const { buildCalendar } = __planCoreNs["src/calendar.js"];
+const { buildCalendar, createClubLookup } = __planCoreNs["src/calendar.js"];
 const { weekStartOf } = __planCoreNs["src/dates.js"];
 const { SKIP_DAY, commandIdOf, isClubSlot } = __planCoreNs["src/commands.js"];
-const { clubWeekMandate } = __planCoreNs["src/checkpoints.js"];
-const { availableCommandIds, availableDayCommandIds, clubBlockReason, clubCommandId, createClubLookup } = __planCoreNs["src/clubs.js"];
-const { clubExperienceGainOn, expectedEffects, REST_DAY, WEEKDAY } = __planCoreNs["src/settlement.js"];
+const { availableCommandIds, availableDayCommandIds, clubCommandId, commandBlockReason } = __planCoreNs["src/clubs.js"];
+const { CLUB_EXPERIENCE_ID, clubExperienceGainOn, expectedEffects, REST_DAY, WEEKDAY } = __planCoreNs["src/settlement.js"];
 const { allocateQuota } = __planCoreNs["src/quota.js"];
 // **产品求解器**：构造式启发式排布搜索，直接对**真实结算内核**（`settlement.js` 的 `apply`）
 // 做逐槽最速下降。所有者 2026-10-09 裁决：精确求解（HiGHS MILP）整个移除，求解回到本模块
@@ -2171,7 +2402,6 @@ const { allocateQuota } = __planCoreNs["src/quota.js"];
 //
 // **协作式取消**：每次全槽下降之后、每轮 ILS 之前让出一次宏任务并查 `shouldStop()`；
 // 不让出的话 Worker 收不到取消消息（搜索整体是同步的），取消按钮等于失效。
-
 
 
 
@@ -2282,15 +2512,15 @@ function buildProblem(rules, input) {
   const maxs = Float64Array.from(attributes.map((a) => a.max));
   const start = Float64Array.from(attributes.map((a) => input.attributes[a.id]));
 
-  const calendar = buildCalendar(rules, input);
-  const clubAt = createClubLookup(input);
+  const clubAt = createClubLookup(input, rules);
+  const calendar = buildCalendar(rules, input, null, clubAt);
   const settled = calendar.days.filter((day) => day.isSettled);
 
   // 系数唯一来源：引擎的 expectedEffects（含成功率、休息日 ×4、失败分支）与
   // clubExperienceGainOn（含 8 月集训周加成）。工具与引擎不得各算一套。
   const cache = new Map();
-  const effectOf = (commandId, isRestDay, weekStart) => {
-    const key = `${commandId}|${isRestDay ? 'r' : 'w'}|${weekStart}`;
+  const effectOf = (commandId, isRestDay, weekStart, activityCommand = null) => {
+    const key = `${commandId}|${isRestDay ? 'r' : 'w'}|${weekStart}|${activityCommand ?? ''}`;
     const hit = cache.get(key);
     if (hit) return hit;
     const out = new Float64Array(n);
@@ -2301,7 +2531,11 @@ function buildProblem(rules, input) {
       for (let i = 0; i < n; i += 1) {
         let value = base[ids[i]];
         if (ids[i] === CLUB_EXPERIENCE && command.kind === 'club') {
-          value += clubExperienceGainOn(rules, isRestDay ? REST_DAY : WEEKDAY, { weekStart });
+          value += clubExperienceGainOn(
+            rules,
+            isRestDay ? REST_DAY : WEEKDAY,
+            activityCommand ? { activity: { command: activityCommand } } : null,
+          );
         }
         out[i] = value;
       }
@@ -2318,7 +2552,7 @@ function buildProblem(rules, input) {
   // 继续按 `cmd-chat` 推进，与真实轨迹到 11 月已差 9.5 点人气，最终交出一份 `valid=false` 的日程
   // （全局约束破了 2 天）而自评完全看不到。`skippedDays` 与"显式清空"的日子由 `isSettled` 排除，
   // 不会进槽。
-  const pinnedCandsOf = (value, date, club) => {
+  const pinnedCandsOf = (value, date, club, isRestDay) => {
     const id = commandIdOf(value);
     if (id === null || id === SKIP_DAY) return [SKIP_DAY];
     // 社团占位符按**当时加入的社团**展开（与 plan.js 同口径）。
@@ -2327,7 +2561,7 @@ function buildProblem(rules, input) {
     const command = rules.commands.find((c) => c.id === effective);
     // 钉住了一条"此刻不可用"的社团指令（未解锁 / 不是当前社团）：引擎不会结算它（见
     // `clubBlockReason`），所以这里也不给它任何效果——否则又是两套数。
-    if (!command || clubBlockReason(rules, command, club, date) !== null) return [SKIP_DAY];
+    if (!command || commandBlockReason(rules, command, club, date, isRestDay) !== null) return [SKIP_DAY];
     return [effective];
   };
 
@@ -2335,45 +2569,52 @@ function buildProblem(rules, input) {
   const daySlot = new Int32Array(settled.length);
   const weekSlotOf = new Map();
   const daySlotOf = new Map();
+
+  // 周指令槽：只覆盖**非日指令日**的平日（活动日/休息日走自己的日指令）。
   for (let i = 0; i < settled.length; i += 1) {
     const day = settled[i];
-    if (day.isRestDay) continue;
+    if (day.isDayCommandDay) continue;
     if (weekSlotOf.has(day.weekStart)) continue;
     const club = clubAt(day.weekStart);
-    const mandate = clubWeekMandate(rules, club, day.weekStart);
     const pinnedWeek = input.weekCommands?.[day.weekStart];
     const cands = pinnedWeek !== undefined
-      ? pinnedCandsOf(pinnedWeek, day.weekStart, club)
-      : mandate
-        ? [mandate]
-        : availableCommandIds(rules, club, day.weekStart);
+      ? pinnedCandsOf(pinnedWeek, day.weekStart, club, false)
+      : availableCommandIds(rules, club, day.weekStart);
     weekSlotOf.set(day.weekStart, slots.length);
-    slots.push({ kind: 'week', key: day.weekStart, isRestDay: false, cands, dayIdxs: [] });
+    slots.push({ kind: 'week', key: day.weekStart, weekStart: day.weekStart, isRestDay: false, cands, dayIdxs: [] });
   }
+
+  // 日指令槽：活动/体育强制的指令是唯一候选；非强制休息日走自由候选。
   for (let i = 0; i < settled.length; i += 1) {
     const day = settled[i];
-    if (!day.isRestDay) {
+    if (!day.isDayCommandDay) {
       slots[weekSlotOf.get(day.weekStart)].dayIdxs.push(i);
       continue;
     }
     const club = clubAt(day.date);
-    // 集训周强制的是**周指令**（该周全部平日）；休息日没有这条强制（所有者 2026-10-06 明确）。
-    const pinnedDay = input.dayCommands?.[day.date];
-    daySlotOf.set(day.date, slots.length);
+    const pinnedDay = day.isForced ? undefined : input.dayCommands?.[day.date];
+    const cands = day.isForced
+      ? [day.commandId]
+      : pinnedDay !== undefined
+        ? pinnedCandsOf(pinnedDay, day.date, club, day.isRestDay)
+        : availableDayCommandIds(rules, club, day.date);
+    const slot = slots.length;
     slots.push({
       kind: 'day',
       key: day.date,
-      isRestDay: true,
-      cands: pinnedDay !== undefined
-        ? pinnedCandsOf(pinnedDay, day.date, club)
-        : availableDayCommandIds(rules, club, day.date),
+      weekStart: day.weekStart,
+      isRestDay: day.isRestDay,
+      activity: day.activity,
+      cands,
       dayIdxs: [i],
     });
+    daySlot[i] = slot;
+    if (!day.isForced) daySlotOf.set(day.date, slot);
   }
   for (const [start2, slot] of weekSlotOf) for (const i of slots[slot].dayIdxs) daySlot[i] = slot;
   for (const [, slot] of daySlotOf) daySlot[slots[slot].dayIdxs[0]] = slot;
 
-  const slotEff = slots.map((slot) => slot.cands.map((cmd) => effectOf(cmd, slot.isRestDay, slot.key)));
+  const slotEff = slots.map((slot) => slot.cands.map((cmd) => effectOf(cmd, slot.isRestDay, slot.weekStart ?? slot.key, slot.activity?.command)));
 
   // ---- 目标 ----
   const checkpoints = input.checkpoints;
@@ -2405,6 +2646,10 @@ function buildProblem(rules, input) {
   return {
     rules, input, calendar, settled, slots, daySlot, slotEff, ids, index, n, start, mins, maxs,
     ending, mini, global, lastIdx, miniIdx, makeGlobals, state, weekSlotOf, daySlotOf,
+    switchDate: clubAt.switchDate,
+    switchTarget: clubAt.target,
+    clubExperiences: { ...(input.clubExperiences ?? {}) },
+    clubExpIdx: index[CLUB_EXPERIENCE_ID],
     // 「第一次执行的社团指令必须是周日的日指令」（`rules.clubFirstCommand`）：
     // 判定里已经实现（`plan.js` 逐日标注），搜索这边必须同口径——否则它会搜出一份
     // 判定为不合格的日程。周日按定义就是休息日、只解析日指令，所以这里看 weekday 即可。
@@ -2422,7 +2667,10 @@ function buildProblem(rules, input) {
  */
 function evaluate(problem, x) {
   problem.evaluations += 1;
-  const { settled, slotEff, daySlot, state, n, start, mins, maxs, ending, mini, miniIdx, lastIdx, index } = problem;
+  const {
+    settled, slotEff, daySlot, state, n, start, mins, maxs, ending, mini, miniIdx, lastIdx, index,
+    switchDate, switchTarget, clubExperiences, clubExpIdx,
+  } = problem;
   state.set(start);
   let absorb = 0;
   let globalPenalty = 0;
@@ -2435,6 +2683,9 @@ function evaluate(problem, x) {
   const miniState = new Map();
 
   for (let i = 0; i < settled.length; i += 1) {
+    if (switchDate !== null && settled[i].date === switchDate) {
+      state[clubExpIdx] = switchTarget ? (clubExperiences[switchTarget] ?? 0) : 0;
+    }
     const s = daySlot[i];
     const ci = x[s];
     if (ci >= 0) {
@@ -2489,6 +2740,25 @@ function evaluate(problem, x) {
     });
   }
   for (const cp of mini) {
+    if (cp.date < problem.input.playedUpTo) continue;
+    if (cp.kind === 'count') {
+      const snapshotIdx = miniIdx.get(cp.id);
+      let executed = 0;
+      for (let i = 0; i <= snapshotIdx; i += 1) {
+        const s = daySlot[i];
+        if (x[s] >= 0) executed += problem.slots[s].dayIdxs.length;
+      }
+      const count = (cp.base ?? 0) + executed;
+      items.push({
+        id: cp.id,
+        kind: 'mini',
+        actual: count,
+        op: cp.op,
+        value: cp.value,
+        ok: cp.op === '>=' ? count >= cp.value : count < cp.value,
+      });
+      continue;
+    }
     const snap = miniState.get(cp.id);
     const names = cp.attributes ?? [cp.attribute];
     const v = names.reduce((sum, id) => sum + (snap ? snap[index[id]] : 0), 0);
@@ -2858,7 +3128,7 @@ return { DEFAULT_PASSES, DEFAULT_ILS, DEFAULT_KICK, DEFAULT_REPAIR_FIRST, DEFAUL
 })();
 __planCoreNs["src/frontier.js"] = (() => {
 const { addDays } = __planCoreNs["src/dates.js"];
-const { createClubLookup } = __planCoreNs["src/clubs.js"];
+const { createClubLookup } = __planCoreNs["src/calendar.js"];
 // 「设为已玩到」的领域语义：把时间轴起点推到那一天（见 ADR-0004）。
 //
 // 合并起点与已玩到之后，这一个动作同时是三件事：
@@ -2895,18 +3165,19 @@ function rollForward(rules, input, planResult, date) {
   const day = planResult?.days?.find((entry) => entry.date === date);
   if (!day) return { ...input, playedUpTo: date };
 
-  const club = createClubLookup(input)(date);
+  const club = createClubLookup(input, rules)(date);
+  const attributes = Object.fromEntries(
+    Object.entries(day.attributes).map(([id, value]) => [id, Math.floor(value)]),
+  );
+  const clubExperiences = { ...(input.clubExperiences ?? {}) };
+  if (club) clubExperiences[club] = attributes.clubExperience;
   return {
     ...input,
     playedUpTo: date,
-    attributes: Object.fromEntries(
-      Object.entries(day.attributes).map(([id, value]) => [id, Math.floor(value)]),
-    ),
-    initialClub: club ?? null,
-    // 起点当天已经折算进 initialClub，所以保留下来的切换都严格晚于它。
-    clubChanges: input.clubChanges.filter((change) => change.date > date),
-    // 休息日**不是输入**（它是 rules.calendar 上的固定日历），所以这里没有可裁剪的副本。
-    skippedDays: input.skippedDays.filter((entry) => entry >= date),
+    attributes,
+    clubExperiences,
+    club: club ?? null,
+    pendingClub: input.pendingClub,
     dayCommands: keepEntries(input.dayCommands, (key) => key >= date),
     // 周指令以周锚点为键：跨过起点的那个自然周还剩几天，那一周的周指令就还有效。
     weekCommands: keepEntries(input.weekCommands, (key) => addDays(key, 6) >= date),
@@ -3078,9 +3349,14 @@ function checkCheckpoints(rules, note) {
     if (!OPS.has(cp.op)) note(`检查点 ${cp.id} 的 op 非法：${cp.op}`);
     if (!Number.isFinite(cp.value)) note(`检查点 ${cp.id} 的阈值不是数字`);
 
+    const isCount = cp.kind === 'count';
+    if (isCount) {
+      if (cp.source !== 'mini') note(`计数检查点 ${cp.id} 必须是 mini`);
+      if (!Number.isInteger(cp.base) || cp.base < 0) note(`计数检查点 ${cp.id} 的 base 非法：${cp.base}`);
+    }
     const single = typeof cp.attribute === 'string';
     const set = Array.isArray(cp.attributes);
-    if (!single && !set) note(`检查点 ${cp.id} 必须含 attribute 或 attributes`);
+    if (!isCount && !single && !set) note(`检查点 ${cp.id} 必须含 attribute 或 attributes`);
     if (single && set) note(`检查点 ${cp.id} 不能同时含 attribute 与 attributes`);
     for (const id of single ? [cp.attribute] : cp.attributes ?? []) {
       if (!attributeIds.has(id)) note(`检查点 ${cp.id} 引用未知属性：${id}`);
@@ -3156,14 +3432,8 @@ function checkConstants(rules, note) {
   const gain = rules.clubExperienceGain;
   if (!gain) note('clubExperienceGain 缺失');
   else {
-    for (const key of ['weekday', 'restDay']) {
+    for (const key of ['weekday', 'restDay', 'camp']) {
       if (!Number.isInteger(gain[key]) || gain[key] < 0) note(`clubExperienceGain.${key} 非法`);
-    }
-    // 8 月集训周加成（见 ADR-0007）：当前 6 个集训周里 8 月组有加成、10 月组没有。
-    // 字段缺失视为"无加成"，不属于错误——数据可以不含这条规则。
-    if (gain.augustWeekday !== undefined
-      && (!Number.isInteger(gain.augustWeekday) || gain.augustWeekday < 0)) {
-      note(`clubExperienceGain.augustWeekday 非法：${gain.augustWeekday}`);
     }
   }
 }
@@ -3212,28 +3482,25 @@ __planCoreNs["src/input.js"] = (() => {
 const { isDate, weekdayOf, weekStartOf } = __planCoreNs["src/dates.js"];
 const { CLUB_COMMAND, isClubSlot, isSkip } = __planCoreNs["src/commands.js"];
 const { attributeIds } = __planCoreNs["src/lookup.js"];
-const { createClubLookup } = __planCoreNs["src/clubs.js"];
+const { createClubLookup } = __planCoreNs["src/calendar.js"];
 const { commonSuccessRate } = __planCoreNs["src/rules.js"];
-const { clubWeekMandate } = __planCoreNs["src/checkpoints.js"];
 // 使用者输入的形状与校验。JSON 只承载输入，不承载结果。
 //
 // 约定：`weekCommands` 的键是**周锚点**，即该自然周的周日；`dayCommands` 的键是
 // 某个休息日的日期。同一个周日可以既是一个周锚点、又拥有自己的日指令——这两者
 // 并存是正确模型，不是冲突。
 //
-// 用「显式的 null」表示空过，用「键不存在」表示尚未指定（交由求解器决定）。
-// 这两种状态必须能穿过 JSON 往返而不被混淆。
+// 用「显式的 null」表示空过（旧存档的写法），用「键不存在」表示尚未指定（交由求解器决定）。
+// 两者都必须能穿过 JSON 往返而不被混淆；但界面上已经不再提供「空过/跳过」这个操作——
+// 跳过只作为活动日的硬空过存在（见 src/calendar.js），电话/约会也不再进候选。
 
 
 
 
 
 
-// 集训周是硬约束，校验要在输入层就拦住违规日程（见 checkClubWeekMandate）。
-// 复用语义定义，避免"校验层"与"引擎层"各自实现一遍规则。
 
-
-const CURRENT_VERSION = 3;
+const CURRENT_VERSION = 5;
 
 /**
  * 出厂成功率。
@@ -3255,6 +3522,14 @@ function defaultInput(rules) {
   // 因为那是"能不能解出全部三类需求"的关键档位，而不是数据表里的一个统计量。
   const common = commonSuccessRate(rules);
   const successRate = DEFAULT_SUCCESS_RATE ?? common;
+  const initialClub = rules.defaultClub ?? null;
+  const attributes = Object.fromEntries(rules.attributes.map((a) => [a.id, a.default]));
+  // 每个社团各自的经验；当前社团的值与 attributes.clubExperience 一致。
+  const clubExperiences = Object.fromEntries(rules.clubs.map((club) => [club.id, 0]));
+  if (initialClub) clubExperiences[initialClub] = attributes.clubExperience;
+  // 出厂输入不带任何日指令：电话/约会**不再是候选**（所有者 2026-11-06 裁决），
+  // 也不会被默认钉在月末两个周日上——旧做法把软偏好写成了硬钉住，每次求解都白扔 70 天。
+  const dayCommands = {};
   return {
     version: CURRENT_VERSION,
     ...(successRate === null ? {} : { successRate }),
@@ -3262,14 +3537,12 @@ function defaultInput(rules) {
     // 它是状态快照——当天不结算，规划从次日开始（见 ADR-0004）。
     // 默认等于时间轴起点，也就是"还没玩过"。
     playedUpTo: rules.timeline.start,
-    attributes: Object.fromEntries(rules.attributes.map((a) => [a.id, a.default])),
+    attributes,
+    clubExperiences,
+    club: initialClub,
     checkpoints: structuredClone(rules.checkpoints),
-    // 默认加入管乐社（由 data/rules.json 的 defaultClub 给出）。
-    initialClub: rules.defaultClub ?? null,
-    clubChanges: [],
     weekCommands: {},
-    dayCommands: {},
-    skippedDays: [],
+    dayCommands,
   };
 }
 
@@ -3311,6 +3584,31 @@ function fromJson(text, rules) {
 const integerValue = (v) => Number.isInteger(v);
 
 /**
+ * v4 → v5：电话/约会退出候选，使用者也不再能标「跳过」。
+ *
+ * 旧默认值会把月末两个周日钉成 `cmd-date`（全 0 效果），旧界面还能把某天置成 `null`
+ * （空过/跳过）。两者现在都无处可设，所以导入旧存档时一并剥掉——否则它们会在新求解器里
+ * 继续当硬钉住，把目标达成度白扔掉。
+ */
+function stripManualOnlyCommands(input) {
+  const clean = (map) => {
+    if (!map || typeof map !== 'object') return map;
+    const next = {};
+    for (const [key, value] of Object.entries(map)) {
+      if (value === 'cmd-date' || value === null) continue;
+      next[key] = value;
+    }
+    return next;
+  };
+  return {
+    ...input,
+    version: CURRENT_VERSION,
+    dayCommands: clean(input.dayCommands),
+    weekCommands: clean(input.weekCommands),
+  };
+}
+
+/**
  * 旧版本迁移。
  *
  * v1 → v2：两个日期合成一个。v1 允许「起点」早于「已玩到」，于是需要冻结前缀那套
@@ -3318,6 +3616,7 @@ const integerValue = (v) => Number.isInteger(v);
  *          已玩过的那天再结算一遍）。
  * v2 → v3：三套目标数组（globalConstraints / endingGoals / miniGoals）合并成统一的
  *          `checkpoints`；社团经验升为第 10 个属性，输入里不再有 `clubExperience` 映射。
+ * v4 → v5：剥掉电话/约会与「跳过」的手工标记，见 `stripManualOnlyCommands`。
  */
 function migrate(input, rules) {
   if (!input || typeof input !== 'object') return input;
@@ -3332,7 +3631,12 @@ function migrate(input, rules) {
   }
 
   if (input.version === 1 || input.version === 2) {
-    input = { ...input, version: CURRENT_VERSION, checkpoints: checkpointsFromLegacy(input, rules) };
+    input = {
+      ...input,
+      version: CURRENT_VERSION,
+      checkpoints: checkpointsFromLegacy(input, rules),
+      club: input.club !== undefined ? input.club : (input.initialClub ?? null),
+    };
     delete input.globalConstraints;
     delete input.endingGoals;
     delete input.miniGoals;
@@ -3348,6 +3652,20 @@ function migrate(input, rules) {
       }
     }
     delete input.clubExperience;
+
+    // v3 之前没有 per-club 经验映射；用当前社团的值播种，其余社团为 0。
+    const currentClub = input.initialClub;
+    const currentValue = Number.isFinite(input.attributes?.clubExperience)
+      ? input.attributes.clubExperience
+      : 0;
+    input.clubExperiences = Object.fromEntries(rules.clubs.map((club) => [club.id, 0]));
+    if (currentClub && input.clubExperiences[currentClub] !== undefined) {
+      input.clubExperiences[currentClub] = currentValue;
+    }
+  }
+
+  if (input.version === 4) {
+    input = stripManualOnlyCommands(input);
   }
 
   return input;
@@ -3408,12 +3726,12 @@ function validateInput(input, rules) {
   checkCheckpoints(input.checkpoints, rules, problems);
 
   checkClub(input, clubIds, inWeekAnchors, problems);
+  checkClubExperiences(input, rules, problems);
   const commandIds = new Set(rules.commands.map((c) => c.id));
   // 社团占位符要校验"那一天确实有社团指令可用"，所以需要一个按日期取社团的查询。
-  const clubAtForCheck = createClubLookup(input);
-  checkWeekCommands(input.weekCommands, commandIds, inWeekAnchors, clubAtForCheck, problems, rules);
+  const clubAtForCheck = createClubLookup(input, rules);
+  checkWeekCommands(input.weekCommands, commandIds, inWeekAnchors, clubAtForCheck, problems);
   checkDayCommands(input.dayCommands, commandIds, inTimeline, clubAtForCheck, problems);
-  checkDayList('skippedDays', input.skippedDays, inTimeline, problems);
 
   return problems;
 }
@@ -3479,8 +3797,13 @@ function checkCheckpoints(checkpoints, rules, problems) {
     }
     if (!Number.isFinite(cp?.value)) problems.push(`检查点 ${cp?.id} 的阈值不是数字`);
 
+    const isCount = cp?.kind === 'count';
+    if (isCount) {
+      if (cp.source !== 'mini') problems.push(`计数检查点 ${cp?.id} 必须是 mini`);
+      if (!Number.isInteger(cp.base) || cp.base < 0) problems.push(`计数检查点 ${cp?.id} 的 base 非法：${cp?.base}`);
+    }
     const names = cp?.attributes ?? (typeof cp?.attribute === 'string' ? [cp.attribute] : []);
-    if (names.length === 0) problems.push(`检查点 ${cp?.id} 没有指定属性`);
+    if (!isCount && names.length === 0) problems.push(`检查点 ${cp?.id} 没有指定属性`);
     for (const id of names) {
       if (!attributeIdSet.has(id)) problems.push(`检查点 ${cp?.id} 引用了未知属性 ${id}`);
     }
@@ -3496,24 +3819,38 @@ function checkCheckpoints(checkpoints, rules, problems) {
 }
 
 function checkClub(input, clubIds, inTimeline, problems) {
-  if (input.initialClub !== null && !clubIds.has(input.initialClub)) {
-    problems.push(`initialClub 引用了未知社团 ${input.initialClub}`);
+  if (input.club !== undefined && input.club !== null && !clubIds.has(input.club)) {
+    problems.push(`club 引用了未知社团 ${input.club}`);
   }
-  if (!Array.isArray(input.clubChanges)) {
-    problems.push('clubChanges 必须是数组');
+  if (input.pendingClub !== undefined && input.pendingClub !== null && !clubIds.has(input.pendingClub)) {
+    problems.push(`pendingClub 引用了未知社团 ${input.pendingClub}`);
+  }
+}
+
+/**
+ * 每个社团各自的经验映射；当前社团的值必须与 attributes.clubExperience 一致。
+ */
+function checkClubExperiences(input, rules, problems) {
+  const map = input.clubExperiences;
+  const attribute = rules.attributes.find((a) => a.id === 'clubExperience');
+  if (!attribute) return;
+  if (!map || typeof map !== 'object' || Array.isArray(map)) {
+    problems.push('缺少 clubExperiences');
     return;
   }
-  for (const change of input.clubChanges) {
-    if (!isDate(change?.date)) {
-      problems.push(`clubChanges 的日期格式错误：${change?.date}`);
-    } else if (!inTimeline(change.date)) {
-      problems.push(`clubChanges 的日期超出可切换范围：${change.date}`);
-    } else if (weekdayOf(change.date) !== 0) {
-      problems.push(`clubChanges 只能在周日切换社团：${change.date}`);
+  const known = new Set(rules.clubs.map((club) => club.id));
+  for (const [clubId, value] of Object.entries(map)) {
+    if (!known.has(clubId)) problems.push(`clubExperiences 含未知社团 ${clubId}`);
+    else if (!Number.isInteger(value) || value < attribute.min || value > attribute.max) {
+      problems.push(`clubExperiences.${clubId} 非法：${value}`);
     }
-    if (change?.clubId !== null && !clubIds.has(change?.clubId)) {
-      problems.push(`clubChanges 引用了未知社团 ${change?.clubId}`);
-    }
+  }
+  for (const club of rules.clubs) {
+    if (!(club.id in map)) problems.push(`clubExperiences 缺少 ${club.id}`);
+  }
+  const current = input.club ?? null;
+  if (current && map[current] !== input.attributes?.clubExperience) {
+    problems.push('当前社团经验与 clubExperiences 不一致');
   }
 }
 
@@ -3532,7 +3869,7 @@ function checkCommandValue(commandId, commandIds, date, clubAt, problems, where)
   if (!commandIds.has(commandId)) problems.push(`${where} 引用了未知指令 ${commandId}`);
 }
 
-function checkWeekCommands(map, commandIds, inTimeline, clubAt, problems, rules) {
+function checkWeekCommands(map, commandIds, inTimeline, clubAt, problems) {
   if (!map || typeof map !== 'object' || Array.isArray(map)) {
     problems.push('缺少 weekCommands');
     return;
@@ -3546,29 +3883,6 @@ function checkWeekCommands(map, commandIds, inTimeline, clubAt, problems, rules)
       problems.push(`weekCommands 的键必须是周日（周锚点）：${date}`);
     }
     checkCommandValue(commandId, commandIds, date, clubAt, problems, 'weekCommands');
-    checkClubWeekMandate(rules, clubAt, date, commandId, problems);
-  }
-}
-
-/**
- * 社团集训周是**硬约束**：该周全部平日必须执行当前社团的社团指令（ADR-0007 第三节）。
- *
- * 校验必须在**输入层**就报出来：此前 `validateInput` 不查这一条，于是一份 6 个集训周里
- * 5 个没执行社团指令的日程照样被 `plan()` 报成 `goals.ok = true`——"11/11 达标"随时可能
- * 被违规日程污染（solver 2026-10-06 实测踩到）。
- *
- * 回家社（`initialClub = null`）不受此约束；空过（`null`）与占位符按"违规"处理，
- * 因为它们在集训周里同样意味着"没有执行社团指令"。
- */
-function checkClubWeekMandate(rules, clubAt, date, commandId, problems) {
-  if (!isDate(date)) return;
-  const mandate = clubWeekMandate(rules, clubAt(date), date);
-  if (mandate === null) return;
-  if (commandId !== mandate) {
-    problems.push(
-      `集训周 ${date} 的周指令必须是当前社团的指令 ${mandate}（实际 ${commandId ?? '空过'}）：`
-      + '该周的平日被游戏强制为社团活动，见 ADR-0007。',
-    );
   }
 }
 
@@ -3597,10 +3911,10 @@ function checkDayList(label, list, inTimeline, problems) {
 return { CURRENT_VERSION, DEFAULT_SUCCESS_RATE, defaultInput, toJson, clampToLimits, exportFileName, fromJson, validateInput };
 })();
 __planCoreNs["src/plan.js"] = (() => {
-const { isClubSlot } = __planCoreNs["src/commands.js"];
-const { buildCalendar } = __planCoreNs["src/calendar.js"];
-const { buildCheckpointSchedule, clubWeekMandate, evaluateCheckpoints } = __planCoreNs["src/checkpoints.js"];
-const { clubBlockReason, clubCommandId, createClubLookup } = __planCoreNs["src/clubs.js"];
+const { isClubCampSlot, isClubSlot } = __planCoreNs["src/commands.js"];
+const { buildCalendar, createClubLookup } = __planCoreNs["src/calendar.js"];
+const { buildCheckpointSchedule, evaluateCheckpoints } = __planCoreNs["src/checkpoints.js"];
+const { clubCommandId, commandBlockReason } = __planCoreNs["src/clubs.js"];
 const { weekStartOf } = __planCoreNs["src/dates.js"];
 const { validateInput } = __planCoreNs["src/input.js"];
 const { validateRules, withSuccessRate } = __planCoreNs["src/rules.js"];
@@ -3608,8 +3922,9 @@ const { REST_DAY, WEEKDAY, apply } = __planCoreNs["src/settlement.js"];
 // 规划入口。
 //
 // 接缝是 `plan(input, { assignments }) → PlanResult`：规则在**构造时**注入，调用方只传
-// input。这一层把日历、社团状态与单日结算接起来：每一天按它实际执行的指令结算，不可用
-// 的社团指令不会被结算。指令还没有被"求解"时就是待定。
+// input。这一层把日历、社团状态与单日结算接起来：每一天按它实际执行的指令结算；活动日
+// 的绑定指令是硬强制，`club`/`clubCamp` 占位符在这里按当天社团展开。指令还没有被"求解"
+// 时就是待定。
 //
 // 检查点的判定在 `evaluateCheckpoints` 里汇总：它读这份逐日结果，自己重算
 // 达标 / 未达标 / 已破线 / 首次达成日（含全局硬约束）。这里只负责把每天结算对。
@@ -3625,7 +3940,6 @@ const { REST_DAY, WEEKDAY, apply } = __planCoreNs["src/settlement.js"];
 
 function createPlanner(rules) {
   const ruleProblems = validateRules(rules);
-  const schedule = null;
 
   return function plan(input, { assignments = null } = {}) {
     if (ruleProblems.length > 0) {
@@ -3641,20 +3955,19 @@ function createPlanner(rules) {
     // 免得"求解用的成功率"与"判定用的成功率"分叉（这个项目最贵的一条教训）。
     const activeRules = withSuccessRate(rules, input.successRate);
 
-    const calendar = buildCalendar(activeRules, input, assignments);
-    const clubAt = createClubLookup(input);
+    const clubAt = createClubLookup(input, rules);
+    const calendar = buildCalendar(activeRules, input, assignments, clubAt);
     // 全局约束的落点是每个结算日；日历就在手边，直接传进去，判定与搜索共用同一份。
     const schedule = buildCheckpointSchedule(rules, input, calendar.days);
     let state = { attributes: { ...input.attributes } };
+    // 每个社团各自的经验；切换时写回旧社团、读入目标社团。
+    const clubExperiences = { ...(input.clubExperiences ?? {}) };
 
     // 「第一次执行的社团指令必须是周日的日指令」（数据见 `rules.clubFirstCommand`）。
-    // 休息日只会解析到**日指令**（见 calendar.js 的 `resolveCommand`：休息日读 `dayCommands`），
-    // 而周日按定义就是休息日——所以"周日的日指令"落到判定上就是"该天的 weekday 等于规则里的值"。
     //
-    // **整条豁免**（所有者 2026-10-09 明确）：使用者**已经选了社团**、且「已玩到」落在**集训周内**
-    // 时，按"并非第一次执行社团指令"处理——社团活动在快照之前就已经在进行（集训周本身就在强制
-    // 社团指令），本时间轴上的第一次执行当然不是"第一次"。此时规则不适用：不判违规，也不需要
-    // 去满足它。未配置这条规则时同样不适用。
+    // **整条豁免**（所有者 2026-10-09 明确）：使用者**已经选了社团**、且「已玩到」落在
+    // 集训周内时，按"并非第一次执行社团指令"处理。活动日的强制社团指令也属于"已经在
+    // 进行"的活动，不计入这条规则；规则只约束自由选择的第一次社团指令。
     const clubCommandIds = new Set(rules.commands.filter((c) => c.kind === 'club').map((c) => c.id));
     const clubFirstWeekday = rules.clubFirstCommand?.weekday ?? null;
     const snapshotWeek = weekStartOf(input.playedUpTo);
@@ -3665,38 +3978,45 @@ function createPlanner(rules) {
 
     const days = calendar.days.map((day) => {
       const club = clubAt(day.date);
-      // 「当前社团指令」占位符在这里展开：具体是哪一条取决于**当时加入的社团**。
-      const effectiveCommandId = isClubSlot(day.commandId) ? clubCommandId(activeRules, club) : day.commandId;
+      // 「当前社团指令」/「社团集训指令」占位符在这里展开：具体是哪一条取决于当时加入的社团。
+      const effectiveCommandId =
+        isClubSlot(day.commandId) || isClubCampSlot(day.commandId)
+          ? clubCommandId(activeRules, club)
+          : day.commandId;
+      // 不可执行的原因：社团不符/未解锁/未入社，或「休息日专属指令」被钉在平日。
       const commandBlocked = effectiveCommandId
-        ? clubBlockReason(activeRules, activeRules.commands.find((c) => c.id === effectiveCommandId), club, day.date)
+        ? commandBlockReason(
+          activeRules,
+          activeRules.commands.find((c) => c.id === effectiveCommandId),
+          club,
+          day.date,
+          day.isRestDay,
+        )
         : null;
 
       // 结算前的快照：小目标 / 结局目标要判"前 1 天的结算值"（所有者 2026-10-07 裁决），
       // 也就是**结算这一天之前**的值——属性在两次结算之间不变，所以这就是前一个自然日的结算结果。
-      // 不能用 days 数组的"前一个 index"来取：时间轴上有不结算的日子（起点快照、空过、跳过、终点）。
       const attributesBefore = { ...state.attributes };
 
+      // 社团切换：先把旧社团当前经验写回映射，再把当前经验切到目标社团。
+      if (day.isSwitch) {
+        if (clubAt.oldClub) clubExperiences[clubAt.oldClub] = state.attributes.clubExperience;
+        state.attributes.clubExperience = day.switchTarget
+          ? (clubExperiences[day.switchTarget] ?? 0)
+          : 0;
+      }
+
       if (day.isSettled && effectiveCommandId && commandBlocked === null) {
-        // 第 5 参传 `day`：8 月集训周的社团经验加成要按"哪一天"判定（见 settlement.js）。
+        // 第 5 参传 `day`：社团经验加成要按"哪一天"判定（见 settlement.js）。
         state = apply(activeRules, state, effectiveCommandId, day.isRestDay ? REST_DAY : WEEKDAY, day);
       }
 
-      // 社团集训周：该周全部平日必须执行当前社团的指令（回家社例外）。空过、待定、
-      // 换成别的指令都算违反；休息日执行自己的日指令，不受这条约束。
-      const mandate = clubWeekMandate(rules, club, day.weekStart);
+      // 首次社团指令：活动日强制的社团指令不参与这条规则（它们不是自由选择）。
       const executed = day.isSettled && effectiveCommandId && commandBlocked === null
         ? effectiveCommandId
         : null;
-      const clubWeekViolation = mandate !== null
-        && !day.isRestDay
-        && (day.isSettled || day.isEmpty)
-        && executed !== mandate;
-
-      // 首次社团指令：只有在**那之前**还没出现过合规的首次执行时才算违规。
-      // 于是"先在工作日用了社团指令、之后才在周日补一次"仍然违规（违规天 = 周日那次之前的社团天），
-      // 而"第一个社团指令就落在周日"完全合规。豁免与否见上面的 `clubFirstWaived`。
       let clubFirstViolation = false;
-      if (executed !== null && clubCommandIds.has(executed) && !clubFirstSatisfied) {
+      if (!day.isActivity && executed !== null && clubCommandIds.has(executed) && !clubFirstSatisfied) {
         if (day.weekday === clubFirstWeekday) clubFirstSatisfied = true;
         else clubFirstViolation = true;
       }
@@ -3706,7 +4026,6 @@ function createPlanner(rules) {
         // 占位符已展开成实际执行的指令；界面要显示"这一格真正跑的是什么"。
         effectiveCommandId,
         commandBlocked,
-        clubWeekViolation,
         clubFirstViolation,
         clubFirstWaived,
         attributes: { ...state.attributes },
@@ -3714,6 +4033,10 @@ function createPlanner(rules) {
         attributesBefore,
       };
     });
+
+    // 当前社团的经验就是结束时的属性值：映射里的当前项要跟上，旧社团的值保持切换时的快照。
+    const finalClub = clubAt(rules.timeline.end);
+    if (finalClub) clubExperiences[finalClub] = state.attributes.clubExperience;
 
     return {
       ok: true,
@@ -3727,6 +4050,7 @@ function createPlanner(rules) {
       summary: calendar.summary,
       goals: evaluateCheckpoints(activeRules, input, days),
       finalAttributes: { ...state.attributes },
+      clubExperiences: { ...clubExperiences },
       successRate: input.successRate ?? null,
       ruleSummary: {
         attributes: rules.attributes.length,
@@ -3736,11 +4060,6 @@ function createPlanner(rules) {
       },
     };
   };
-}
-
-/** 这一天是不是它所在自然周的第一天。 */
-function isWeekStart(day) {
-  return day.date === day.weekStart;
 }
 return { createPlanner };
 })();
@@ -3888,7 +4207,7 @@ async function suggestSuccessRate(rules, input, options = {}) {
 }
 return { MAIN_THREAD_BUDGET_MS, WORKER_BUDGET_MS, createSolver, SUGGEST_LADDER, suggestSuccessRate };
 })();
-__planCoreNs["data/rules.json"] = {"timeline":{"start":"1995-04-04","end":"1998-03-01","lastSettlement":"1998-02-28"},"clubUnlockDate":"1995-04-09","clubFirstCommand":{"weekday":0,"note":"第一次执行的社团指令必须是周日的日指令（社团活动从周日的日指令开始）"},"restDayBonus":{"daily":4,"club":4,"stressReduction":4},"clubExperienceGain":{"weekday":1,"restDay":4,"augustWeekday":2},"attributes":[{"id":"stamina","name":"体力","direction":"up","min":0,"max":999,"default":100},{"id":"literature","name":"文科","direction":"up","min":0,"max":999,"default":40},{"id":"science","name":"理科","direction":"up","min":0,"max":999,"default":40},{"id":"art","name":"艺术","direction":"up","min":0,"max":999,"default":40},{"id":"sports","name":"运动","direction":"up","min":0,"max":999,"default":40},{"id":"popularity","name":"人缘","direction":"up","min":0,"max":999,"default":32},{"id":"appearance","name":"容姿","direction":"up","min":0,"max":999,"default":60},{"id":"grit","name":"毅力","direction":"up","min":0,"max":999,"default":5},{"id":"stress","name":"压力","direction":"down","min":0,"max":999,"default":0},{"id":"clubExperience","name":"社团经验","direction":"up","min":0,"max":999,"default":0}],"clubs":[{"id":"literature-club","name":"文艺社"},{"id":"drama-club","name":"话剧社"},{"id":"science-club","name":"科学社"},{"id":"computer-club","name":"电脑社"},{"id":"art-club","name":"美术社"},{"id":"brass-band-club","name":"管乐社"},{"id":"baseball-club","name":"棒球社"},{"id":"soccer-club","name":"足球社"},{"id":"tennis-club","name":"网球社"},{"id":"swimming-club","name":"游泳社"},{"id":"basketball-club","name":"篮球社"}],"commands":[{"id":"cmd-study-literature","name":"研读文科","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-0.75,"literature":0.9375,"science":0.0625,"art":0.0625,"sports":-0.375,"popularity":0.25,"appearance":-0.25,"grit":-0.0625,"stress":0.75,"clubExperience":0}},{"id":"cmd-study-science","name":"研读理科","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-0.75,"literature":0.0625,"science":0.9375,"art":0.0625,"sports":-0.75,"popularity":0.125,"appearance":-0.4375,"grit":0.25,"stress":0.25,"clubExperience":0}},{"id":"cmd-practice-art","name":"培养艺术气质","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-0.75,"literature":0.0625,"science":0.0625,"art":0.9375,"sports":-0.4375,"popularity":0.0625,"appearance":-0.125,"grit":-0.0625,"stress":-0.25,"clubExperience":0}},{"id":"cmd-exercise","name":"运动","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-2.375,"literature":-0.125,"science":-0.125,"art":-0.125,"sports":3.25,"popularity":0.0625,"appearance":-0.4375,"grit":1.375,"stress":0.0625,"clubExperience":0}},{"id":"cmd-chat","name":"和同学闲聊","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-1.1875,"literature":-0.25,"science":-0.25,"art":-0.25,"sports":0.1875,"popularity":1.5,"appearance":0.75,"grit":-0.375,"stress":-0.875,"clubExperience":0}},{"id":"cmd-groom","name":"整理仪容","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-0.625,"literature":-0.125,"science":-0.125,"art":-0.0625,"sports":-0.0625,"popularity":0.5,"appearance":2.0625,"grit":-0.625,"stress":-0.0625,"clubExperience":0}},{"id":"cmd-rest","name":"休息","kind":"daily","clubId":null,"successRate":1,"effects":{"stamina":3.0625,"literature":0,"science":0,"art":0,"sports":0,"popularity":-0.625,"appearance":-0.75,"grit":-0.0625,"stress":-2.9375,"clubExperience":0}},{"id":"cmd-club-literature","name":"文艺社","kind":"club","clubId":"literature-club","successRate":0.35,"effects":{"stamina":-0.75,"literature":0.75,"science":0.25,"art":0.125,"sports":0,"popularity":0.0625,"appearance":-0.25,"grit":-0.0625,"stress":1.125,"clubExperience":0}},{"id":"cmd-club-drama","name":"话剧社","kind":"club","clubId":"drama-club","successRate":0.35,"effects":{"stamina":-0.875,"literature":0.875,"science":0,"art":0.375,"sports":0.125,"popularity":0.0625,"appearance":-0.125,"grit":0.0625,"stress":1.0625,"clubExperience":0}},{"id":"cmd-club-science","name":"科学社","kind":"club","clubId":"science-club","successRate":0.35,"effects":{"stamina":-0.8125,"literature":0.0625,"science":0.9375,"art":0.25,"sports":0,"popularity":0.0625,"appearance":-0.25,"grit":0.25,"stress":1.375,"clubExperience":0}},{"id":"cmd-club-computer","name":"电脑社","kind":"club","clubId":"computer-club","successRate":0.35,"effects":{"stamina":-0.8125,"literature":0.0625,"science":0.875,"art":0.375,"sports":0,"popularity":0.25,"appearance":-0.375,"grit":0.25,"stress":1.625,"clubExperience":0}},{"id":"cmd-club-art","name":"美术社","kind":"club","clubId":"art-club","successRate":0.35,"effects":{"stamina":-0.875,"literature":0.125,"science":0,"art":0.9375,"sports":0.0625,"popularity":0.0625,"appearance":-0.0625,"grit":-0.125,"stress":0.9375,"clubExperience":0}},{"id":"cmd-club-brass-band","name":"管乐社","kind":"club","clubId":"brass-band-club","successRate":0.35,"effects":{"stamina":-0.875,"literature":0.0625,"science":0.0625,"art":0.875,"sports":0.1875,"popularity":0.125,"appearance":-0.1875,"grit":0.0625,"stress":0.875,"clubExperience":0}},{"id":"cmd-club-baseball","name":"棒球社","kind":"club","clubId":"baseball-club","successRate":0.35,"effects":{"stamina":-1.875,"literature":-0.0625,"science":-0.0625,"art":-0.0625,"sports":0.875,"popularity":0.0625,"appearance":-0.25,"grit":0.75,"stress":0.1875,"clubExperience":0}},{"id":"cmd-club-soccer","name":"足球社","kind":"club","clubId":"soccer-club","successRate":0.35,"effects":{"stamina":-1.875,"literature":-0.0625,"science":-0.0625,"art":-0.0625,"sports":0.9375,"popularity":0.125,"appearance":-0.1875,"grit":0.6875,"stress":0.25,"clubExperience":0}},{"id":"cmd-club-tennis","name":"网球社","kind":"club","clubId":"tennis-club","successRate":0.35,"effects":{"stamina":-1.5625,"literature":-0.0625,"science":-0.0625,"art":0,"sports":0.8125,"popularity":0.125,"appearance":-0.0625,"grit":0.5625,"stress":0.5,"clubExperience":0}},{"id":"cmd-club-swimming","name":"游泳社","kind":"club","clubId":"swimming-club","successRate":0.35,"effects":{"stamina":-1.9375,"literature":-0.0625,"science":-0.0625,"art":0,"sports":0.9375,"popularity":0,"appearance":-0.125,"grit":0.6875,"stress":0.1875,"clubExperience":0}},{"id":"cmd-club-basketball","name":"篮球社","kind":"club","clubId":"basketball-club","successRate":0.35,"effects":{"stamina":-1.8125,"literature":-0.0625,"science":-0.0625,"art":-0.0625,"sports":0.875,"popularity":0.0625,"appearance":-0.1875,"grit":0.625,"stress":0.4375,"clubExperience":0}}],"checkpoints":[{"id":"gc-stamina","date":null,"attribute":"stamina","op":">=","value":20,"source":"global"},{"id":"gc-popularity","date":null,"attribute":"popularity","op":">=","value":100,"source":"global"},{"id":"gc-appearance","date":null,"attribute":"appearance","op":">=","value":35,"source":"global"},{"id":"gc-stress","date":null,"attribute":"stress","op":"<","value":70,"source":"global"},{"id":"mg-literature-science-art","date":"1998-02-23","attributes":["literature","science","art"],"op":">=","value":561,"source":"mini"},{"id":"mg-clubExperience","date":"1998-01-02","attributes":["clubExperience"],"op":">=","value":380,"source":"mini"},{"id":"eg-stamina","date":"1998-03-01","attribute":"stamina","op":">=","value":50,"source":"ending"},{"id":"eg-literature","date":"1998-03-01","attribute":"literature","op":">=","value":130,"source":"ending"},{"id":"eg-science","date":"1998-03-01","attribute":"science","op":">=","value":130,"source":"ending"},{"id":"eg-art","date":"1998-03-01","attribute":"art","op":">=","value":130,"source":"ending"},{"id":"eg-sports","date":"1998-03-01","attribute":"sports","op":">=","value":130,"source":"ending"},{"id":"eg-popularity","date":"1998-03-01","attribute":"popularity","op":">=","value":120,"source":"ending"},{"id":"eg-appearance","date":"1998-03-01","attribute":"appearance","op":">=","value":100,"source":"ending"},{"id":"eg-grit","date":"1998-03-01","attribute":"grit","op":">=","value":100,"source":"ending"},{"id":"eg-stress","date":"1998-03-01","attribute":"stress","op":"<","value":50,"source":"ending"}],"defaultClub":"brass-band-club","calendar":{"note":"游戏固定日历：休息日（节假日/庆典）与社团集训周。由所有者逐日核对过，解析器只读。","restDays":["1995-04-29","1995-05-03","1995-05-04","1995-05-05","1995-09-15","1995-09-23","1995-10-10","1995-11-03","1995-11-23","1995-12-23","1996-01-15","1996-02-12","1996-03-20","1996-04-29","1996-05-03","1996-05-04","1996-05-06","1996-09-16","1996-09-23","1996-10-10","1996-11-04","1996-11-23","1996-12-23","1997-01-15","1997-02-11","1997-03-21","1997-04-29","1997-05-03","1997-05-05","1997-07-21","1997-09-15","1997-09-23","1997-10-10","1997-11-03","1997-11-24","1997-12-23","1998-01-15","1998-02-11"],"clubWeeks":[{"date":"1995-08-13","command":"club"},{"date":"1995-10-08","command":"club"},{"date":"1996-08-11","command":"club"},{"date":"1996-10-06","command":"club"},{"date":"1997-08-10","command":"club"},{"date":"1997-10-05","command":"club"}]}};
+__planCoreNs["data/rules.json"] = {"timeline":{"start":"1995-04-04","end":"1998-03-01","lastSettlement":"1998-02-28"},"clubUnlockDate":"1995-04-09","clubFirstCommand":{"weekday":0,"note":"第一次执行的社团指令必须是周日的日指令（社团活动从周日的日指令开始）"},"restDayBonus":{"daily":4,"club":4,"stressReduction":4},"clubExperienceGain":{"weekday":1,"restDay":4,"camp":2},"attributes":[{"id":"stamina","name":"体力","direction":"up","min":0,"max":999,"default":100},{"id":"literature","name":"文科","direction":"up","min":0,"max":999,"default":40},{"id":"science","name":"理科","direction":"up","min":0,"max":999,"default":40},{"id":"art","name":"艺术","direction":"up","min":0,"max":999,"default":40},{"id":"sports","name":"运动","direction":"up","min":0,"max":999,"default":40},{"id":"popularity","name":"人缘","direction":"up","min":0,"max":999,"default":32},{"id":"appearance","name":"容姿","direction":"up","min":0,"max":999,"default":60},{"id":"grit","name":"毅力","direction":"up","min":0,"max":999,"default":5},{"id":"stress","name":"压力","direction":"down","min":0,"max":999,"default":0},{"id":"clubExperience","name":"社团经验","direction":"up","min":0,"max":999,"default":0}],"clubs":[{"id":"literature-club","name":"文艺社","category":"cultural"},{"id":"drama-club","name":"话剧社","category":"cultural"},{"id":"science-club","name":"科学社","category":"cultural"},{"id":"computer-club","name":"电脑社","category":"cultural"},{"id":"art-club","name":"美术社","category":"cultural"},{"id":"brass-band-club","name":"管乐社","category":"cultural"},{"id":"baseball-club","name":"棒球社","category":"sports"},{"id":"soccer-club","name":"足球社","category":"sports"},{"id":"tennis-club","name":"网球社","category":"sports"},{"id":"swimming-club","name":"游泳社","category":"sports"},{"id":"basketball-club","name":"篮球社","category":"sports"}],"commands":[{"id":"cmd-study-literature","name":"研读文科","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-0.75,"literature":0.9375,"science":0.0625,"art":0.0625,"sports":-0.375,"popularity":0.25,"appearance":-0.25,"grit":-0.0625,"stress":0.75,"clubExperience":0}},{"id":"cmd-study-science","name":"研读理科","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-0.75,"literature":0.0625,"science":0.9375,"art":0.0625,"sports":-0.75,"popularity":0.125,"appearance":-0.4375,"grit":0.25,"stress":0.25,"clubExperience":0}},{"id":"cmd-practice-art","name":"培养艺术气质","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-0.75,"literature":0.0625,"science":0.0625,"art":0.9375,"sports":-0.4375,"popularity":0.0625,"appearance":-0.125,"grit":-0.0625,"stress":-0.25,"clubExperience":0}},{"id":"cmd-exercise","name":"运动","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-2.375,"literature":-0.125,"science":-0.125,"art":-0.125,"sports":3.25,"popularity":0.0625,"appearance":-0.4375,"grit":1.375,"stress":0.0625,"clubExperience":0}},{"id":"cmd-chat","name":"和同学闲聊","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-1.1875,"literature":-0.25,"science":-0.25,"art":-0.25,"sports":0.1875,"popularity":1.5,"appearance":0.75,"grit":-0.375,"stress":-0.875,"clubExperience":0}},{"id":"cmd-groom","name":"整理仪容","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-0.625,"literature":-0.125,"science":-0.125,"art":-0.0625,"sports":-0.0625,"popularity":0.5,"appearance":2.0625,"grit":-0.625,"stress":-0.0625,"clubExperience":0}},{"id":"cmd-rest","name":"休息","kind":"daily","clubId":null,"successRate":1,"effects":{"stamina":3.0625,"literature":0,"science":0,"art":0,"sports":0,"popularity":-0.625,"appearance":-0.75,"grit":-0.0625,"stress":-2.9375,"clubExperience":0}},{"id":"cmd-date","name":"打电话/约会","kind":"daily","restOnly":true,"effects":{"stamina":0,"literature":0,"science":0,"art":0,"sports":0,"popularity":0,"appearance":0,"grit":0,"stress":0,"clubExperience":0},"successRate":0.35},{"id":"cmd-club-literature","name":"文艺社","kind":"club","clubId":"literature-club","successRate":0.35,"effects":{"stamina":-0.75,"literature":0.75,"science":0.25,"art":0.125,"sports":0,"popularity":0.0625,"appearance":-0.25,"grit":-0.0625,"stress":1.125,"clubExperience":0}},{"id":"cmd-club-drama","name":"话剧社","kind":"club","clubId":"drama-club","successRate":0.35,"effects":{"stamina":-0.875,"literature":0.875,"science":0,"art":0.375,"sports":0.125,"popularity":0.0625,"appearance":-0.125,"grit":0.0625,"stress":1.0625,"clubExperience":0}},{"id":"cmd-club-science","name":"科学社","kind":"club","clubId":"science-club","successRate":0.35,"effects":{"stamina":-0.8125,"literature":0.0625,"science":0.9375,"art":0.25,"sports":0,"popularity":0.0625,"appearance":-0.25,"grit":0.25,"stress":1.375,"clubExperience":0}},{"id":"cmd-club-computer","name":"电脑社","kind":"club","clubId":"computer-club","successRate":0.35,"effects":{"stamina":-0.8125,"literature":0.0625,"science":0.875,"art":0.375,"sports":0,"popularity":0.25,"appearance":-0.375,"grit":0.25,"stress":1.625,"clubExperience":0}},{"id":"cmd-club-art","name":"美术社","kind":"club","clubId":"art-club","successRate":0.35,"effects":{"stamina":-0.875,"literature":0.125,"science":0,"art":0.9375,"sports":0.0625,"popularity":0.0625,"appearance":-0.0625,"grit":-0.125,"stress":0.9375,"clubExperience":0}},{"id":"cmd-club-brass-band","name":"管乐社","kind":"club","clubId":"brass-band-club","successRate":0.35,"effects":{"stamina":-0.875,"literature":0.0625,"science":0.0625,"art":0.875,"sports":0.1875,"popularity":0.125,"appearance":-0.1875,"grit":0.0625,"stress":0.875,"clubExperience":0}},{"id":"cmd-club-baseball","name":"棒球社","kind":"club","clubId":"baseball-club","successRate":0.35,"effects":{"stamina":-1.875,"literature":-0.0625,"science":-0.0625,"art":-0.0625,"sports":0.875,"popularity":0.0625,"appearance":-0.25,"grit":0.75,"stress":0.1875,"clubExperience":0}},{"id":"cmd-club-soccer","name":"足球社","kind":"club","clubId":"soccer-club","successRate":0.35,"effects":{"stamina":-1.875,"literature":-0.0625,"science":-0.0625,"art":-0.0625,"sports":0.9375,"popularity":0.125,"appearance":-0.1875,"grit":0.6875,"stress":0.25,"clubExperience":0}},{"id":"cmd-club-tennis","name":"网球社","kind":"club","clubId":"tennis-club","successRate":0.35,"effects":{"stamina":-1.5625,"literature":-0.0625,"science":-0.0625,"art":0,"sports":0.8125,"popularity":0.125,"appearance":-0.0625,"grit":0.5625,"stress":0.5,"clubExperience":0}},{"id":"cmd-club-swimming","name":"游泳社","kind":"club","clubId":"swimming-club","successRate":0.35,"effects":{"stamina":-1.9375,"literature":-0.0625,"science":-0.0625,"art":0,"sports":0.9375,"popularity":0,"appearance":-0.125,"grit":0.6875,"stress":0.1875,"clubExperience":0}},{"id":"cmd-club-basketball","name":"篮球社","kind":"club","clubId":"basketball-club","successRate":0.35,"effects":{"stamina":-1.8125,"literature":-0.0625,"science":-0.0625,"art":-0.0625,"sports":0.875,"popularity":0.0625,"appearance":-0.1875,"grit":0.625,"stress":0.4375,"clubExperience":0}}],"checkpoints":[{"id":"gc-stamina","date":null,"attribute":"stamina","op":">=","value":20,"source":"global"},{"id":"gc-popularity","date":null,"attribute":"popularity","op":">=","value":100,"source":"global"},{"id":"gc-appearance","date":null,"attribute":"appearance","op":">=","value":35,"source":"global"},{"id":"gc-stress","date":null,"attribute":"stress","op":"<","value":70,"source":"global"},{"id":"mg-literature-science-art","date":"1998-02-23","attributes":["literature","science","art"],"op":">=","value":561,"source":"mini"},{"id":"mg-clubExperience","date":"1998-01-02","attributes":["clubExperience"],"op":">=","value":380,"source":"mini"},{"id":"mg-command-count","date":"1998-02-23","kind":"count","base":0,"op":">=","value":800,"source":"mini"},{"id":"eg-stamina","date":"1998-03-01","attribute":"stamina","op":">=","value":50,"source":"ending"},{"id":"eg-literature","date":"1998-03-01","attribute":"literature","op":">=","value":130,"source":"ending"},{"id":"eg-science","date":"1998-03-01","attribute":"science","op":">=","value":130,"source":"ending"},{"id":"eg-art","date":"1998-03-01","attribute":"art","op":">=","value":130,"source":"ending"},{"id":"eg-sports","date":"1998-03-01","attribute":"sports","op":">=","value":130,"source":"ending"},{"id":"eg-popularity","date":"1998-03-01","attribute":"popularity","op":">=","value":120,"source":"ending"},{"id":"eg-appearance","date":"1998-03-01","attribute":"appearance","op":">=","value":100,"source":"ending"},{"id":"eg-grit","date":"1998-03-01","attribute":"grit","op":">=","value":100,"source":"ending"},{"id":"eg-stress","date":"1998-03-01","attribute":"stress","op":"<","value":50,"source":"ending"}],"defaultClub":"brass-band-club","calendar":{"note":"游戏固定日历：休息日（节假日/庆典）与社团集训周。由所有者逐日核对过，解析器只读。","restDays":["1995-04-29","1995-05-03","1995-05-04","1995-05-05","1995-09-15","1995-09-23","1995-10-10","1995-11-03","1995-11-23","1995-12-23","1996-01-15","1996-02-12","1996-03-20","1996-04-29","1996-05-03","1996-05-04","1996-05-06","1996-09-16","1996-09-23","1996-10-10","1996-11-04","1996-11-23","1996-12-23","1997-01-15","1997-02-11","1997-03-21","1997-04-29","1997-05-03","1997-05-05","1997-07-21","1997-09-15","1997-09-23","1997-10-10","1997-11-03","1997-11-24","1997-12-23","1998-01-15","1998-02-11"],"clubWeeks":[{"date":"1995-08-13","command":"club"},{"date":"1995-10-08","command":"club"},{"date":"1996-08-11","command":"club"},{"date":"1996-10-06","command":"club"},{"date":"1997-08-10","command":"club"},{"date":"1997-10-05","command":"club"}],"activities":[{"start":"1995-06-03","end":"1995-06-03","name":"体育祭","command":"skip"},{"start":"1995-07-10","end":"1995-07-15","name":"期末考试","command":"skip"},{"start":"1995-08-14","end":"1995-08-19","name":"暑期集训","command":"clubCamp"},{"start":"1995-10-09","end":"1995-10-09","name":"文化祭集训","command":"club","when":{"clubCategory":"cultural"}},{"start":"1995-10-11","end":"1995-10-13","name":"文化祭集训","command":"club","when":{"clubCategory":"cultural"}},{"start":"1995-10-14","end":"1995-10-14","name":"文化祭","command":"skip"},{"start":"1995-12-11","end":"1995-12-16","name":"期末考试","command":"skip"},{"start":"1995-12-24","end":"1995-12-24","name":"圣诞节","command":"skip"},{"start":"1996-01-01","end":"1996-01-01","name":"元旦","command":"skip"},{"start":"1996-02-14","end":"1996-02-14","name":"情人节","command":"skip"},{"start":"1996-03-04","end":"1996-03-09","name":"期末考试","command":"skip"},{"start":"1996-03-14","end":"1996-03-14","name":"白色情人节","command":"skip"},{"start":"1996-06-01","end":"1996-06-01","name":"体育祭","command":"skip"},{"start":"1996-07-15","end":"1996-07-20","name":"期末考试","command":"skip"},{"start":"1996-08-12","end":"1996-08-17","name":"暑期集训","command":"clubCamp"},{"start":"1996-09-09","end":"1996-09-14","name":"校外教学","command":"skip"},{"start":"1996-10-07","end":"1996-10-09","name":"文化祭集训","command":"club","when":{"clubCategory":"cultural"}},{"start":"1996-10-11","end":"1996-10-11","name":"文化祭集训","command":"club","when":{"clubCategory":"cultural"}},{"start":"1996-10-12","end":"1996-10-12","name":"文化祭","command":"skip"},{"start":"1996-12-09","end":"1996-12-14","name":"期末考试","command":"skip"},{"start":"1996-12-24","end":"1996-12-24","name":"圣诞节","command":"skip"},{"start":"1997-01-01","end":"1997-01-01","name":"元旦","command":"skip"},{"start":"1997-02-14","end":"1997-02-14","name":"情人节","command":"skip"},{"start":"1997-03-03","end":"1997-03-08","name":"期末考试","command":"skip"},{"start":"1997-03-14","end":"1997-03-14","name":"白色情人节","command":"skip"},{"start":"1997-06-07","end":"1997-06-07","name":"体育祭","command":"skip"},{"start":"1997-07-14","end":"1997-07-19","name":"期末考试","command":"skip"},{"start":"1997-08-11","end":"1997-08-16","variants":[{"when":{"clubId":"baseball-club"},"name":"甲子园大赛","command":"skip"},{"name":"暑期集训","command":"clubCamp"}]},{"start":"1997-10-06","end":"1997-10-09","name":"文化祭集训","command":"club","when":{"clubCategory":"cultural"}},{"start":"1997-10-11","end":"1997-10-11","name":"文化祭","command":"skip"},{"start":"1997-12-08","end":"1997-12-13","name":"期末考试","command":"skip"},{"start":"1997-12-24","end":"1997-12-24","name":"圣诞节","command":"skip"},{"start":"1998-01-01","end":"1998-01-01","name":"元旦","command":"skip"},{"start":"1998-01-03","end":"1998-01-03","name":"全国大赛","command":"skip","when":{"clubCategory":"sports","excludeClubId":"baseball-club"}},{"start":"1998-02-14","end":"1998-02-14","name":"情人节","command":"skip"},{"start":"1998-02-23","end":"1998-02-23","name":"大学入学考/就业考试","command":"skip"}]}};
 
 self.__planCore = __planCoreNs;
 
@@ -3959,9 +4278,9 @@ const __ns = {};
 __ns["web/ui.js"] = (() => {
 const rules = __planCore["data/rules.json"];
 const { addDays, weekStartOf, weekdayOf } = __planCore["src/dates.js"];
-const { availableCommandIds, createClubLookup } = __planCore["src/clubs.js"];
+const { availableCommandIds, clubCommandId } = __planCore["src/clubs.js"];
 const { defaultInput } = __planCore["src/input.js"];
-const { resolveCommand } = __planCore["src/calendar.js"];
+const { createClubLookup, resolveActivity, resolveCommand } = __planCore["src/calendar.js"];
 const { buildCheckpointSchedule, meets } = __planCore["src/checkpoints.js"];
 // 领域查询与共享状态（不含 DOM 原语——那些在 web/dom.js，见票 10）。
 //
@@ -4000,25 +4319,36 @@ const VALUE_FIELDS = ATTRIBUTES;
 const CLUBS = rules.clubs.map((club) => ({ id: club.id, name: club.name }));
 const COMMANDS = rules.commands.map((command) => ({ id: command.id, name: command.name }));
 
+/** 只在休息日可用的指令（电话/约会）：进「指定指令」，但不进求解器候选。 */
+const REST_ONLY_COMMAND_IDS = new Set(
+  rules.commands.filter((command) => command.restOnly).map((command) => command.id),
+);
+
 const COMMAND_NAMES = new Map(COMMANDS.map((command) => [command.id, command.name]));
 const ATTRIBUTE_NAMES = new Map(ATTRIBUTES.map((attribute) => [attribute.id, attribute.name]));
 
 const SOURCE_LABELS = {
   pinned: '使用者指定',
   assigned: '求解器排定',
+  activity: '活动强制',
+  sports: '体育社团强制',
+  join: '社团加入',
+  switch: '社团切换',
   none: '待定',
 };
 
+/** 「跳过」只有活动日才有；使用者已经不能再手工标空过或跳过。 */
 const SKIP_LABELS = {
-  day: '空过（指定本日）',
-  'day-command': '空过（日指令置空）',
-  week: '空过（周指令置空）',
+  day: '跳过（指定本日）',
+  'day-command': '跳过（日指令置空）',
+  week: '跳过（周指令置空）',
 };
 
 const BLOCK_LABELS = {
   'club-not-unlocked': '不结算（社团未解锁）',
   'club-not-selected': '不结算（未加入社团）',
   'club-mismatch': '不结算（社团不符）',
+  'rest-only': '不结算（休息日专属指令）',
 };
 
 /** 检查点来源的显示名。落点语义各不相同，见 `checkpointLandingText`。 */
@@ -4062,6 +4392,17 @@ const hooks = {
 
 function commandName(id) {
   return COMMAND_NAMES.get(id) ?? id;
+}
+
+const ACTIVITY_COMMAND_LABELS = {
+  skip: '跳过',
+  club: '执行当前社团指令',
+  clubCamp: '社团集训指令',
+};
+
+/** 活动绑定指令的显示名（含 club / clubCamp 占位符）。 */
+function activityCommandName(commandId) {
+  return ACTIVITY_COMMAND_LABELS[commandId] ?? commandName(commandId);
 }
 
 function attributeName(id) {
@@ -4123,7 +4464,7 @@ function clampDate(date) {
 
 /** 某一天所属的社团（`null` = 未加入）。社团只能在一个个周日内切换。 */
 function clubAt(date) {
-  return createClubLookup(state.input)(date);
+  return createClubLookup(state.input, rules)(date);
 }
 
 function selectedDates() {
@@ -4173,9 +4514,24 @@ function monthCells(key) {
 // ---------------------------------------------------------------- 指令候选
 
 function commandsAvailableAt(date) {
-  const club = createClubLookup(state.input)(date);
+  const club = createClubLookup(state.input, rules)(date);
   const allowed = new Set(availableCommandIds(rules, club, date));
   return COMMANDS.filter((command) => allowed.has(command.id));
+}
+
+/**
+ * 「指定指令」里可选的指令：求解器候选 + **只在休息日可用**的指令（目前只有电话/约会）。
+ *
+ * 电话/约会效果全 0，所以不进候选序列（求解器不替使用者选，见 ADR-0014）；
+ * 但它是使用者的记录手段，必须能手动填进去——这就是它与候选集的唯一区别。
+ */
+function commandsSelectableAt(date) {
+  const rest = isRestOn(date);
+  const club = createClubLookup(state.input, rules)(date);
+  const available = new Set(availableCommandIds(rules, club, date));
+  return COMMANDS.filter(
+    (command) => available.has(command.id) || (rest && REST_ONLY_COMMAND_IDS.has(command.id)),
+  );
 }
 
 /**
@@ -4188,13 +4544,67 @@ function isRestOn(date) {
 
 /** 与日历、求解器完全一致的指令解析口径（见 src/calendar.js 的 resolveCommand）。 */
 function resolveDayCommand(date) {
+  // 活动日优先：活动绑定指令是硬强制，`club`/`clubCamp` 按当天社团展开。
+  const activity = activityOn(date);
+  if (activity) {
+    if (activity.command === 'skip') {
+      return { commandId: null, source: 'activity', skip: false, empty: true };
+    }
+    if (activity.command === 'club' || activity.command === 'clubCamp') {
+      const commandId = clubCommandId(rules, createClubLookup(state.input, rules)(date));
+      // 回家社时活动按普通日处理，落回自由指令。
+      if (commandId) return { commandId, source: 'activity', skip: false };
+    } else {
+      return { commandId: activity.command, source: 'activity', skip: false };
+    }
+  }
+
+  // 社团加入/切换：最近的周日；活动日优先。
+  const lookup = createClubLookup(state.input, rules);
+  const isJoin = lookup.joinDate !== null && date === lookup.joinDate;
+  const isSwitch = lookup.switchDate !== null && date === lookup.switchDate;
+  if (isSwitch && lookup.target !== null) {
+    const commandId = clubCommandId(rules, lookup.target);
+    if (commandId) return { commandId, source: 'switch', skip: false };
+  }
+  if (isJoin && !isSwitch) {
+    const commandId = clubCommandId(rules, lookup.oldClub);
+    if (commandId) return { commandId, source: 'join', skip: false };
+  }
+
   const rest = isRestOn(date);
+  const club = clubAt(date);
+  const clubDefinition = club ? rules.clubs.find((entry) => entry.id === club) : null;
+  const dayOfMonth = Number(date.slice(8, 10));
+  const isThirdSunday = weekdayOf(date) === 0 && dayOfMonth >= 15 && dayOfMonth <= 21;
+  if (isThirdSunday && clubDefinition?.category === 'sports') {
+    const commandId = clubCommandId(rules, club);
+    if (commandId) return { commandId, source: 'sports', skip: false };
+  }
   const weekStart = weekStartOf(date);
   return resolveCommand(state.input, state.assignments, {
-    isRestDay: rest,
+    isDayCommandDay: rest,
     date,
     weekStart,
   });
+}
+
+/**
+ * 这一天的指令是不是被**硬规则**占着（活动 / 社团加入 / 社团切换 / 体育第 3 周日）。
+ *
+ * 这些天指令由日历与社团规则决定，使用者的指定会被引擎忽略（见 `resolveDayCommand` 的
+ * 短路顺序），所以「指定指令」应当禁用——否则界面会收下一个永远不会生效的选择。
+ */
+function forcedCommandSource(date) {
+  const { source } = resolveDayCommand(date);
+  return source === 'activity' || source === 'join' || source === 'switch' || source === 'sports'
+    ? source
+    : null;
+}
+
+/** 某一天命中的活动（按当天社团解析条件与变体）；没有返回 null。 */
+function activityOn(date) {
+  return resolveActivity(rules, createClubLookup(state.input, rules), date);
 }
 
 // ---------------------------------------------------------------- 检查点
@@ -4349,7 +4759,7 @@ function markDirty(count = 1) {
   // 输入变了就落盘：刷新不丢，是本地保存承诺的全部。
   hooks.persist();
 }
-return { UNSET, CHOICE_EMPTY, CHOICE_NO_CLUB, TIMELINE, RULES, ATTRIBUTES, VALUE_FIELDS, CLUBS, COMMANDS, SOURCE_LABELS, SKIP_LABELS, BLOCK_LABELS, CHECKPOINT_SOURCE_LABELS, state, hooks, commandName, attributeName, opText, fmt1, isStale, checkpointAttributeIds, checkpointAttributesText, checkpointLandingText, checkpointSummary, defaultCheckpoint, clampDate, clubAt, selectedDates, isRangeSelection, inTimeline, monthOf, monthLabel, shiftMonth, monthCells, commandsAvailableAt, isRestOn, resolveDayCommand, evaluationOf, goalItems, goalsVerdict, checkpointRows, rebuildCheckpointIndex, landingMet, setResult, clearResult, focusDate, dayOf, valueOf, markDirty };
+return { UNSET, CHOICE_EMPTY, CHOICE_NO_CLUB, TIMELINE, RULES, ATTRIBUTES, VALUE_FIELDS, CLUBS, COMMANDS, SOURCE_LABELS, SKIP_LABELS, BLOCK_LABELS, CHECKPOINT_SOURCE_LABELS, state, hooks, commandName, activityCommandName, attributeName, opText, fmt1, isStale, checkpointAttributeIds, checkpointAttributesText, checkpointLandingText, checkpointSummary, defaultCheckpoint, clampDate, clubAt, selectedDates, isRangeSelection, inTimeline, monthOf, monthLabel, shiftMonth, monthCells, commandsAvailableAt, commandsSelectableAt, isRestOn, resolveDayCommand, forcedCommandSource, activityOn, evaluationOf, goalItems, goalsVerdict, checkpointRows, rebuildCheckpointIndex, landingMet, setResult, clearResult, focusDate, dayOf, valueOf, markDirty };
 })();
 __ns["web/dom.js"] = (() => {
 // DOM 原语：只碰 document，不碰领域状态、不 import 任何应用模块。
@@ -4460,7 +4870,7 @@ return { $, openModal, closeModal, modalIsOpen, field, numberInput, selectOf, at
 __ns["web/calendar.js"] = (() => {
 const { addDays, weekStartOf, weekdayOf } = __planCore["src/dates.js"];
 const { $ } = __ns["web/dom.js"];
-const { BLOCK_LABELS, CLUBS, SKIP_LABELS, SOURCE_LABELS, TIMELINE, VALUE_FIELDS, clubAt, commandName, fmt1, inTimeline, isRestOn, isStale, isRangeSelection, monthCells, monthLabel, monthOf, landingMet, rebuildCheckpointIndex, resolveDayCommand, selectedDates, shiftMonth, state, valueOf } = __ns["web/ui.js"];
+const { BLOCK_LABELS, CLUBS, SKIP_LABELS, SOURCE_LABELS, TIMELINE, VALUE_FIELDS, activityCommandName, activityOn, clubAt, commandName, fmt1, inTimeline, isRestOn, isStale, isRangeSelection, monthCells, monthLabel, monthOf, landingMet, rebuildCheckpointIndex, resolveDayCommand, selectedDates, shiftMonth, state, valueOf } = __ns["web/ui.js"];
 // 双月日历与当日详情条。
 //
 // 两件事在这里落地：
@@ -4479,8 +4889,7 @@ const MAX_FLAGS = 4;
 
 /** 与 src/calendar.js 的 resolveSkipSource 同口径：界面在未计算时也要能画出"空过"。 */
 function skipSourceOn(date, rest) {
-  if (state.input.skippedDays.includes(date)) return 'day';
-  if (rest && state.input.dayCommands[date] === null) return 'day-command';
+  if (state.input.dayCommands?.[date] === null) return 'day-command';
   if (!rest && state.input.weekCommands[weekStartOf(date)] === null) return 'week';
   return null;
 }
@@ -4521,7 +4930,7 @@ function buildCell(date) {
   const command = document.createElement('span');
   command.className = 'dcmd';
   if (skipSource) {
-    command.textContent = '空过';
+    command.textContent = '跳过';
   } else if (date === state.input.playedUpTo) {
     // 状态快照：按 ADR-0004，起点当天不结算，写"要执行的指令"会骗人。
     command.textContent = '起点';
@@ -4531,14 +4940,30 @@ function buildCell(date) {
     // 朴素的一行文案，不加专属底边、不加角标。
     command.textContent = '终点';
   } else if (inRange) {
+    // **只读当前输入的解析结果**，不读上一次计算的结果：使用者刚右键指定的指令必须立刻可见。
+    // 旧写法先取 `state.dayByDate`，只要算过一次，这格就永久显示旧指令，
+    // 右键「指定指令」看起来完全失效（2026-11-06 修复）。
     const resolved = resolveDayCommand(date);
-    if (resolved.commandId) command.textContent = commandName(resolved.commandId);
+    if (resolved.empty) command.textContent = '跳过';
+    else if (resolved.commandId) command.textContent = commandName(resolved.commandId);
     else command.textContent = resolved.skip ? '跳过' : '待定';
   } else {
     command.textContent = '—';
   }
 
   cell.append(number);
+
+  const activity = inRange ? activityOn(date) : null;
+  if (activity) {
+    const activityLine = document.createElement('span');
+    activityLine.className = 'dactivity';
+    activityLine.textContent = activity.name;
+    activityLine.title = `${activity.name}（${activityCommandName(activity.command)}）`;
+    cell.append(activityLine);
+    // 活动日不写绑定指令：它由日历决定，不是使用者选的，写在格子里只是噪音
+    // （所有者 2026-11-06）。跳过仍用斜纹底，图例照样对得上。
+    if (activity.command === 'skip') cell.classList.add('is-empty');
+  }
 
   const landings = inRange ? state.landingByDate.get(date) ?? [] : [];
   // 日历格上**只标小目标**（所有者 2026-10-07 裁决）：全局约束与结局目标不再占格子。
@@ -4559,7 +4984,8 @@ function buildCell(date) {
     cell.append(flags);
   }
 
-  cell.append(command);
+  // 活动日只写活动名；其余日子写当天实际执行的指令。
+  if (!activity) cell.append(command);
 
   return cell;
 }
@@ -4620,7 +5046,9 @@ function buildMonth(key) {
       cell.tabIndex = -1;
       // 溢出格是"另一个月的那一天"，不该携带本月的任何标记——包括终点的底边与「终点」标签。
       cell.classList.remove('is-empty', 'is-rest', 'is-end', 'is-played');
-      cell.querySelector('.dcmd').textContent = '—';
+      // 活动日不画指令行（只有活动名），所以这里可能没有 `.dcmd`。
+      const commandNode = cell.querySelector('.dcmd');
+      if (commandNode) commandNode.textContent = '—';
       const flags = cell.querySelector('.flags');
       if (flags) flags.remove();
     }
@@ -4683,8 +5111,9 @@ function renderDetail() {
   const weekStart = weekStartOf(date);
   const rest = isRestOn(date);
   const skipSource = skipSourceOn(date, rest);
-  const resolved = resolveDayCommand(date);
   const day = state.dayByDate.get(date) ?? null;
+  // 指令一行同样只读当前输入（理由见 buildCell）：刚指定完就要见到。
+  const resolved = resolveDayCommand(date);
 
   const when = document.createElement('div');
   when.className = 'when';
@@ -4714,6 +5143,8 @@ function renderDetail() {
     commandLine.textContent = `当日指令：${SKIP_LABELS[skipSource]}`;
   } else if (resolved.skip) {
     commandLine.textContent = '当日指令：跳过（求解器选择，当天不执行、不结算）';
+  } else if (resolved.empty) {
+    commandLine.textContent = '当日指令：跳过（活动强制，不执行、不结算）';
   } else if (resolved.commandId) {
     commandLine.textContent = `当日指令：${commandName(resolved.commandId)}（${SOURCE_LABELS[resolved.source]}）`;
   } else {
@@ -4734,7 +5165,7 @@ function renderDetail() {
       : null;
     const reason = blockText
       ?? (day.isEmpty
-        ? '空过'
+        ? '跳过'
         : date === TIMELINE.end
           ? '时间轴终点'
           : date === state.input.playedUpTo
@@ -4747,6 +5178,13 @@ function renderDetail() {
     settleLine.textContent = '已结算';
   }
   when.append(settleLine);
+
+  const activity = inTimeline(date) ? activityOn(date) : null;
+  if (activity) {
+    const activityLine = document.createElement('p');
+    activityLine.textContent = `活动：${activity.name}（${activityCommandName(activity.command)}）`;
+    when.append(activityLine);
+  }
 
   if (rest && weekday !== 0) {
     const restLine = document.createElement('p');
@@ -4887,7 +5325,7 @@ __ns["web/edits.js"] = (() => {
 const { canTakeSnapshot, rollForward } = __planCore["src/frontier.js"];
 const { clampToLimits } = __planCore["src/input.js"];
 const { isDate, weekStartOf, weekdayOf } = __planCore["src/dates.js"];
-const { ATTRIBUTES, CHOICE_EMPTY, CHOICE_NO_CLUB, RULES, TIMELINE, UNSET, clampDate, clearResult, defaultCheckpoint, focusDate, hooks, inTimeline, isRestOn, markDirty, state } = __ns["web/ui.js"];
+const { ATTRIBUTES, CHOICE_EMPTY, CHOICE_NO_CLUB, RULES, TIMELINE, UNSET, clampDate, clearResult, clubAt, defaultCheckpoint, focusDate, hooks, inTimeline, isRestOn, markDirty, state } = __ns["web/ui.js"];
 const { flashWeek } = __ns["web/dom.js"];
 // 编辑动作：把界面上的操作写进 `input`，并登记"待计算"。
 //
@@ -4904,7 +5342,10 @@ const { flashWeek } = __ns["web/dom.js"];
 
 
 
-/** 三态选择串 ↔ 输入值：未指定＝键不存在，空过＝显式 null。 */
+/**
+ * 三态选择串 ↔ 输入值：未指定＝键不存在，显式 null＝旧存档里的「空过」。
+ * 界面已不再产生 null（跳过是活动日专属），这里保留映射只为读懂旧存档。
+ */
 function choiceToCommandId(choice) {
   if (choice === UNSET) return undefined;
   if (choice === CHOICE_EMPTY) return null;
@@ -4931,20 +5372,8 @@ function toggleInList(list, value, present) {
 
 // ---------------------------------------------------------------- 日历上的标记
 
-/** 跳过 / 取消跳过（空过）。 */
-function setSkipped(dates, isSkipped) {
-  let touched = 0;
-  for (const date of dates) {
-    if (!inTimeline(date)) continue;
-    if (isSkipped === state.input.skippedDays.includes(date)) continue;
-    state.input.skippedDays = toggleInList(state.input.skippedDays, date, isSkipped);
-    touched += 1;
-  }
-  if (touched > 0) markDirty(touched);
-}
-
 /**
- * 指定指令（含"空过"与"清除指定"）。
+ * 指定指令（含"清除指定"）。使用者已经不能手工标「跳过」——跳过只作为活动日的硬空过存在。
  *
  * 周日与休息日写自己的日指令。**周一至周六的格子**——包括固定日历里是休息日的那天——
  * 还要把**它所在那一周的周指令**一起改掉，所以只要选区碰到某周的任何一天平日，
@@ -5025,11 +5454,23 @@ function setPlayedUpTo(date) {
 function setAttributeValue(attributeId, value) {
   const attribute = ATTRIBUTES.find((entry) => entry.id === attributeId);
   state.input.attributes[attributeId] = clampToLimits(value, attribute);
+  if (attributeId === 'clubExperience') {
+    const club = clubAt(state.input.playedUpTo);
+    if (club && state.input.clubExperiences) {
+      state.input.clubExperiences[club] = state.input.attributes.clubExperience;
+    }
+  }
   markDirty();
 }
 
 function setInitialClub(clubId) {
-  state.input.initialClub = clubId === UNSET ? null : clubId;
+  state.input.club = clubId === UNSET ? null : clubId;
+  state.input.initialClub = state.input.club;
+  delete state.input.pendingClub;
+  if (state.input.club && state.input.clubExperiences) {
+    state.input.attributes.clubExperience =
+      state.input.clubExperiences[state.input.club] ?? 0;
+  }
   markDirty();
 }
 
@@ -5122,23 +5563,18 @@ function draftCheckpoint(source, date) {
  * 在某个周日加入 / 更换 / 退出社团。自该周日起生效，并影响该周日的日指令。
  * 工具**绝不自行**选择或切换社团——这条只由使用者的右键操作触发（原规格故事 23）。
  */
-function setClubChange(date, choice) {
-  const others = state.input.clubChanges.filter((entry) => entry.date !== date);
-  if (choice === UNSET) {
-    state.input.clubChanges = others;
-  } else {
-    const clubId = choice === CHOICE_NO_CLUB ? null : choice;
-    state.input.clubChanges = [...others, { date, clubId }].sort((a, b) => (a.date < b.date ? -1 : 1));
-  }
+function setClubChange(_date, choice) {
+  if (choice === UNSET) delete state.input.pendingClub;
+  else state.input.pendingClub = choice === CHOICE_NO_CLUB ? null : choice;
   markDirty();
 }
-return { choiceToCommandId, commandIdToChoice, setSkipped, setCommands, setPlayedUpTo, setAttributeValue, setInitialClub, addCheckpoint, updateCheckpoint, removeCheckpoint, draftCheckpoint, setClubChange };
+return { choiceToCommandId, commandIdToChoice, setCommands, setPlayedUpTo, setAttributeValue, setInitialClub, addCheckpoint, updateCheckpoint, removeCheckpoint, draftCheckpoint, setClubChange };
 })();
 __ns["web/panels.js"] = (() => {
 const { weekdayOf, weekStartOf } = __planCore["src/dates.js"];
-const { ATTRIBUTES, CHOICE_EMPTY, CHOICE_NO_CLUB, CHECKPOINT_SOURCE_LABELS, CLUBS, RULES, TIMELINE, UNSET, attributeName, checkpointAttributeIds, checkpointAttributesText, checkpointLandingText, clubAt, commandsAvailableAt, defaultCheckpoint, evaluationOf, fmt1, goalItems, isRestOn, isStale, isRangeSelection, opText, selectedDates, state } = __ns["web/ui.js"];
+const { ATTRIBUTES, CHOICE_NO_CLUB, CHECKPOINT_SOURCE_LABELS, CLUBS, RULES, TIMELINE, UNSET, forcedCommandSource, activityOn, attributeName, checkpointAttributeIds, checkpointAttributesText, checkpointLandingText, clubAt, commandsSelectableAt, defaultCheckpoint, evaluationOf, fmt1, goalItems, isRestOn, isStale, isRangeSelection, opText, selectedDates, state } = __ns["web/ui.js"];
 const { $, attributePicker, closeModal, field, modalIsOpen, numberInput, openModal, pickedAttributes, selectOf } = __ns["web/dom.js"];
-const { addCheckpoint, commandIdToChoice, removeCheckpoint, setClubChange, setCommands, setPlayedUpTo, setSkipped, updateCheckpoint } = __ns["web/edits.js"];
+const { addCheckpoint, commandIdToChoice, removeCheckpoint, setClubChange, setCommands, setPlayedUpTo, updateCheckpoint } = __ns["web/edits.js"];
 const { jumpToDate, selectDate } = __ns["web/calendar.js"];
 // 检查点表、右键菜单与检查点编辑器。
 //
@@ -5422,28 +5858,32 @@ function openMenu(clientX, clientY, date) {
 
   const dates = selectedDates();
   const range = isRangeSelection();
-  const skipped = dates.filter((entry) => state.input.skippedDays.includes(entry));
+  const activity = activityOn(date);
   const checkpointsOnDate = state.input.checkpoints.filter((checkpoint) => checkpoint.date === date).length;
 
-  host.append(menuItem('指定指令…', () => openCommandPicker()));
+  // 活动日、社团加入/切换日、体育第 3 个周日：指令由日历与社团规则决定，不是使用者的指派。
+  // 指定或清除它们都会让界面与引擎说两套话（引擎会忽略这个选择），所以这里直接禁掉。
+  const forced = forcedCommandSource(date);
+  const forcedTitle = activity
+    ? `${activity.name}：活动日的指令由游戏日历决定，不能指定，也不能清除`
+    : forced === 'join'
+      ? '这是社团加入日：当天的指令固定为社团指令，不能指定'
+      : forced === 'switch'
+        ? '这是社团切换日：当天的指令固定为目标社团指令，不能指定'
+        : forced === 'sports'
+          ? '体育类社团每月第 3 个周日固定执行社团指令，不能指定'
+          : undefined;
+  host.append(
+    menuItem('指定指令…', () => openCommandPicker(), {
+      disabled: forced !== null,
+      title: forcedTitle,
+    }),
+  );
   host.append(
     menuItem('切换社团…', () => openClubPicker(state.selection.to), {
       disabled: weekdayOf(date) !== 0,
       title: weekdayOf(date) === 0 ? undefined : '社团只能在周日加入、更换或退出',
     }),
-  );
-  host.append(separator());
-  host.append(
-    menuItem(range ? `跳过这 ${dates.length} 天` : '跳过这一天', () => setSkipped(dates, true), {
-      disabled: dates.length === 0,
-    }),
-  );
-  host.append(
-    menuItem(
-      skipped.length > 0 ? `取消跳过（${skipped.length}）` : '取消跳过',
-      () => setSkipped(dates, false),
-      { disabled: skipped.length === 0 },
-    ),
   );
   host.append(separator());
   host.append(
@@ -5488,9 +5928,10 @@ function currentChoiceOf(dates) {
 
 /** 社团切换：只在周日可行，且工具绝不自行选择或切换（原规格故事 23）。 */
 function openClubPicker(date) {
-  const existing = state.input.clubChanges.find((entry) => entry.date === date);
-  const value =
-    existing === undefined ? UNSET : existing.clubId === null ? CHOICE_NO_CLUB : existing.clubId;
+  const pending = Object.prototype.hasOwnProperty.call(state.input, 'pendingClub')
+    ? state.input.pendingClub
+    : undefined;
+  const value = pending === undefined ? UNSET : pending === null ? CHOICE_NO_CLUB : pending;
   const select = selectOf(
     [
       [UNSET, '不切换（沿用之前的社团）'],
@@ -5533,10 +5974,12 @@ function openCommandPicker() {
   const anchor = state.selection.to;
   const entries = [
     [UNSET, '清除指定'],
-    [CHOICE_EMPTY, '空过'],
-    ...commandsAvailableAt(anchor).map((command) => [command.id, command.name]),
+    ...commandsSelectableAt(anchor).map((command) => [command.id, command.name]),
   ];
-  const select = selectOf(entries, currentChoiceOf(dates));
+  const current = currentChoiceOf(dates);
+  // 当前值不一定在候选里（旧存档的电话/约会、或已不可用的指令）。那种情况下原生 `<select>`
+  // 会显示空白——空白是骗人的，一律回落到「清除指定」，与其它日子的行为一致。
+  const select = selectOf(entries, entries.some(([value]) => value === current) ? current : UNSET);
 
   const dayCount = dates.filter((entry) => isRestOn(entry)).length;
   const weekdayDates = dates.filter((entry) => weekdayOf(entry) !== 0);
@@ -5550,8 +5993,18 @@ function openCommandPicker() {
       ? `将写入 ${dayCount} 天的日指令、${weeks.size} 周的周指令。周一至周六执行的是整周周指令，所以这些周里最多还有 ${spill} 个未被选中的平日会跟着改。`
       : '没有可写入的日期。';
 
+  // 硬规则日（活动 / 社团加入 / 切换 / 体育第 3 周日）的指令不由使用者决定，写进去也不生效。
+  const forcedDays = dates.filter((entry) => forcedCommandSource(entry) !== null);
   const body = document.createElement('div');
   body.append(field('指令', select), scope);
+  if (forcedDays.length > 0) {
+    const note = document.createElement('p');
+    note.className = 'hint';
+    note.textContent = `选区里有 ${forcedDays.length} 天由日历或社团规则固定了指令（${forcedDays
+      .slice(0, 3)
+      .join('、')}${forcedDays.length > 3 ? ' 等' : ''}）：这些天不受本次指定影响。`;
+    body.append(note);
+  }
 
   openModal({
     title: `指定指令（${dates.length} 天）`,
@@ -6125,7 +6578,7 @@ function railValue(id) {
 
 function syncRail() {
   $('rail-played-up-to').value = state.input.playedUpTo;
-  $('rail-initial-club').value = state.input.initialClub ?? UNSET;
+  $('rail-initial-club').value = state.input.club ?? state.input.initialClub ?? UNSET;
   for (const field of VALUE_FIELDS) {
     const input = attributeInputs.get(field.id);
     if (!input || document.activeElement === input) continue;

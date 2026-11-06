@@ -1,6 +1,6 @@
 # 结果视图以日历为主，不再提供全量明细表
 
-**Status**: accepted
+**Status**: superseded by ADR-0011（实时规划 UI）
 
 ## 决策
 

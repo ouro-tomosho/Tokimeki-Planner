@@ -1,22 +1,32 @@
+# ── 版本库边界 ──────────────────────────────────────────────────────────
+# 口径：仓库只承载「跑起来必需」的东西——源码、构建脚本、运行时数据，
+# 以及 GitHub Pages 直接发布的根目录入口。判据不是「文件是否由人编写」，
+# 而是「全新克隆能否直接 `npm install && npm run build && npm run verify` 成功」。
+# 分类摘要见 AGENTS.md 的「版本库边界」一节；本文件是唯一事实来源。
+
 # 依赖与临时文件
 node_modules/
 *.log
 *.tmp
 
-# 生成物：由 `npm run build` 产出，禁止手改，不进版本库。
-# 根 index.html 是例外——它进版本库，因为 GitHub Pages 直接发布仓库根目录。
+# ── 构建产物：由 `npm run build` 生成，禁止手改，不进版本库 ──────────────
 plan-core.js
 
-# 内部材料：不发布（判据见 README 的「数据来源」一节）。
+# 例外：根目录 index.html 虽然是产物，但 GitHub Pages 直接发布仓库根目录，
+# 所以它进版本库。改动请改 web/template.html、src/ 与 data/，再重新构建。
+
+# ── 内部材料：不发布 ───────────────────────────────────────────────────
 # 这几条只挡**未来的提交**；`GLOSSARY.md` 等文件在旧提交里依然存在
 # （可用 `git log --all --name-only` 复核），历史不可改写。
 .scratch/
-AGENTS.md
-docs/agents/
 docs/data-request.md
 
-# 开发期脚本：不是构建/运行必需的代码（所有者 2026-10-08 的仓库卫生口径），不进版本库。
-# 两者都只用 src/ 与 data/，不需要任何依赖（原先那句"需要 node_modules/highs"随
-# 精确求解一起过时了——2026-10-09 修正）。
+# Agent 配置（技能用的本机约定）：只在本地生效，不随仓库传播。
+AGENTS.md
+docs/agents/
+
+# ── 开发期脚本：不是构建/运行必需的代码 ───────────────────────────────
+# 两者只用 src/ 与 data/，不需要任何依赖（原先那句"需要 node_modules/highs"
+# 随精确求解一起过时了——2026-10-09 修正）。
 tools/verify-solver.mjs
 tools/compare-goal-priority.mjs

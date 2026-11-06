@@ -6,9 +6,9 @@
 
 import rules from '../data/rules.json';
 import { addDays, weekStartOf, weekdayOf } from '../src/dates.js';
-import { availableCommandIds, createClubLookup } from '../src/clubs.js';
+import { availableCommandIds, clubCommandId } from '../src/clubs.js';
 import { defaultInput } from '../src/input.js';
-import { resolveCommand } from '../src/calendar.js';
+import { createClubLookup, resolveActivity, resolveCommand } from '../src/calendar.js';
 import { buildCheckpointSchedule, meets } from '../src/checkpoints.js';
 
 export const UNSET = '';
@@ -35,25 +35,36 @@ export const VALUE_FIELDS = ATTRIBUTES;
 export const CLUBS = rules.clubs.map((club) => ({ id: club.id, name: club.name }));
 export const COMMANDS = rules.commands.map((command) => ({ id: command.id, name: command.name }));
 
+/** 只在休息日可用的指令（电话/约会）：进「指定指令」，但不进求解器候选。 */
+const REST_ONLY_COMMAND_IDS = new Set(
+  rules.commands.filter((command) => command.restOnly).map((command) => command.id),
+);
+
 const COMMAND_NAMES = new Map(COMMANDS.map((command) => [command.id, command.name]));
 const ATTRIBUTE_NAMES = new Map(ATTRIBUTES.map((attribute) => [attribute.id, attribute.name]));
 
 export const SOURCE_LABELS = {
   pinned: '使用者指定',
   assigned: '求解器排定',
+  activity: '活动强制',
+  sports: '体育社团强制',
+  join: '社团加入',
+  switch: '社团切换',
   none: '待定',
 };
 
+/** 「跳过」只有活动日才有；使用者已经不能再手工标空过或跳过。 */
 export const SKIP_LABELS = {
-  day: '空过（指定本日）',
-  'day-command': '空过（日指令置空）',
-  week: '空过（周指令置空）',
+  day: '跳过（指定本日）',
+  'day-command': '跳过（日指令置空）',
+  week: '跳过（周指令置空）',
 };
 
 export const BLOCK_LABELS = {
   'club-not-unlocked': '不结算（社团未解锁）',
   'club-not-selected': '不结算（未加入社团）',
   'club-mismatch': '不结算（社团不符）',
+  'rest-only': '不结算（休息日专属指令）',
 };
 
 /** 检查点来源的显示名。落点语义各不相同，见 `checkpointLandingText`。 */
@@ -97,6 +108,17 @@ export const hooks = {
 
 export function commandName(id) {
   return COMMAND_NAMES.get(id) ?? id;
+}
+
+const ACTIVITY_COMMAND_LABELS = {
+  skip: '跳过',
+  club: '执行当前社团指令',
+  clubCamp: '社团集训指令',
+};
+
+/** 活动绑定指令的显示名（含 club / clubCamp 占位符）。 */
+export function activityCommandName(commandId) {
+  return ACTIVITY_COMMAND_LABELS[commandId] ?? commandName(commandId);
 }
 
 export function attributeName(id) {
@@ -158,7 +180,7 @@ export function clampDate(date) {
 
 /** 某一天所属的社团（`null` = 未加入）。社团只能在一个个周日内切换。 */
 export function clubAt(date) {
-  return createClubLookup(state.input)(date);
+  return createClubLookup(state.input, rules)(date);
 }
 
 export function selectedDates() {
@@ -208,9 +230,24 @@ export function monthCells(key) {
 // ---------------------------------------------------------------- 指令候选
 
 export function commandsAvailableAt(date) {
-  const club = createClubLookup(state.input)(date);
+  const club = createClubLookup(state.input, rules)(date);
   const allowed = new Set(availableCommandIds(rules, club, date));
   return COMMANDS.filter((command) => allowed.has(command.id));
+}
+
+/**
+ * 「指定指令」里可选的指令：求解器候选 + **只在休息日可用**的指令（目前只有电话/约会）。
+ *
+ * 电话/约会效果全 0，所以不进候选序列（求解器不替使用者选，见 ADR-0014）；
+ * 但它是使用者的记录手段，必须能手动填进去——这就是它与候选集的唯一区别。
+ */
+export function commandsSelectableAt(date) {
+  const rest = isRestOn(date);
+  const club = createClubLookup(state.input, rules)(date);
+  const available = new Set(availableCommandIds(rules, club, date));
+  return COMMANDS.filter(
+    (command) => available.has(command.id) || (rest && REST_ONLY_COMMAND_IDS.has(command.id)),
+  );
 }
 
 /**
@@ -223,13 +260,67 @@ export function isRestOn(date) {
 
 /** 与日历、求解器完全一致的指令解析口径（见 src/calendar.js 的 resolveCommand）。 */
 export function resolveDayCommand(date) {
+  // 活动日优先：活动绑定指令是硬强制，`club`/`clubCamp` 按当天社团展开。
+  const activity = activityOn(date);
+  if (activity) {
+    if (activity.command === 'skip') {
+      return { commandId: null, source: 'activity', skip: false, empty: true };
+    }
+    if (activity.command === 'club' || activity.command === 'clubCamp') {
+      const commandId = clubCommandId(rules, createClubLookup(state.input, rules)(date));
+      // 回家社时活动按普通日处理，落回自由指令。
+      if (commandId) return { commandId, source: 'activity', skip: false };
+    } else {
+      return { commandId: activity.command, source: 'activity', skip: false };
+    }
+  }
+
+  // 社团加入/切换：最近的周日；活动日优先。
+  const lookup = createClubLookup(state.input, rules);
+  const isJoin = lookup.joinDate !== null && date === lookup.joinDate;
+  const isSwitch = lookup.switchDate !== null && date === lookup.switchDate;
+  if (isSwitch && lookup.target !== null) {
+    const commandId = clubCommandId(rules, lookup.target);
+    if (commandId) return { commandId, source: 'switch', skip: false };
+  }
+  if (isJoin && !isSwitch) {
+    const commandId = clubCommandId(rules, lookup.oldClub);
+    if (commandId) return { commandId, source: 'join', skip: false };
+  }
+
   const rest = isRestOn(date);
+  const club = clubAt(date);
+  const clubDefinition = club ? rules.clubs.find((entry) => entry.id === club) : null;
+  const dayOfMonth = Number(date.slice(8, 10));
+  const isThirdSunday = weekdayOf(date) === 0 && dayOfMonth >= 15 && dayOfMonth <= 21;
+  if (isThirdSunday && clubDefinition?.category === 'sports') {
+    const commandId = clubCommandId(rules, club);
+    if (commandId) return { commandId, source: 'sports', skip: false };
+  }
   const weekStart = weekStartOf(date);
   return resolveCommand(state.input, state.assignments, {
-    isRestDay: rest,
+    isDayCommandDay: rest,
     date,
     weekStart,
   });
+}
+
+/**
+ * 这一天的指令是不是被**硬规则**占着（活动 / 社团加入 / 社团切换 / 体育第 3 周日）。
+ *
+ * 这些天指令由日历与社团规则决定，使用者的指定会被引擎忽略（见 `resolveDayCommand` 的
+ * 短路顺序），所以「指定指令」应当禁用——否则界面会收下一个永远不会生效的选择。
+ */
+export function forcedCommandSource(date) {
+  const { source } = resolveDayCommand(date);
+  return source === 'activity' || source === 'join' || source === 'switch' || source === 'sports'
+    ? source
+    : null;
+}
+
+/** 某一天命中的活动（按当天社团解析条件与变体）；没有返回 null。 */
+export function activityOn(date) {
+  return resolveActivity(rules, createClubLookup(state.input, rules), date);
 }
 
 // ---------------------------------------------------------------- 检查点

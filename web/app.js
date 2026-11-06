@@ -237,7 +237,7 @@ function railValue(id) {
 
 function syncRail() {
   $('rail-played-up-to').value = state.input.playedUpTo;
-  $('rail-initial-club').value = state.input.initialClub ?? UNSET;
+  $('rail-initial-club').value = state.input.club ?? state.input.initialClub ?? UNSET;
   for (const field of VALUE_FIELDS) {
     const input = attributeInputs.get(field.id);
     if (!input || document.activeElement === input) continue;

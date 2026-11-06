@@ -9,7 +9,7 @@
 // 属性按游戏口径**向下取整**，因为输入里的属性必须是整数。
 
 import { addDays } from './dates.js';
-import { createClubLookup } from './clubs.js';
+import { createClubLookup } from './calendar.js';
 
 /** 只保留键满足 `keep` 的那些项。 */
 function keepEntries(map, keep) {
@@ -34,18 +34,19 @@ export function rollForward(rules, input, planResult, date) {
   const day = planResult?.days?.find((entry) => entry.date === date);
   if (!day) return { ...input, playedUpTo: date };
 
-  const club = createClubLookup(input)(date);
+  const club = createClubLookup(input, rules)(date);
+  const attributes = Object.fromEntries(
+    Object.entries(day.attributes).map(([id, value]) => [id, Math.floor(value)]),
+  );
+  const clubExperiences = { ...(input.clubExperiences ?? {}) };
+  if (club) clubExperiences[club] = attributes.clubExperience;
   return {
     ...input,
     playedUpTo: date,
-    attributes: Object.fromEntries(
-      Object.entries(day.attributes).map(([id, value]) => [id, Math.floor(value)]),
-    ),
-    initialClub: club ?? null,
-    // 起点当天已经折算进 initialClub，所以保留下来的切换都严格晚于它。
-    clubChanges: input.clubChanges.filter((change) => change.date > date),
-    // 休息日**不是输入**（它是 rules.calendar 上的固定日历），所以这里没有可裁剪的副本。
-    skippedDays: input.skippedDays.filter((entry) => entry >= date),
+    attributes,
+    clubExperiences,
+    club: club ?? null,
+    pendingClub: input.pendingClub,
     dayCommands: keepEntries(input.dayCommands, (key) => key >= date),
     // 周指令以周锚点为键：跨过起点的那个自然周还剩几天，那一周的周指令就还有效。
     weekCommands: keepEntries(input.weekCommands, (key) => addDays(key, 6) >= date),

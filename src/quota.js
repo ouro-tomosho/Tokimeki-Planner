@@ -15,9 +15,10 @@
 // 指令，直到全部达标或周数用尽。它不需要任何权重表——缺口按**归一化比例**比较。
 
 import { addDays, weekStartOf } from './dates.js';
-import { availableCommandIds, availableDayCommandIds, clubCommandId, createClubLookup } from './clubs.js';
-import { CLUB_EXPERIENCE_ID, REST_DAY, WEEKDAY, expectedEffects } from './settlement.js';
+import { availableCommandIds, availableDayCommandIds, clubCommandId } from './clubs.js';
+import { CLUB_EXPERIENCE_ID, REST_DAY, WEEKDAY, clubExperienceGainOn, expectedEffects } from './settlement.js';
 import { buildCheckpointSchedule } from './checkpoints.js';
+import { createClubLookup, resolveActivity } from './calendar.js';
 
 /** 一条属性的"要求"：终点目标（`>=` 或 `<`）。 */
 function endTargetsOf(rules, schedule) {
@@ -45,19 +46,53 @@ function endTargetsOf(rules, schedule) {
  * **休息日不能按"i === 0（周日）"硬编码**：`rules.calendar.restDays` 里还有一批游戏内
  * 确定的节假日，它们落在周一至周六，同样走各自的日指令。漏掉它们会把配额算错。
  */
-function weekStructure(rules, weekStart) {
+function weekStructure(rules, weekStart, input, clubAt) {
   const fixedRest = new Set(rules.calendar?.restDays ?? []);
   const weekdays = [];
   const restDays = [];
+  const activityDays = [];
   for (let i = 0; i < 7; i += 1) {
     const date = addDays(weekStart, i);
-    if (date < rules.timeline.start || date > rules.timeline.lastSettlement) continue;
-    if (date === rules.timeline.start) continue;
+    if (date < input.playedUpTo || date > rules.timeline.lastSettlement) continue;
+    if (date === input.playedUpTo) continue;
     const isRest = i === 0 || fixedRest.has(date);
+    const activity = resolveActivity(rules, clubAt, date);
+    const club = clubAt(date);
+    const clubDefinition = club ? rules.clubs.find((entry) => entry.id === club) : null;
+    const dayOfMonth = Number(date.slice(8, 10));
+    const isThirdSunday = i === 0 && dayOfMonth >= 15 && dayOfMonth <= 21;
+    const isJoin = clubAt.joinDate !== null && date === clubAt.joinDate;
+    const isSwitch = clubAt.switchDate !== null && date === clubAt.switchDate;
+    const joinCommand = isJoin ? clubCommandId(rules, clubAt.oldClub) : null;
+    const switchCommand = isSwitch && clubAt.target !== null
+      ? clubCommandId(rules, clubAt.target)
+      : null;
+    if (isJoin || isSwitch) {
+      activityDays.push({
+        date,
+        isRest,
+        command: isSwitch ? switchCommand : joinCommand,
+        switch: isSwitch ? clubAt.target : undefined,
+      });
+      continue;
+    }
+    const sportsCommand = !activity && isThirdSunday && clubDefinition?.category === 'sports'
+      ? clubCommandId(rules, club)
+      : null;
+    const forced = (activity !== null && (
+      activity.command === 'skip'
+      || ((activity.command === 'club' || activity.command === 'clubCamp')
+        ? Boolean(clubCommandId(rules, club))
+        : true)
+    )) || sportsCommand !== null;
+    if (forced) {
+      activityDays.push({ date, isRest, command: activity ? activity.command : sportsCommand });
+      continue;
+    }
     if (isRest) restDays.push(date);
     else weekdays.push(date);
   }
-  return { weekdays, restDays };
+  return { weekdays, restDays, activityDays };
 }
 
 /**
@@ -66,8 +101,8 @@ function weekStructure(rules, weekStart) {
  * @returns `{ plan, unmet, usedWeeks, weeks }`，`unmet` 是最终仍达不到的属性清单。
  */
 export function allocateQuota(rules, input) {
-  const weeks = buildCalendarWeeks(rules, input);
-  const clubAt = createClubLookup(input);
+  const clubAt = createClubLookup(input, rules);
+  const weeks = buildCalendarWeeks(rules, input, clubAt);
   const schedule = buildCheckpointSchedule(rules, input);
   const targets = endTargetsOf(rules, schedule);
 
@@ -76,6 +111,7 @@ export function allocateQuota(rules, input) {
     weekStart: week.weekStart,
     weekdayDates: week.weekdays,
     restDates: week.restDays,
+    activityDates: week.activityDays,
     pool: availableCommandIds(rules, clubAt(week.weekStart), week.weekStart),
   }));
 
@@ -96,18 +132,57 @@ export function allocateQuota(rules, input) {
   }
   const vectorFor = (s, commandId) => vectors.get(s.pool.join('|') + '|' + s.weekdayDates.length).get(commandId);
 
-  const start = Object.fromEntries(rules.attributes.map((a) => [a.id, a.default]));
+  const start = { ...input.attributes };
   const active = rules.attributes.filter((a) => targets.has(a.id) && a.id !== CLUB_EXPERIENCE_ID);
 
-  /** 给定"每周选哪条"，算终值（含夹逼）。 */
+  const clubExperiences = { ...(input.clubExperiences ?? {}) };
+
+  /** 把一周里的固定活动日效果施加上去（活动日不是自由选择）。 */
+  const applyActivity = (state, activity) => {
+    if (activity.switch !== undefined) {
+      if (clubAt.oldClub) clubExperiences[clubAt.oldClub] = state[CLUB_EXPERIENCE_ID];
+      state[CLUB_EXPERIENCE_ID] = activity.switch ? (clubExperiences[activity.switch] ?? 0) : 0;
+    }
+    if (!activity || activity.command === 'skip') return;
+    const club = clubAt(activity.date);
+    const commandId = (activity.command === 'club' || activity.command === 'clubCamp')
+      ? clubCommandId(rules, club)
+      : activity.command;
+    if (!commandId) return;
+    const command = rules.commands.find((c) => c.id === commandId);
+    if (!command) return;
+    const perDay = expectedEffects(rules, command, activity.isRest ? REST_DAY : WEEKDAY);
+    for (const a of rules.attributes) {
+      state[a.id] = Math.max(a.min, Math.min(a.max, state[a.id] + perDay[a.id]));
+    }
+    if (command.kind === 'club') {
+      const gain = clubExperienceGainOn(
+        rules,
+        activity.isRest ? REST_DAY : WEEKDAY,
+        { activity: { command: activity.command } },
+      );
+      const attribute = rules.attributes.find((a) => a.id === CLUB_EXPERIENCE_ID);
+      if (attribute) {
+        state[CLUB_EXPERIENCE_ID] = Math.max(
+          attribute.min,
+          Math.min(attribute.max, state[CLUB_EXPERIENCE_ID] + gain),
+        );
+      }
+    }
+  };
+
+  /** 给定"每周选哪条"，算终值（含夹逼与活动日）。 */
   const evaluate = (choices) => {
     const state = { ...start };
     choices.forEach((commandId, index) => {
-      if (commandId === null) return;
-      const vector = vectorFor(structures[index], commandId);
-      for (const a of rules.attributes) {
-        state[a.id] = Math.max(a.min, Math.min(a.max, state[a.id] + vector[a.id]));
+      const s = structures[index];
+      if (commandId !== null) {
+        const vector = vectorFor(s, commandId);
+        for (const a of rules.attributes) {
+          state[a.id] = Math.max(a.min, Math.min(a.max, state[a.id] + vector[a.id]));
+        }
       }
+      for (const activity of s.activityDates) applyActivity(state, activity);
     });
     return state;
   };
@@ -132,15 +207,8 @@ export function allocateQuota(rules, input) {
     return a.total - b.total;
   };
 
-  // 固定日历里的社团集训周：那段时间游戏里只能做社团指令，配额层照办、不再重选。
-  const pinnedClubWeeks = new Set((rules.calendar?.clubWeeks ?? []).map((w) => w.date));
-
-  // 初值：钉住的周用社团指令，其余先留空（下面迭代会填）。
-  const choices = structures.map((s) => {
-    if (!pinnedClubWeeks.has(s.weekStart)) return null;
-    const command = clubCommandId(rules, clubAt(s.weekStart));
-    return s.pool.includes(command) ? command : null;
-  });
+  // 初值：全部先留空（下面迭代会填）；活动日不是自由选择，不参与周指令分配。
+  const choices = structures.map(() => null);
   let best = keyOf(evaluate(choices));
   let bestChoices = [...choices];
 
@@ -148,8 +216,6 @@ export function allocateQuota(rules, input) {
   for (let pass = 0; pass < 40; pass += 1) {
     let improved = false;
     for (let index = 0; index < structures.length; index += 1) {
-      // 固定日历钉住的社团集训周不参与重选。
-      if (pinnedClubWeeks.has(structures[index].weekStart)) continue;
       const original = choices[index];
       let localBest = original;
       let localKey = null;
@@ -207,16 +273,17 @@ export function allocateQuota(rules, input) {
       }
       return { date, commandId: restBest };
     });
+    for (const activity of s.activityDates) applyActivity(state, activity);
     plan.push({ weekStart: s.weekStart, commandId, weekdayDates: s.weekdayDates, restCommands });
   });
 
   return { plan, unmet: keyOf(state), state };
 }
 
-function buildCalendarWeeks(rules, input) {
+function buildCalendarWeeks(rules, input, clubAt) {
   const weeks = [];
-  for (let anchor = weekStartOf(rules.timeline.start); anchor <= rules.timeline.lastSettlement; anchor = addDays(anchor, 7)) {
-    const structure = weekStructure(rules, anchor);
+  for (let anchor = weekStartOf(input.playedUpTo); anchor <= rules.timeline.lastSettlement; anchor = addDays(anchor, 7)) {
+    const structure = weekStructure(rules, anchor, input, clubAt);
     weeks.push({ weekStart: anchor, ...structure });
   }
   return weeks;

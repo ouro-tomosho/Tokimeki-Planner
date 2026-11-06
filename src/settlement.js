@@ -9,7 +9,6 @@
 // 期望值与结算共用同一份 `branches()`：求解器与规划必须同一口径，否则搜索会在与结算
 // 不同的世界里寻优，得出的日程一重放就对不上。
 
-import { weekStartOf } from './dates.js';
 
 export const WEEKDAY = 'weekday';
 export const REST_DAY = 'restDay';
@@ -75,37 +74,15 @@ export function expectedEffects(rules, commandOrId, dayKind) {
 }
 
 /**
- * 这一天是否落在**有加成的社团集训周**里。
+ * 某一天的社团经验增益。
  *
- * `rules.calendar.clubWeeks` 的 6 条分两组：**8 月组**（1995-08-13、1996-08-11、1997-08-10）
- * 有社团经验加成，**10 月组**没有。加成的作用域严格是**那一周的平日**——集训周不含休息日，
- * 所以该周的休息日仍走基础值 `restDay`。
- *
- * 日期从字符串取，**不用 `new Date` 的本地时区**：跨时区跑会差一天。
+ * `社团集训指令`（`clubCamp`）**一律 +2**，不看星期/月份；普通社团指令平日 +1、休息日 +4。
+ * `rule` 是这一天的日历对象（含 `activity`）；拿不到活动信息时按普通规则处理。
  */
-export function isAugustClubWeek(rules, weekStart) {
-  if (!weekStart) return false;
-  return (rules.calendar?.clubWeeks ?? []).some(
-    (week) => week.date === weekStart && week.date.slice(5, 7) === '08',
-  );
-}
-
-/**
- * 某一天的社团经验增益。加成只对**8 月集训周的平日**生效（见 `isAugustClubWeek`）。
- *
- * 判定优先级：
- *   1. `rule.weekStart`（最可靠——调用方手里有完整的日历对象）；
- *   2. `date`（退而求其次——从日期自己推周锚点，**用字符串运算，不碰时区**）；
- *   3. 两者都没有：退回基础值。这条是为了兼容大量只关心"平日 +1 / 休息日 +4"的
- *      既有测试调用点，代价是它们在 8 月集训周上会少算——所以 `apply` 在**能判定
- *      却判不出来**时会抛错，而不是静默给错值。
- */
-export function clubExperienceGainOn(rules, dayKind, rule = null, date = null) {
+export function clubExperienceGainOn(rules, dayKind, rule = null) {
   const gain = rules.clubExperienceGain;
-  if (dayKind === REST_DAY) return gain.restDay;
-  const weekStart = rule?.weekStart ?? (date ? weekStartOf(date) : null);
-  if (weekStart === null) return gain.weekday;
-  return isAugustClubWeek(rules, weekStart) ? gain.augustWeekday : gain.weekday;
+  if (rule?.activity?.command === 'clubCamp') return gain.camp;
+  return dayKind === REST_DAY ? gain.restDay : gain.weekday;
 }
 
 const clamp = (value, attribute) => Math.min(attribute.max, Math.max(attribute.min, value));
@@ -116,12 +93,10 @@ const clamp = (value, attribute) => Math.min(attribute.max, Math.max(attribute.m
  * `commandId` 为 `null` / `undefined` 表示**空过**：不执行、不判定成败、也不结算，
  * 状态原样带入下一天。`state` 不被修改。
  *
- * 第 5/6 参用于判断 **8 月集训周加成**，给任意一个即可（两个都不给则按基础增益处理）：
- *   - `rule`：这一天在日历里的身份 `{ date, isRestDay, weekStart }`；
- *   - `date`：只给日期也行，内部用**字符串运算**推周锚点，不碰时区。
- * 能拿到 `day` 的调用点（`plan` / `beam`）应当传 `day`。
+ * 第 5 参是这一天的日历对象（含 `activity`），用来判定 `clubCamp` 的社团经验 +2；
+ * 不传则按普通社团指令的增益处理。
  */
-export function apply(rules, state, commandId, dayKind, rule = null, date = null) {
+export function apply(rules, state, commandId, dayKind, rule = null) {
   const attributes = { ...state.attributes };
   const command = resolveCommand(rules, commandId);
 
@@ -137,7 +112,7 @@ export function apply(rules, state, commandId, dayKind, rule = null, date = null
   // 落点是属性 `clubExperience`，**不是** `command.clubId`——后者是社团 id（如 `science-club`），
   // 根本不是属性。写错会让增益被静默丢弃（历史上真发生过）。
   if (command.kind === 'club') {
-    const gain = clubExperienceGainOn(rules, dayKind, rule, date ?? rule?.date ?? null);
+    const gain = clubExperienceGainOn(rules, dayKind, rule);
     const attribute = rules.attributes.find((a) => a.id === CLUB_EXPERIENCE_ID);
     if (!attribute) {
       throw new Error(`规则里缺少社团经验属性 ${CLUB_EXPERIENCE_ID}，社团指令的增益无处可加`);

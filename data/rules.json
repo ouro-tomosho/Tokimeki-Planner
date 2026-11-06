@@ -17,7 +17,7 @@
   "clubExperienceGain": {
     "weekday": 1,
     "restDay": 4,
-    "augustWeekday": 2
+    "camp": 2
   },
   "attributes": [
     {
@@ -104,47 +104,58 @@
   "clubs": [
     {
       "id": "literature-club",
-      "name": "文艺社"
+      "name": "文艺社",
+      "category": "cultural"
     },
     {
       "id": "drama-club",
-      "name": "话剧社"
+      "name": "话剧社",
+      "category": "cultural"
     },
     {
       "id": "science-club",
-      "name": "科学社"
+      "name": "科学社",
+      "category": "cultural"
     },
     {
       "id": "computer-club",
-      "name": "电脑社"
+      "name": "电脑社",
+      "category": "cultural"
     },
     {
       "id": "art-club",
-      "name": "美术社"
+      "name": "美术社",
+      "category": "cultural"
     },
     {
       "id": "brass-band-club",
-      "name": "管乐社"
+      "name": "管乐社",
+      "category": "cultural"
     },
     {
       "id": "baseball-club",
-      "name": "棒球社"
+      "name": "棒球社",
+      "category": "sports"
     },
     {
       "id": "soccer-club",
-      "name": "足球社"
+      "name": "足球社",
+      "category": "sports"
     },
     {
       "id": "tennis-club",
-      "name": "网球社"
+      "name": "网球社",
+      "category": "sports"
     },
     {
       "id": "swimming-club",
-      "name": "游泳社"
+      "name": "游泳社",
+      "category": "sports"
     },
     {
       "id": "basketball-club",
-      "name": "篮球社"
+      "name": "篮球社",
+      "category": "sports"
     }
   ],
   "commands": [
@@ -280,6 +291,25 @@
         "stress": -2.9375,
         "clubExperience": 0
       }
+    },
+    {
+      "id": "cmd-date",
+      "name": "打电话/约会",
+      "kind": "daily",
+      "restOnly": true,
+      "effects": {
+        "stamina": 0,
+        "literature": 0,
+        "science": 0,
+        "art": 0,
+        "sports": 0,
+        "popularity": 0,
+        "appearance": 0,
+        "grit": 0,
+        "stress": 0,
+        "clubExperience": 0
+      },
+      "successRate": 0.35
     },
     {
       "id": "cmd-club-literature",
@@ -547,6 +577,15 @@
       "source": "mini"
     },
     {
+      "id": "mg-command-count",
+      "date": "1998-02-23",
+      "kind": "count",
+      "base": 0,
+      "op": ">=",
+      "value": 800,
+      "source": "mini"
+    },
+    {
       "id": "eg-stamina",
       "date": "1998-03-01",
       "attribute": "stamina",
@@ -686,6 +725,254 @@
       {
         "date": "1997-10-05",
         "command": "club"
+      }
+    ],
+    "activities": [
+      {
+        "start": "1995-06-03",
+        "end": "1995-06-03",
+        "name": "体育祭",
+        "command": "skip"
+      },
+      {
+        "start": "1995-07-10",
+        "end": "1995-07-15",
+        "name": "期末考试",
+        "command": "skip"
+      },
+      {
+        "start": "1995-08-14",
+        "end": "1995-08-19",
+        "name": "暑期集训",
+        "command": "clubCamp"
+      },
+      {
+        "start": "1995-10-09",
+        "end": "1995-10-09",
+        "name": "文化祭集训",
+        "command": "club",
+        "when": {
+          "clubCategory": "cultural"
+        }
+      },
+      {
+        "start": "1995-10-11",
+        "end": "1995-10-13",
+        "name": "文化祭集训",
+        "command": "club",
+        "when": {
+          "clubCategory": "cultural"
+        }
+      },
+      {
+        "start": "1995-10-14",
+        "end": "1995-10-14",
+        "name": "文化祭",
+        "command": "skip"
+      },
+      {
+        "start": "1995-12-11",
+        "end": "1995-12-16",
+        "name": "期末考试",
+        "command": "skip"
+      },
+      {
+        "start": "1995-12-24",
+        "end": "1995-12-24",
+        "name": "圣诞节",
+        "command": "skip"
+      },
+      {
+        "start": "1996-01-01",
+        "end": "1996-01-01",
+        "name": "元旦",
+        "command": "skip"
+      },
+      {
+        "start": "1996-02-14",
+        "end": "1996-02-14",
+        "name": "情人节",
+        "command": "skip"
+      },
+      {
+        "start": "1996-03-04",
+        "end": "1996-03-09",
+        "name": "期末考试",
+        "command": "skip"
+      },
+      {
+        "start": "1996-03-14",
+        "end": "1996-03-14",
+        "name": "白色情人节",
+        "command": "skip"
+      },
+      {
+        "start": "1996-06-01",
+        "end": "1996-06-01",
+        "name": "体育祭",
+        "command": "skip"
+      },
+      {
+        "start": "1996-07-15",
+        "end": "1996-07-20",
+        "name": "期末考试",
+        "command": "skip"
+      },
+      {
+        "start": "1996-08-12",
+        "end": "1996-08-17",
+        "name": "暑期集训",
+        "command": "clubCamp"
+      },
+      {
+        "start": "1996-09-09",
+        "end": "1996-09-14",
+        "name": "校外教学",
+        "command": "skip"
+      },
+      {
+        "start": "1996-10-07",
+        "end": "1996-10-09",
+        "name": "文化祭集训",
+        "command": "club",
+        "when": {
+          "clubCategory": "cultural"
+        }
+      },
+      {
+        "start": "1996-10-11",
+        "end": "1996-10-11",
+        "name": "文化祭集训",
+        "command": "club",
+        "when": {
+          "clubCategory": "cultural"
+        }
+      },
+      {
+        "start": "1996-10-12",
+        "end": "1996-10-12",
+        "name": "文化祭",
+        "command": "skip"
+      },
+      {
+        "start": "1996-12-09",
+        "end": "1996-12-14",
+        "name": "期末考试",
+        "command": "skip"
+      },
+      {
+        "start": "1996-12-24",
+        "end": "1996-12-24",
+        "name": "圣诞节",
+        "command": "skip"
+      },
+      {
+        "start": "1997-01-01",
+        "end": "1997-01-01",
+        "name": "元旦",
+        "command": "skip"
+      },
+      {
+        "start": "1997-02-14",
+        "end": "1997-02-14",
+        "name": "情人节",
+        "command": "skip"
+      },
+      {
+        "start": "1997-03-03",
+        "end": "1997-03-08",
+        "name": "期末考试",
+        "command": "skip"
+      },
+      {
+        "start": "1997-03-14",
+        "end": "1997-03-14",
+        "name": "白色情人节",
+        "command": "skip"
+      },
+      {
+        "start": "1997-06-07",
+        "end": "1997-06-07",
+        "name": "体育祭",
+        "command": "skip"
+      },
+      {
+        "start": "1997-07-14",
+        "end": "1997-07-19",
+        "name": "期末考试",
+        "command": "skip"
+      },
+      {
+        "start": "1997-08-11",
+        "end": "1997-08-16",
+        "variants": [
+          {
+            "when": {
+              "clubId": "baseball-club"
+            },
+            "name": "甲子园大赛",
+            "command": "skip"
+          },
+          {
+            "name": "暑期集训",
+            "command": "clubCamp"
+          }
+        ]
+      },
+      {
+        "start": "1997-10-06",
+        "end": "1997-10-09",
+        "name": "文化祭集训",
+        "command": "club",
+        "when": {
+          "clubCategory": "cultural"
+        }
+      },
+      {
+        "start": "1997-10-11",
+        "end": "1997-10-11",
+        "name": "文化祭",
+        "command": "skip"
+      },
+      {
+        "start": "1997-12-08",
+        "end": "1997-12-13",
+        "name": "期末考试",
+        "command": "skip"
+      },
+      {
+        "start": "1997-12-24",
+        "end": "1997-12-24",
+        "name": "圣诞节",
+        "command": "skip"
+      },
+      {
+        "start": "1998-01-01",
+        "end": "1998-01-01",
+        "name": "元旦",
+        "command": "skip"
+      },
+      {
+        "start": "1998-01-03",
+        "end": "1998-01-03",
+        "name": "全国大赛",
+        "command": "skip",
+        "when": {
+          "clubCategory": "sports",
+          "excludeClubId": "baseball-club"
+        }
+      },
+      {
+        "start": "1998-02-14",
+        "end": "1998-02-14",
+        "name": "情人节",
+        "command": "skip"
+      },
+      {
+        "start": "1998-02-23",
+        "end": "1998-02-23",
+        "name": "大学入学考/就业考试",
+        "command": "skip"
       }
     ]
   }

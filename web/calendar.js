@@ -15,6 +15,8 @@ import {
   SOURCE_LABELS,
   TIMELINE,
   VALUE_FIELDS,
+  activityCommandName,
+  activityOn,
   clubAt,
   commandName,
   fmt1,
@@ -40,8 +42,7 @@ const MAX_FLAGS = 4;
 
 /** 与 src/calendar.js 的 resolveSkipSource 同口径：界面在未计算时也要能画出"空过"。 */
 function skipSourceOn(date, rest) {
-  if (state.input.skippedDays.includes(date)) return 'day';
-  if (rest && state.input.dayCommands[date] === null) return 'day-command';
+  if (state.input.dayCommands?.[date] === null) return 'day-command';
   if (!rest && state.input.weekCommands[weekStartOf(date)] === null) return 'week';
   return null;
 }
@@ -82,7 +83,7 @@ function buildCell(date) {
   const command = document.createElement('span');
   command.className = 'dcmd';
   if (skipSource) {
-    command.textContent = '空过';
+    command.textContent = '跳过';
   } else if (date === state.input.playedUpTo) {
     // 状态快照：按 ADR-0004，起点当天不结算，写"要执行的指令"会骗人。
     command.textContent = '起点';
@@ -92,14 +93,30 @@ function buildCell(date) {
     // 朴素的一行文案，不加专属底边、不加角标。
     command.textContent = '终点';
   } else if (inRange) {
+    // **只读当前输入的解析结果**，不读上一次计算的结果：使用者刚右键指定的指令必须立刻可见。
+    // 旧写法先取 `state.dayByDate`，只要算过一次，这格就永久显示旧指令，
+    // 右键「指定指令」看起来完全失效（2026-11-06 修复）。
     const resolved = resolveDayCommand(date);
-    if (resolved.commandId) command.textContent = commandName(resolved.commandId);
+    if (resolved.empty) command.textContent = '跳过';
+    else if (resolved.commandId) command.textContent = commandName(resolved.commandId);
     else command.textContent = resolved.skip ? '跳过' : '待定';
   } else {
     command.textContent = '—';
   }
 
   cell.append(number);
+
+  const activity = inRange ? activityOn(date) : null;
+  if (activity) {
+    const activityLine = document.createElement('span');
+    activityLine.className = 'dactivity';
+    activityLine.textContent = activity.name;
+    activityLine.title = `${activity.name}（${activityCommandName(activity.command)}）`;
+    cell.append(activityLine);
+    // 活动日不写绑定指令：它由日历决定，不是使用者选的，写在格子里只是噪音
+    // （所有者 2026-11-06）。跳过仍用斜纹底，图例照样对得上。
+    if (activity.command === 'skip') cell.classList.add('is-empty');
+  }
 
   const landings = inRange ? state.landingByDate.get(date) ?? [] : [];
   // 日历格上**只标小目标**（所有者 2026-10-07 裁决）：全局约束与结局目标不再占格子。
@@ -120,7 +137,8 @@ function buildCell(date) {
     cell.append(flags);
   }
 
-  cell.append(command);
+  // 活动日只写活动名；其余日子写当天实际执行的指令。
+  if (!activity) cell.append(command);
 
   return cell;
 }
@@ -181,7 +199,9 @@ function buildMonth(key) {
       cell.tabIndex = -1;
       // 溢出格是"另一个月的那一天"，不该携带本月的任何标记——包括终点的底边与「终点」标签。
       cell.classList.remove('is-empty', 'is-rest', 'is-end', 'is-played');
-      cell.querySelector('.dcmd').textContent = '—';
+      // 活动日不画指令行（只有活动名），所以这里可能没有 `.dcmd`。
+      const commandNode = cell.querySelector('.dcmd');
+      if (commandNode) commandNode.textContent = '—';
       const flags = cell.querySelector('.flags');
       if (flags) flags.remove();
     }
@@ -244,8 +264,9 @@ export function renderDetail() {
   const weekStart = weekStartOf(date);
   const rest = isRestOn(date);
   const skipSource = skipSourceOn(date, rest);
-  const resolved = resolveDayCommand(date);
   const day = state.dayByDate.get(date) ?? null;
+  // 指令一行同样只读当前输入（理由见 buildCell）：刚指定完就要见到。
+  const resolved = resolveDayCommand(date);
 
   const when = document.createElement('div');
   when.className = 'when';
@@ -275,6 +296,8 @@ export function renderDetail() {
     commandLine.textContent = `当日指令：${SKIP_LABELS[skipSource]}`;
   } else if (resolved.skip) {
     commandLine.textContent = '当日指令：跳过（求解器选择，当天不执行、不结算）';
+  } else if (resolved.empty) {
+    commandLine.textContent = '当日指令：跳过（活动强制，不执行、不结算）';
   } else if (resolved.commandId) {
     commandLine.textContent = `当日指令：${commandName(resolved.commandId)}（${SOURCE_LABELS[resolved.source]}）`;
   } else {
@@ -295,7 +318,7 @@ export function renderDetail() {
       : null;
     const reason = blockText
       ?? (day.isEmpty
-        ? '空过'
+        ? '跳过'
         : date === TIMELINE.end
           ? '时间轴终点'
           : date === state.input.playedUpTo
@@ -308,6 +331,13 @@ export function renderDetail() {
     settleLine.textContent = '已结算';
   }
   when.append(settleLine);
+
+  const activity = inTimeline(date) ? activityOn(date) : null;
+  if (activity) {
+    const activityLine = document.createElement('p');
+    activityLine.textContent = `活动：${activity.name}（${activityCommandName(activity.command)}）`;
+    when.append(activityLine);
+  }
 
   if (rest && weekday !== 0) {
     const restLine = document.createElement('p');

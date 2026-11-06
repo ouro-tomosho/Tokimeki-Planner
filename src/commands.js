@@ -15,6 +15,9 @@ export const SKIP_DAY = 'skip';
 /** **当前社团指令**的占位符。展开见 `resolveClubSlot`。 */
 export const CLUB_COMMAND = 'club';
 
+/** **社团集训指令**的占位符：解析为当前社团指令，社团经验 +2。 */
+export const CLUB_CAMP_COMMAND = 'clubCamp';
+
 /** 这个槽位取值是不是「跳过」。 */
 export function isSkip(value) {
   return value === SKIP_DAY;
@@ -23,6 +26,11 @@ export function isSkip(value) {
 /** 这个槽位取值是不是「当前社团指令」占位符。 */
 export function isClubSlot(value) {
   return value === CLUB_COMMAND;
+}
+
+/** 这个槽位取值是不是「社团集训指令」占位符。 */
+export function isClubCampSlot(value) {
+  return value === CLUB_CAMP_COMMAND;
 }
 
 /**

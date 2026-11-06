@@ -428,6 +428,15 @@
         color: var(--ink);
         word-break: break-all;
       }
+      .cell .dactivity {
+        display: block;
+        font-size: 10px;
+        line-height: 1.2;
+        color: var(--rose-deep);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
       .cell .flags {
         position: absolute;
         top: 2px;
@@ -940,9 +949,9 @@
         <div class="panel">
           <h2>社团</h2>
           <label class="field"
-            ><span>起始社团</span><select id="rail-initial-club"></select
+            ><span>当前社团</span><select id="rail-initial-club"></select
           ></label>
-          <p class="hint">社团只能在周日切换（在日历上右键该周日）；未加入时社团指令不可选。</p>
+          <p class="hint">切换社团只能在周日（在日历上右键该周日）；未加入时社团指令不可选。</p>
         </div>
       </aside>
 
@@ -963,7 +972,7 @@
             <span class="k-weekday"><i></i>平日</span>
             <span class="k-sun"><i></i>周日</span>
             <span class="k-rest"><i></i>休息日</span>
-            <span class="k-empty"><i></i>空过</span>
+            <span class="k-empty"><i></i>跳过</span>
             <span class="k-flag"><i></i>小目标截止</span>
             <span class="k-played"><i></i>已玩到</span>
           </div>

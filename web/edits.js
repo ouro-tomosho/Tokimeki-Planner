@@ -19,6 +19,7 @@ import {
   UNSET,
   clampDate,
   clearResult,
+  clubAt,
   defaultCheckpoint,
   focusDate,
   hooks,
@@ -29,7 +30,10 @@ import {
 } from './ui.js';
 import { flashWeek } from './dom.js';
 
-/** 三态选择串 ↔ 输入值：未指定＝键不存在，空过＝显式 null。 */
+/**
+ * 三态选择串 ↔ 输入值：未指定＝键不存在，显式 null＝旧存档里的「空过」。
+ * 界面已不再产生 null（跳过是活动日专属），这里保留映射只为读懂旧存档。
+ */
 export function choiceToCommandId(choice) {
   if (choice === UNSET) return undefined;
   if (choice === CHOICE_EMPTY) return null;
@@ -56,20 +60,8 @@ function toggleInList(list, value, present) {
 
 // ---------------------------------------------------------------- 日历上的标记
 
-/** 跳过 / 取消跳过（空过）。 */
-export function setSkipped(dates, isSkipped) {
-  let touched = 0;
-  for (const date of dates) {
-    if (!inTimeline(date)) continue;
-    if (isSkipped === state.input.skippedDays.includes(date)) continue;
-    state.input.skippedDays = toggleInList(state.input.skippedDays, date, isSkipped);
-    touched += 1;
-  }
-  if (touched > 0) markDirty(touched);
-}
-
 /**
- * 指定指令（含"空过"与"清除指定"）。
+ * 指定指令（含"清除指定"）。使用者已经不能手工标「跳过」——跳过只作为活动日的硬空过存在。
  *
  * 周日与休息日写自己的日指令。**周一至周六的格子**——包括固定日历里是休息日的那天——
  * 还要把**它所在那一周的周指令**一起改掉，所以只要选区碰到某周的任何一天平日，
@@ -150,11 +142,23 @@ export function setPlayedUpTo(date) {
 export function setAttributeValue(attributeId, value) {
   const attribute = ATTRIBUTES.find((entry) => entry.id === attributeId);
   state.input.attributes[attributeId] = clampToLimits(value, attribute);
+  if (attributeId === 'clubExperience') {
+    const club = clubAt(state.input.playedUpTo);
+    if (club && state.input.clubExperiences) {
+      state.input.clubExperiences[club] = state.input.attributes.clubExperience;
+    }
+  }
   markDirty();
 }
 
 export function setInitialClub(clubId) {
-  state.input.initialClub = clubId === UNSET ? null : clubId;
+  state.input.club = clubId === UNSET ? null : clubId;
+  state.input.initialClub = state.input.club;
+  delete state.input.pendingClub;
+  if (state.input.club && state.input.clubExperiences) {
+    state.input.attributes.clubExperience =
+      state.input.clubExperiences[state.input.club] ?? 0;
+  }
   markDirty();
 }
 
@@ -247,13 +251,8 @@ export function draftCheckpoint(source, date) {
  * 在某个周日加入 / 更换 / 退出社团。自该周日起生效，并影响该周日的日指令。
  * 工具**绝不自行**选择或切换社团——这条只由使用者的右键操作触发（原规格故事 23）。
  */
-export function setClubChange(date, choice) {
-  const others = state.input.clubChanges.filter((entry) => entry.date !== date);
-  if (choice === UNSET) {
-    state.input.clubChanges = others;
-  } else {
-    const clubId = choice === CHOICE_NO_CLUB ? null : choice;
-    state.input.clubChanges = [...others, { date, clubId }].sort((a, b) => (a.date < b.date ? -1 : 1));
-  }
+export function setClubChange(_date, choice) {
+  if (choice === UNSET) delete state.input.pendingClub;
+  else state.input.pendingClub = choice === CHOICE_NO_CLUB ? null : choice;
   markDirty();
 }

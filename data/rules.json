@@ -555,37 +555,6 @@
       "source": "global"
     },
     {
-      "id": "mg-literature-science-art",
-      "date": "1998-02-23",
-      "attributes": [
-        "literature",
-        "science",
-        "art"
-      ],
-      "op": ">=",
-      "value": 561,
-      "source": "mini"
-    },
-    {
-      "id": "mg-clubExperience",
-      "date": "1998-01-02",
-      "attributes": [
-        "clubExperience"
-      ],
-      "op": ">=",
-      "value": 380,
-      "source": "mini"
-    },
-    {
-      "id": "mg-command-count",
-      "date": "1998-02-23",
-      "kind": "count",
-      "base": 0,
-      "op": ">=",
-      "value": 800,
-      "source": "mini"
-    },
-    {
       "id": "eg-stamina",
       "date": "1998-03-01",
       "attribute": "stamina",
@@ -656,6 +625,222 @@
       "op": "<",
       "value": 50,
       "source": "ending"
+    }
+  ],
+  "quickMiniGoals": [
+    {
+      "name": "95年圣诞节·容姿",
+      "goals": [
+        {
+          "date": "1995-12-24",
+          "attribute": "appearance",
+          "op": ">=",
+          "value": 70
+        }
+      ]
+    },
+    {
+      "name": "95年圣诞节·运动",
+      "goals": [
+        {
+          "date": "1995-12-24",
+          "attribute": "appearance",
+          "op": "<",
+          "value": 70
+        },
+        {
+          "date": "1995-12-24",
+          "attribute": "sports",
+          "op": ">=",
+          "value": 150
+        }
+      ]
+    },
+    {
+      "name": "96年圣诞节·容姿",
+      "goals": [
+        {
+          "date": "1996-12-24",
+          "attribute": "appearance",
+          "op": ">=",
+          "value": 100
+        }
+      ]
+    },
+    {
+      "name": "96年圣诞节·运动",
+      "goals": [
+        {
+          "date": "1996-12-24",
+          "attribute": "appearance",
+          "op": "<",
+          "value": 100
+        },
+        {
+          "date": "1996-12-24",
+          "attribute": "sports",
+          "op": ">=",
+          "value": 175
+        }
+      ]
+    },
+    {
+      "name": "97年圣诞节·容姿",
+      "goals": [
+        {
+          "date": "1997-12-24",
+          "attribute": "appearance",
+          "op": ">=",
+          "value": 120
+        }
+      ]
+    },
+    {
+      "name": "97年圣诞节·运动",
+      "goals": [
+        {
+          "date": "1997-12-24",
+          "attribute": "appearance",
+          "op": "<",
+          "value": 120
+        },
+        {
+          "date": "1997-12-24",
+          "attribute": "sports",
+          "op": ">=",
+          "value": 200
+        }
+      ]
+    },
+    {
+      "name": "(体育社团)练习比赛获胜",
+      "goals": [
+        {
+          "date": "1995-06-18",
+          "attribute": "clubExperience",
+          "op": ">=",
+          "value": 30
+        },
+        {
+          "date": "1995-09-17",
+          "attribute": "clubExperience",
+          "op": ">=",
+          "value": 60
+        },
+        {
+          "date": "1995-12-17",
+          "attribute": "clubExperience",
+          "op": ">=",
+          "value": 90
+        },
+        {
+          "date": "1996-03-17",
+          "attribute": "clubExperience",
+          "op": ">=",
+          "value": 120
+        },
+        {
+          "date": "1996-06-16",
+          "attribute": "clubExperience",
+          "op": ">=",
+          "value": 150
+        },
+        {
+          "date": "1996-09-15",
+          "attribute": "clubExperience",
+          "op": ">=",
+          "value": 180
+        },
+        {
+          "date": "1996-12-15",
+          "attribute": "clubExperience",
+          "op": ">=",
+          "value": 210
+        },
+        {
+          "date": "1997-03-16",
+          "attribute": "clubExperience",
+          "op": ">=",
+          "value": 240
+        },
+        {
+          "date": "1997-06-15",
+          "attribute": "clubExperience",
+          "op": ">=",
+          "value": 270
+        },
+        {
+          "date": "1997-09-21",
+          "attribute": "clubExperience",
+          "op": ">=",
+          "value": 300
+        },
+        {
+          "date": "1997-12-21",
+          "attribute": "clubExperience",
+          "op": ">=",
+          "value": 330
+        }
+      ]
+    },
+    {
+      "name": "(棒球社)甲子园大赛获胜",
+      "goals": [
+        {
+          "date": "1997-08-11",
+          "attribute": "clubExperience",
+          "op": ">=",
+          "value": 320
+        }
+      ]
+    },
+    {
+      "name": "(体育社团)全国大赛获胜",
+      "goals": [
+        {
+          "date": "1998-01-03",
+          "attribute": "clubExperience",
+          "op": ">=",
+          "value": 350
+        }
+      ]
+    },
+    {
+      "name": "(文化社团)社团名人",
+      "goals": [
+        {
+          "date": "1998-01-03",
+          "attribute": "clubExperience",
+          "op": ">=",
+          "value": 380
+        }
+      ]
+    },
+    {
+      "name": "文化社团出路",
+      "goals": [
+        {
+          "date": "1998-02-23",
+          "attribute": "clubExperience",
+          "op": ">=",
+          "value": 410
+        }
+      ]
+    },
+    {
+      "name": "一流大学",
+      "goals": [
+        {
+          "date": "1998-02-23",
+          "attributes": [
+            "literature",
+            "science",
+            "art"
+          ],
+          "op": ">=",
+          "value": 561
+        }
+      ]
     }
   ],
   "defaultClub": "brass-band-club",

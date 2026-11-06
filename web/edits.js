@@ -242,6 +242,38 @@ export function removeCheckpoint(index) {
   return true;
 }
 
+/**
+ * 「同时间、同属性、同方向、同阈值」——四条都相同才算同一条小目标。
+ * 用来实现快速添加的去重：同一个选项点两次，不会产生两行一样的结论。
+ */
+function sameMiniGoal(a, b) {
+  if (a.date !== b.date || a.op !== b.op) return false;
+  if (Number(a.value) !== Number(b.value)) return false;
+  const keyOf = (cp) => (cp.attribute ? [cp.attribute] : cp.attributes ?? []).slice().sort().join('+');
+  return keyOf(a) === keyOf(b);
+}
+
+/**
+ * 快速添加：把一组预设目标落进检查点表，跳过已存在的同一条。
+ *
+ * 一次点可能落多条（例如「练习比赛获胜」是 11 条），所以这里攒成一次 `markDirty`，
+ * 避免每加一条就整表重绘一次。返回实际新增的条数。
+ */
+export function addQuickMiniGoals(goals) {
+  let added = 0;
+  for (const goal of goals) {
+    const draft = normalizeCheckpoint({ ...goal, source: 'mini' });
+    const exists = state.input.checkpoints.some(
+      (cp) => cp.source === 'mini' && sameMiniGoal(cp, draft),
+    );
+    if (exists) continue;
+    state.input.checkpoints.push(draft);
+    added += 1;
+  }
+  if (added > 0) markDirty(added);
+  return added;
+}
+
 /** 新建检查点的形状（供弹窗预填）。 */
 export function draftCheckpoint(source, date) {
   return defaultCheckpoint(source, date);

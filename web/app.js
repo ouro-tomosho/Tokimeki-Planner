@@ -11,6 +11,7 @@ import { MAIN_THREAD_BUDGET_MS, createSolver } from '../src/solve.js';
 import { exportFileName, fromJson, toJson } from '../src/input.js';
 import {
   CLUBS,
+  QUICK_MINI_GOALS,
   TIMELINE,
   UNSET,
   VALUE_FIELDS,
@@ -26,7 +27,7 @@ import { $ } from './dom.js';
 import { renderCalendar, renderDetail, wireCalendar } from './calendar.js';
 import { renderGoals, wirePanels } from './panels.js';
 import { loadInput, saveInput } from './session.js';
-import { setAttributeValue, setInitialClub, setPlayedUpTo } from './edits.js';
+import { addQuickMiniGoals, setAttributeValue, setInitialClub, setPlayedUpTo } from './edits.js';
 
 const inlinePlan = createPlanner(rules);
 const inlineSolve = createSolver(rules, { budgetMs: MAIN_THREAD_BUDGET_MS });
@@ -205,6 +206,20 @@ function buildRail() {
     option.textContent = club.name;
     clubSelect.append(option);
   }
+
+  // 「快速添加小目标」：选项名来自数据里的 quickMiniGoals，这里只渲染。
+  const quickSelect = $('quick-mini-goal');
+  quickSelect.textContent = '';
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = '请选择…';
+  quickSelect.append(placeholder);
+  QUICK_MINI_GOALS.forEach((preset, index) => {
+    const option = document.createElement('option');
+    option.value = String(index);
+    option.textContent = preset.name;
+    quickSelect.append(option);
+  });
 
   const host = $('attributes');
   host.textContent = '';
@@ -386,6 +401,14 @@ function wireTopbar() {
 }
 
 function wireRail() {
+  $('btn-quick-mini-add').addEventListener('click', () => {
+    const select = $('quick-mini-goal');
+    const preset = QUICK_MINI_GOALS[Number(select.value)];
+    if (!preset) return; // 没选（占位项）就什么都不做
+    addQuickMiniGoals(preset.goals);
+    select.value = '';
+  });
+
   $('rail-played-up-to').addEventListener('change', (event) => setPlayedUpTo(event.target.value));
   $('rail-initial-club').addEventListener('change', (event) => setInitialClub(event.target.value));
 }

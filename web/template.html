@@ -192,6 +192,12 @@
         margin-bottom: 6px;
         font-size: 12px;
       }
+      /* 左栏里靠右的操作行（快速添加的「确认」）：落在下拉栏下方、贴右边。 */
+      .rail-actions {
+        display: flex;
+        justify-content: flex-end;
+        margin-bottom: 6px;
+      }
       .field > span {
         color: var(--ink-2);
         white-space: nowrap;
@@ -753,6 +759,23 @@
         background: #f6e3ea;
         box-shadow: inset 3px 0 0 var(--rose-deep);
       }
+      /* 已过期：结算日早于「已玩到」，不再参与求解与判定——弱化，但仍在清单里如实显示。 */
+      .dot.expired {
+        border: 1px dashed var(--ink-3);
+        background: transparent;
+      }
+      .goal-row.expired {
+        opacity: 0.55;
+      }
+      /* 已冲突：同日同属性的上下界无交集，不参与求解与判定。 */
+      .dot.conflict {
+        border: 1px solid var(--rose-deep);
+        background: #f0c9d3;
+      }
+      .goal-row.conflict {
+        opacity: 0.75;
+        background: #fdf3f5;
+      }
 
       .row-actions {
         display: flex;
@@ -952,6 +975,17 @@
             ><span>当前社团</span><select id="rail-initial-club"></select
           ></label>
           <p class="hint">切换社团只能在周日（在日历上右键该周日）；未加入时社团指令不可选。</p>
+        </div>
+
+        <div class="panel">
+          <h2>快速添加小目标</h2>
+          <label class="field"
+            ><span>小目标</span><select id="quick-mini-goal"></select
+          ></label>
+          <div class="rail-actions">
+            <button id="btn-quick-mini-add" class="btn" type="button">确认</button>
+          </div>
+          <p class="hint">选中后点「确认」，直接加进下方的检查点；已在表里的同一条不会重复添加。</p>
         </div>
       </aside>
 

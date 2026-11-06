@@ -114,7 +114,7 @@ export function rewindRecord(record, date) {
 
 /**
  * 小目标/结局目标的跳转按钮数据：未过期且未达成的才给按钮。
- * 过期目标的 `state === 'expired'`，界面显示「已跳过」而不是跳转。
+ * 过期目标的 `state === 'expired'`，界面显示「已过期」而不是跳转。
  */
 export function goalJumps(goals) {
   const items = goals?.items ?? [];

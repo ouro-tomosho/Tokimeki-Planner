@@ -193,6 +193,12 @@
         margin-bottom: 6px;
         font-size: 12px;
       }
+      /* 左栏里靠右的操作行（快速添加的「确认」）：落在下拉栏下方、贴右边。 */
+      .rail-actions {
+        display: flex;
+        justify-content: flex-end;
+        margin-bottom: 6px;
+      }
       .field > span {
         color: var(--ink-2);
         white-space: nowrap;
@@ -754,6 +760,23 @@
         background: #f6e3ea;
         box-shadow: inset 3px 0 0 var(--rose-deep);
       }
+      /* 已过期：结算日早于「已玩到」，不再参与求解与判定——弱化，但仍在清单里如实显示。 */
+      .dot.expired {
+        border: 1px dashed var(--ink-3);
+        background: transparent;
+      }
+      .goal-row.expired {
+        opacity: 0.55;
+      }
+      /* 已冲突：同日同属性的上下界无交集，不参与求解与判定。 */
+      .dot.conflict {
+        border: 1px solid var(--rose-deep);
+        background: #f0c9d3;
+      }
+      .goal-row.conflict {
+        opacity: 0.75;
+        background: #fdf3f5;
+      }
 
       .row-actions {
         display: flex;
@@ -953,6 +976,17 @@
             ><span>当前社团</span><select id="rail-initial-club"></select
           ></label>
           <p class="hint">切换社团只能在周日（在日历上右键该周日）；未加入时社团指令不可选。</p>
+        </div>
+
+        <div class="panel">
+          <h2>快速添加小目标</h2>
+          <label class="field"
+            ><span>小目标</span><select id="quick-mini-goal"></select
+          ></label>
+          <div class="rail-actions">
+            <button id="btn-quick-mini-add" class="btn" type="button">确认</button>
+          </div>
+          <p class="hint">选中后点「确认」，直接加进下方的检查点；已在表里的同一条不会重复添加。</p>
         </div>
       </aside>
 
@@ -1734,6 +1768,59 @@ const daysBetween = (from, to) =>
  *   - `violated` 达成过又跌破（硬约束阶段被违反，一次即永久，该日程不合格）；
  *   - `unset`    这条属性没有设目标（如实标注，不冒充达标）。
  */
+/**
+ * 落点已过：结算日早于「已玩到」的小目标 / 结局目标。
+ *
+ * 这类目标不可能再被后续日程影响，所以**不参与求解、也不计入 `ok`**，界面显示「已过期」。
+ * 求解层与判定层必须共用这一条：只判定不排除时，搜索会去优化一个发生在时间轴之前的目标
+ * （`miniIdx` 会被压到第 0 天），白白占掉改进方向（2026-11-06 修）。
+ */
+function isExpiredGoal(checkpoint, playedUpTo) {
+  return checkpoint.source !== 'global' && checkpoint.date < playedUpTo;
+}
+
+/**
+ * 同一天、同一属性上**上下界互相矛盾**的小目标。
+ *
+ * 例如同一天既有 `容姿 < 70` 又有 `容姿 ≥ 90`：不存在任何容姿值能同时满足两者。
+ * 这类目标在求解前就判死——**不参与求解、不计入 `ok`**，界面显示「已冲突」，
+ * 与「已过期」同一时机、同一通道（否则求解器会去追一个数学上不可能的目标）。
+ *
+ * 判定口径：对每个（日期, 单属性）收集下界（`>=` 取最大）与上界（`<` 取最小）；
+ * 若 `最大下界 >= 最小上界` 则无解，把**卡住这个边界的那几条**标为冲突。
+ * 多属性求和的目标（如 文+理+艺 ≥ 561）没有可比的上下界，不参与。
+ *
+ * @returns {Set<string>} 冲突目标的 id
+ */
+function findConflictingMiniGoals(checkpoints) {
+  const groups = new Map();
+  for (const cp of checkpoints ?? []) {
+    if (cp.source !== 'mini') continue;
+    const ids = cp.attribute !== undefined ? [cp.attribute] : cp.attributes ?? [];
+    if (ids.length !== 1) continue;
+    const key = `${cp.date}\u0000${ids[0]}`;
+    let group = groups.get(key);
+    if (!group) {
+      group = { lower: null, upper: null, members: [] };
+      groups.set(key, group);
+    }
+    group.members.push(cp);
+    if (cp.op === '>=' && (group.lower === null || cp.value > group.lower)) group.lower = cp.value;
+    if (cp.op === '<' && (group.upper === null || cp.value < group.upper)) group.upper = cp.value;
+  }
+
+  const conflict = new Set();
+  for (const group of groups.values()) {
+    if (group.lower === null || group.upper === null) continue;
+    if (group.lower < group.upper) continue; // 存在 x 落在 [lower, upper) 内 → 可满足
+    for (const cp of group.members) {
+      const tight = cp.op === '>=' ? group.lower : group.upper;
+      if (cp.value === tight) conflict.add(cp.id);
+    }
+  }
+  return conflict;
+}
+
 function evaluateCheckpoints(rules, input, days) {
   // 全局落点直接取"传进来的这些结算日"：判定必须对着**这份**逐日结果，
   // 而不是另算一份日历（用合成 days 的单测依赖这一点；`plan` 传的就是它自己那份）。
@@ -1746,18 +1833,20 @@ function evaluateCheckpoints(rules, input, days) {
 
   // **按规则聚合**：全局约束展开后是每个结算日一个落点（1000+ 个），但它在界面上只是
   // **一条**规则。逐落点汇报会产出几千行，没法用；所以每条规则只出一行，并给出最紧读数。
+  const conflicts = findConflictingMiniGoals(input.checkpoints);
+
   const grouped = new Map();
   for (const checkpoint of schedule) {
-    // 过期：当前日期已经越过落点，这类目标不再参与判定（界面上显示「已跳过」）。
-    const expired = checkpoint.source !== 'global' && checkpoint.date < input.playedUpTo;
+    const expired = isExpiredGoal(checkpoint, input.playedUpTo);
+    const conflicted = conflicts.has(checkpoint.id);
 
     let entry = grouped.get(checkpoint.id);
     if (!entry) {
       entry = {
         id: checkpoint.id,
         label: labelOf(checkpoint),
-        // 是否参与"全达标"（`ok`）判定。全局约束与过期目标不参与 `ok`。
-        gate: checkpoint.source !== 'global' && !expired,
+        // 是否参与"全达标"（`ok`）判定。全局约束、过期目标、冲突目标不参与 `ok`。
+        gate: checkpoint.source !== 'global' && !expired && !conflicted,
         attribute: checkpoint.attribute ?? null,
         attributes: checkpoint.attributes ?? null,
         op: checkpoint.op,
@@ -1776,10 +1865,11 @@ function evaluateCheckpoints(rules, input, days) {
         worstActual: 0,
         worstShortfall: 0,
         expired,
+        conflict: conflicted,
       };
       grouped.set(checkpoint.id, entry);
     }
-    if (expired) continue;
+    if (expired || conflicted) continue;
 
     // 指令计数小目标：base + 截止日前一天为止执行过的指令天数（含强制执行）。
     if (checkpoint.kind === 'count') {
@@ -1841,7 +1931,9 @@ function evaluateCheckpoints(rules, input, days) {
   for (const entry of grouped.values()) {
     const state = entry.expired
       ? 'expired'
-      : entry.hardViolations > 0 ? 'violated' : entry.achieved ? 'met' : 'unmet';
+      : entry.conflict
+        ? 'conflict'
+        : entry.hardViolations > 0 ? 'violated' : entry.achieved ? 'met' : 'unmet';
     items.push({
       id: entry.id,
       label: entry.label,
@@ -1863,6 +1955,7 @@ function evaluateCheckpoints(rules, input, days) {
       actual: state === 'met' ? entry.lastActual : entry.worstActual,
       shortfall: state === 'met' ? entry.lastShortfall : entry.worstShortfall,
       state,
+      conflict: entry.conflict,
     });
   }
 
@@ -1929,7 +2022,7 @@ function labelOf(checkpoint) {
   const names = attributeIdOf(checkpoint);
   return names.length > 1 ? names.join('+') : names[0] ?? checkpoint.id;
 }
-return { attributeIdOf, actualOf, shortfallOf, meets, buildCheckpointSchedule, createTrajectory, createTrajectoryIndex, valueAt, intervalAt, evaluateCheckpoints };
+return { attributeIdOf, actualOf, shortfallOf, meets, buildCheckpointSchedule, createTrajectory, createTrajectoryIndex, valueAt, intervalAt, isExpiredGoal, findConflictingMiniGoals, evaluateCheckpoints };
 })();
 __planCoreNs["src/settlement.js"] = (() => {
 // 单日结算内核。
@@ -2372,6 +2465,7 @@ const { SKIP_DAY, commandIdOf, isClubSlot } = __planCoreNs["src/commands.js"];
 const { availableCommandIds, availableDayCommandIds, clubCommandId, commandBlockReason } = __planCoreNs["src/clubs.js"];
 const { CLUB_EXPERIENCE_ID, clubExperienceGainOn, expectedEffects, REST_DAY, WEEKDAY } = __planCoreNs["src/settlement.js"];
 const { allocateQuota } = __planCoreNs["src/quota.js"];
+const { findConflictingMiniGoals, isExpiredGoal } = __planCoreNs["src/checkpoints.js"];
 // **产品求解器**：构造式启发式排布搜索，直接对**真实结算内核**（`settlement.js` 的 `apply`）
 // 做逐槽最速下降。所有者 2026-10-09 裁决：精确求解（HiGHS MILP）整个移除，求解回到本模块
 // （见 ADR-0009）。
@@ -2402,6 +2496,7 @@ const { allocateQuota } = __planCoreNs["src/quota.js"];
 //
 // **协作式取消**：每次全槽下降之后、每轮 ILS 之前让出一次宏任务并查 `shouldStop()`；
 // 不让出的话 Worker 收不到取消消息（搜索整体是同步的），取消按钮等于失效。
+
 
 
 
@@ -2618,8 +2713,13 @@ function buildProblem(rules, input) {
 
   // ---- 目标 ----
   const checkpoints = input.checkpoints;
-  const ending = checkpoints.filter((c) => c.source === 'ending');
-  const mini = checkpoints.filter((c) => c.source === 'mini');
+  // 过期目标（结算日早于「已玩到」）不参与求解：它们已不可能被后续日程影响，
+  // 留着只会让归一化索引把它们压到第 0 天，浪费搜索方向（见 checkpoints.js 的 isExpiredGoal）。
+  const conflicts = findConflictingMiniGoals(checkpoints);
+  const ending = checkpoints.filter((c) => c.source === 'ending' && !isExpiredGoal(c, input.playedUpTo));
+  const mini = checkpoints.filter(
+    (c) => c.source === 'mini' && !isExpiredGoal(c, input.playedUpTo) && !conflicts.has(c.id),
+  );
   const global = checkpoints.filter((c) => c.source === 'global');
   const lastIdx = settled.length - 1;
   const miniIdx = new Map();
@@ -4207,7 +4307,7 @@ async function suggestSuccessRate(rules, input, options = {}) {
 }
 return { MAIN_THREAD_BUDGET_MS, WORKER_BUDGET_MS, createSolver, SUGGEST_LADDER, suggestSuccessRate };
 })();
-__planCoreNs["data/rules.json"] = {"timeline":{"start":"1995-04-04","end":"1998-03-01","lastSettlement":"1998-02-28"},"clubUnlockDate":"1995-04-09","clubFirstCommand":{"weekday":0,"note":"第一次执行的社团指令必须是周日的日指令（社团活动从周日的日指令开始）"},"restDayBonus":{"daily":4,"club":4,"stressReduction":4},"clubExperienceGain":{"weekday":1,"restDay":4,"camp":2},"attributes":[{"id":"stamina","name":"体力","direction":"up","min":0,"max":999,"default":100},{"id":"literature","name":"文科","direction":"up","min":0,"max":999,"default":40},{"id":"science","name":"理科","direction":"up","min":0,"max":999,"default":40},{"id":"art","name":"艺术","direction":"up","min":0,"max":999,"default":40},{"id":"sports","name":"运动","direction":"up","min":0,"max":999,"default":40},{"id":"popularity","name":"人缘","direction":"up","min":0,"max":999,"default":32},{"id":"appearance","name":"容姿","direction":"up","min":0,"max":999,"default":60},{"id":"grit","name":"毅力","direction":"up","min":0,"max":999,"default":5},{"id":"stress","name":"压力","direction":"down","min":0,"max":999,"default":0},{"id":"clubExperience","name":"社团经验","direction":"up","min":0,"max":999,"default":0}],"clubs":[{"id":"literature-club","name":"文艺社","category":"cultural"},{"id":"drama-club","name":"话剧社","category":"cultural"},{"id":"science-club","name":"科学社","category":"cultural"},{"id":"computer-club","name":"电脑社","category":"cultural"},{"id":"art-club","name":"美术社","category":"cultural"},{"id":"brass-band-club","name":"管乐社","category":"cultural"},{"id":"baseball-club","name":"棒球社","category":"sports"},{"id":"soccer-club","name":"足球社","category":"sports"},{"id":"tennis-club","name":"网球社","category":"sports"},{"id":"swimming-club","name":"游泳社","category":"sports"},{"id":"basketball-club","name":"篮球社","category":"sports"}],"commands":[{"id":"cmd-study-literature","name":"研读文科","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-0.75,"literature":0.9375,"science":0.0625,"art":0.0625,"sports":-0.375,"popularity":0.25,"appearance":-0.25,"grit":-0.0625,"stress":0.75,"clubExperience":0}},{"id":"cmd-study-science","name":"研读理科","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-0.75,"literature":0.0625,"science":0.9375,"art":0.0625,"sports":-0.75,"popularity":0.125,"appearance":-0.4375,"grit":0.25,"stress":0.25,"clubExperience":0}},{"id":"cmd-practice-art","name":"培养艺术气质","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-0.75,"literature":0.0625,"science":0.0625,"art":0.9375,"sports":-0.4375,"popularity":0.0625,"appearance":-0.125,"grit":-0.0625,"stress":-0.25,"clubExperience":0}},{"id":"cmd-exercise","name":"运动","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-2.375,"literature":-0.125,"science":-0.125,"art":-0.125,"sports":3.25,"popularity":0.0625,"appearance":-0.4375,"grit":1.375,"stress":0.0625,"clubExperience":0}},{"id":"cmd-chat","name":"和同学闲聊","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-1.1875,"literature":-0.25,"science":-0.25,"art":-0.25,"sports":0.1875,"popularity":1.5,"appearance":0.75,"grit":-0.375,"stress":-0.875,"clubExperience":0}},{"id":"cmd-groom","name":"整理仪容","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-0.625,"literature":-0.125,"science":-0.125,"art":-0.0625,"sports":-0.0625,"popularity":0.5,"appearance":2.0625,"grit":-0.625,"stress":-0.0625,"clubExperience":0}},{"id":"cmd-rest","name":"休息","kind":"daily","clubId":null,"successRate":1,"effects":{"stamina":3.0625,"literature":0,"science":0,"art":0,"sports":0,"popularity":-0.625,"appearance":-0.75,"grit":-0.0625,"stress":-2.9375,"clubExperience":0}},{"id":"cmd-date","name":"打电话/约会","kind":"daily","restOnly":true,"effects":{"stamina":0,"literature":0,"science":0,"art":0,"sports":0,"popularity":0,"appearance":0,"grit":0,"stress":0,"clubExperience":0},"successRate":0.35},{"id":"cmd-club-literature","name":"文艺社","kind":"club","clubId":"literature-club","successRate":0.35,"effects":{"stamina":-0.75,"literature":0.75,"science":0.25,"art":0.125,"sports":0,"popularity":0.0625,"appearance":-0.25,"grit":-0.0625,"stress":1.125,"clubExperience":0}},{"id":"cmd-club-drama","name":"话剧社","kind":"club","clubId":"drama-club","successRate":0.35,"effects":{"stamina":-0.875,"literature":0.875,"science":0,"art":0.375,"sports":0.125,"popularity":0.0625,"appearance":-0.125,"grit":0.0625,"stress":1.0625,"clubExperience":0}},{"id":"cmd-club-science","name":"科学社","kind":"club","clubId":"science-club","successRate":0.35,"effects":{"stamina":-0.8125,"literature":0.0625,"science":0.9375,"art":0.25,"sports":0,"popularity":0.0625,"appearance":-0.25,"grit":0.25,"stress":1.375,"clubExperience":0}},{"id":"cmd-club-computer","name":"电脑社","kind":"club","clubId":"computer-club","successRate":0.35,"effects":{"stamina":-0.8125,"literature":0.0625,"science":0.875,"art":0.375,"sports":0,"popularity":0.25,"appearance":-0.375,"grit":0.25,"stress":1.625,"clubExperience":0}},{"id":"cmd-club-art","name":"美术社","kind":"club","clubId":"art-club","successRate":0.35,"effects":{"stamina":-0.875,"literature":0.125,"science":0,"art":0.9375,"sports":0.0625,"popularity":0.0625,"appearance":-0.0625,"grit":-0.125,"stress":0.9375,"clubExperience":0}},{"id":"cmd-club-brass-band","name":"管乐社","kind":"club","clubId":"brass-band-club","successRate":0.35,"effects":{"stamina":-0.875,"literature":0.0625,"science":0.0625,"art":0.875,"sports":0.1875,"popularity":0.125,"appearance":-0.1875,"grit":0.0625,"stress":0.875,"clubExperience":0}},{"id":"cmd-club-baseball","name":"棒球社","kind":"club","clubId":"baseball-club","successRate":0.35,"effects":{"stamina":-1.875,"literature":-0.0625,"science":-0.0625,"art":-0.0625,"sports":0.875,"popularity":0.0625,"appearance":-0.25,"grit":0.75,"stress":0.1875,"clubExperience":0}},{"id":"cmd-club-soccer","name":"足球社","kind":"club","clubId":"soccer-club","successRate":0.35,"effects":{"stamina":-1.875,"literature":-0.0625,"science":-0.0625,"art":-0.0625,"sports":0.9375,"popularity":0.125,"appearance":-0.1875,"grit":0.6875,"stress":0.25,"clubExperience":0}},{"id":"cmd-club-tennis","name":"网球社","kind":"club","clubId":"tennis-club","successRate":0.35,"effects":{"stamina":-1.5625,"literature":-0.0625,"science":-0.0625,"art":0,"sports":0.8125,"popularity":0.125,"appearance":-0.0625,"grit":0.5625,"stress":0.5,"clubExperience":0}},{"id":"cmd-club-swimming","name":"游泳社","kind":"club","clubId":"swimming-club","successRate":0.35,"effects":{"stamina":-1.9375,"literature":-0.0625,"science":-0.0625,"art":0,"sports":0.9375,"popularity":0,"appearance":-0.125,"grit":0.6875,"stress":0.1875,"clubExperience":0}},{"id":"cmd-club-basketball","name":"篮球社","kind":"club","clubId":"basketball-club","successRate":0.35,"effects":{"stamina":-1.8125,"literature":-0.0625,"science":-0.0625,"art":-0.0625,"sports":0.875,"popularity":0.0625,"appearance":-0.1875,"grit":0.625,"stress":0.4375,"clubExperience":0}}],"checkpoints":[{"id":"gc-stamina","date":null,"attribute":"stamina","op":">=","value":20,"source":"global"},{"id":"gc-popularity","date":null,"attribute":"popularity","op":">=","value":100,"source":"global"},{"id":"gc-appearance","date":null,"attribute":"appearance","op":">=","value":35,"source":"global"},{"id":"gc-stress","date":null,"attribute":"stress","op":"<","value":70,"source":"global"},{"id":"mg-literature-science-art","date":"1998-02-23","attributes":["literature","science","art"],"op":">=","value":561,"source":"mini"},{"id":"mg-clubExperience","date":"1998-01-02","attributes":["clubExperience"],"op":">=","value":380,"source":"mini"},{"id":"mg-command-count","date":"1998-02-23","kind":"count","base":0,"op":">=","value":800,"source":"mini"},{"id":"eg-stamina","date":"1998-03-01","attribute":"stamina","op":">=","value":50,"source":"ending"},{"id":"eg-literature","date":"1998-03-01","attribute":"literature","op":">=","value":130,"source":"ending"},{"id":"eg-science","date":"1998-03-01","attribute":"science","op":">=","value":130,"source":"ending"},{"id":"eg-art","date":"1998-03-01","attribute":"art","op":">=","value":130,"source":"ending"},{"id":"eg-sports","date":"1998-03-01","attribute":"sports","op":">=","value":130,"source":"ending"},{"id":"eg-popularity","date":"1998-03-01","attribute":"popularity","op":">=","value":120,"source":"ending"},{"id":"eg-appearance","date":"1998-03-01","attribute":"appearance","op":">=","value":100,"source":"ending"},{"id":"eg-grit","date":"1998-03-01","attribute":"grit","op":">=","value":100,"source":"ending"},{"id":"eg-stress","date":"1998-03-01","attribute":"stress","op":"<","value":50,"source":"ending"}],"defaultClub":"brass-band-club","calendar":{"note":"游戏固定日历：休息日（节假日/庆典）与社团集训周。由所有者逐日核对过，解析器只读。","restDays":["1995-04-29","1995-05-03","1995-05-04","1995-05-05","1995-09-15","1995-09-23","1995-10-10","1995-11-03","1995-11-23","1995-12-23","1996-01-15","1996-02-12","1996-03-20","1996-04-29","1996-05-03","1996-05-04","1996-05-06","1996-09-16","1996-09-23","1996-10-10","1996-11-04","1996-11-23","1996-12-23","1997-01-15","1997-02-11","1997-03-21","1997-04-29","1997-05-03","1997-05-05","1997-07-21","1997-09-15","1997-09-23","1997-10-10","1997-11-03","1997-11-24","1997-12-23","1998-01-15","1998-02-11"],"clubWeeks":[{"date":"1995-08-13","command":"club"},{"date":"1995-10-08","command":"club"},{"date":"1996-08-11","command":"club"},{"date":"1996-10-06","command":"club"},{"date":"1997-08-10","command":"club"},{"date":"1997-10-05","command":"club"}],"activities":[{"start":"1995-06-03","end":"1995-06-03","name":"体育祭","command":"skip"},{"start":"1995-07-10","end":"1995-07-15","name":"期末考试","command":"skip"},{"start":"1995-08-14","end":"1995-08-19","name":"暑期集训","command":"clubCamp"},{"start":"1995-10-09","end":"1995-10-09","name":"文化祭集训","command":"club","when":{"clubCategory":"cultural"}},{"start":"1995-10-11","end":"1995-10-13","name":"文化祭集训","command":"club","when":{"clubCategory":"cultural"}},{"start":"1995-10-14","end":"1995-10-14","name":"文化祭","command":"skip"},{"start":"1995-12-11","end":"1995-12-16","name":"期末考试","command":"skip"},{"start":"1995-12-24","end":"1995-12-24","name":"圣诞节","command":"skip"},{"start":"1996-01-01","end":"1996-01-01","name":"元旦","command":"skip"},{"start":"1996-02-14","end":"1996-02-14","name":"情人节","command":"skip"},{"start":"1996-03-04","end":"1996-03-09","name":"期末考试","command":"skip"},{"start":"1996-03-14","end":"1996-03-14","name":"白色情人节","command":"skip"},{"start":"1996-06-01","end":"1996-06-01","name":"体育祭","command":"skip"},{"start":"1996-07-15","end":"1996-07-20","name":"期末考试","command":"skip"},{"start":"1996-08-12","end":"1996-08-17","name":"暑期集训","command":"clubCamp"},{"start":"1996-09-09","end":"1996-09-14","name":"校外教学","command":"skip"},{"start":"1996-10-07","end":"1996-10-09","name":"文化祭集训","command":"club","when":{"clubCategory":"cultural"}},{"start":"1996-10-11","end":"1996-10-11","name":"文化祭集训","command":"club","when":{"clubCategory":"cultural"}},{"start":"1996-10-12","end":"1996-10-12","name":"文化祭","command":"skip"},{"start":"1996-12-09","end":"1996-12-14","name":"期末考试","command":"skip"},{"start":"1996-12-24","end":"1996-12-24","name":"圣诞节","command":"skip"},{"start":"1997-01-01","end":"1997-01-01","name":"元旦","command":"skip"},{"start":"1997-02-14","end":"1997-02-14","name":"情人节","command":"skip"},{"start":"1997-03-03","end":"1997-03-08","name":"期末考试","command":"skip"},{"start":"1997-03-14","end":"1997-03-14","name":"白色情人节","command":"skip"},{"start":"1997-06-07","end":"1997-06-07","name":"体育祭","command":"skip"},{"start":"1997-07-14","end":"1997-07-19","name":"期末考试","command":"skip"},{"start":"1997-08-11","end":"1997-08-16","variants":[{"when":{"clubId":"baseball-club"},"name":"甲子园大赛","command":"skip"},{"name":"暑期集训","command":"clubCamp"}]},{"start":"1997-10-06","end":"1997-10-09","name":"文化祭集训","command":"club","when":{"clubCategory":"cultural"}},{"start":"1997-10-11","end":"1997-10-11","name":"文化祭","command":"skip"},{"start":"1997-12-08","end":"1997-12-13","name":"期末考试","command":"skip"},{"start":"1997-12-24","end":"1997-12-24","name":"圣诞节","command":"skip"},{"start":"1998-01-01","end":"1998-01-01","name":"元旦","command":"skip"},{"start":"1998-01-03","end":"1998-01-03","name":"全国大赛","command":"skip","when":{"clubCategory":"sports","excludeClubId":"baseball-club"}},{"start":"1998-02-14","end":"1998-02-14","name":"情人节","command":"skip"},{"start":"1998-02-23","end":"1998-02-23","name":"大学入学考/就业考试","command":"skip"}]}};
+__planCoreNs["data/rules.json"] = {"timeline":{"start":"1995-04-04","end":"1998-03-01","lastSettlement":"1998-02-28"},"clubUnlockDate":"1995-04-09","clubFirstCommand":{"weekday":0,"note":"第一次执行的社团指令必须是周日的日指令（社团活动从周日的日指令开始）"},"restDayBonus":{"daily":4,"club":4,"stressReduction":4},"clubExperienceGain":{"weekday":1,"restDay":4,"camp":2},"attributes":[{"id":"stamina","name":"体力","direction":"up","min":0,"max":999,"default":100},{"id":"literature","name":"文科","direction":"up","min":0,"max":999,"default":40},{"id":"science","name":"理科","direction":"up","min":0,"max":999,"default":40},{"id":"art","name":"艺术","direction":"up","min":0,"max":999,"default":40},{"id":"sports","name":"运动","direction":"up","min":0,"max":999,"default":40},{"id":"popularity","name":"人缘","direction":"up","min":0,"max":999,"default":32},{"id":"appearance","name":"容姿","direction":"up","min":0,"max":999,"default":60},{"id":"grit","name":"毅力","direction":"up","min":0,"max":999,"default":5},{"id":"stress","name":"压力","direction":"down","min":0,"max":999,"default":0},{"id":"clubExperience","name":"社团经验","direction":"up","min":0,"max":999,"default":0}],"clubs":[{"id":"literature-club","name":"文艺社","category":"cultural"},{"id":"drama-club","name":"话剧社","category":"cultural"},{"id":"science-club","name":"科学社","category":"cultural"},{"id":"computer-club","name":"电脑社","category":"cultural"},{"id":"art-club","name":"美术社","category":"cultural"},{"id":"brass-band-club","name":"管乐社","category":"cultural"},{"id":"baseball-club","name":"棒球社","category":"sports"},{"id":"soccer-club","name":"足球社","category":"sports"},{"id":"tennis-club","name":"网球社","category":"sports"},{"id":"swimming-club","name":"游泳社","category":"sports"},{"id":"basketball-club","name":"篮球社","category":"sports"}],"commands":[{"id":"cmd-study-literature","name":"研读文科","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-0.75,"literature":0.9375,"science":0.0625,"art":0.0625,"sports":-0.375,"popularity":0.25,"appearance":-0.25,"grit":-0.0625,"stress":0.75,"clubExperience":0}},{"id":"cmd-study-science","name":"研读理科","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-0.75,"literature":0.0625,"science":0.9375,"art":0.0625,"sports":-0.75,"popularity":0.125,"appearance":-0.4375,"grit":0.25,"stress":0.25,"clubExperience":0}},{"id":"cmd-practice-art","name":"培养艺术气质","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-0.75,"literature":0.0625,"science":0.0625,"art":0.9375,"sports":-0.4375,"popularity":0.0625,"appearance":-0.125,"grit":-0.0625,"stress":-0.25,"clubExperience":0}},{"id":"cmd-exercise","name":"运动","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-2.375,"literature":-0.125,"science":-0.125,"art":-0.125,"sports":3.25,"popularity":0.0625,"appearance":-0.4375,"grit":1.375,"stress":0.0625,"clubExperience":0}},{"id":"cmd-chat","name":"和同学闲聊","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-1.1875,"literature":-0.25,"science":-0.25,"art":-0.25,"sports":0.1875,"popularity":1.5,"appearance":0.75,"grit":-0.375,"stress":-0.875,"clubExperience":0}},{"id":"cmd-groom","name":"整理仪容","kind":"daily","clubId":null,"successRate":0.35,"effects":{"stamina":-0.625,"literature":-0.125,"science":-0.125,"art":-0.0625,"sports":-0.0625,"popularity":0.5,"appearance":2.0625,"grit":-0.625,"stress":-0.0625,"clubExperience":0}},{"id":"cmd-rest","name":"休息","kind":"daily","clubId":null,"successRate":1,"effects":{"stamina":3.0625,"literature":0,"science":0,"art":0,"sports":0,"popularity":-0.625,"appearance":-0.75,"grit":-0.0625,"stress":-2.9375,"clubExperience":0}},{"id":"cmd-date","name":"打电话/约会","kind":"daily","restOnly":true,"effects":{"stamina":0,"literature":0,"science":0,"art":0,"sports":0,"popularity":0,"appearance":0,"grit":0,"stress":0,"clubExperience":0},"successRate":0.35},{"id":"cmd-club-literature","name":"文艺社","kind":"club","clubId":"literature-club","successRate":0.35,"effects":{"stamina":-0.75,"literature":0.75,"science":0.25,"art":0.125,"sports":0,"popularity":0.0625,"appearance":-0.25,"grit":-0.0625,"stress":1.125,"clubExperience":0}},{"id":"cmd-club-drama","name":"话剧社","kind":"club","clubId":"drama-club","successRate":0.35,"effects":{"stamina":-0.875,"literature":0.875,"science":0,"art":0.375,"sports":0.125,"popularity":0.0625,"appearance":-0.125,"grit":0.0625,"stress":1.0625,"clubExperience":0}},{"id":"cmd-club-science","name":"科学社","kind":"club","clubId":"science-club","successRate":0.35,"effects":{"stamina":-0.8125,"literature":0.0625,"science":0.9375,"art":0.25,"sports":0,"popularity":0.0625,"appearance":-0.25,"grit":0.25,"stress":1.375,"clubExperience":0}},{"id":"cmd-club-computer","name":"电脑社","kind":"club","clubId":"computer-club","successRate":0.35,"effects":{"stamina":-0.8125,"literature":0.0625,"science":0.875,"art":0.375,"sports":0,"popularity":0.25,"appearance":-0.375,"grit":0.25,"stress":1.625,"clubExperience":0}},{"id":"cmd-club-art","name":"美术社","kind":"club","clubId":"art-club","successRate":0.35,"effects":{"stamina":-0.875,"literature":0.125,"science":0,"art":0.9375,"sports":0.0625,"popularity":0.0625,"appearance":-0.0625,"grit":-0.125,"stress":0.9375,"clubExperience":0}},{"id":"cmd-club-brass-band","name":"管乐社","kind":"club","clubId":"brass-band-club","successRate":0.35,"effects":{"stamina":-0.875,"literature":0.0625,"science":0.0625,"art":0.875,"sports":0.1875,"popularity":0.125,"appearance":-0.1875,"grit":0.0625,"stress":0.875,"clubExperience":0}},{"id":"cmd-club-baseball","name":"棒球社","kind":"club","clubId":"baseball-club","successRate":0.35,"effects":{"stamina":-1.875,"literature":-0.0625,"science":-0.0625,"art":-0.0625,"sports":0.875,"popularity":0.0625,"appearance":-0.25,"grit":0.75,"stress":0.1875,"clubExperience":0}},{"id":"cmd-club-soccer","name":"足球社","kind":"club","clubId":"soccer-club","successRate":0.35,"effects":{"stamina":-1.875,"literature":-0.0625,"science":-0.0625,"art":-0.0625,"sports":0.9375,"popularity":0.125,"appearance":-0.1875,"grit":0.6875,"stress":0.25,"clubExperience":0}},{"id":"cmd-club-tennis","name":"网球社","kind":"club","clubId":"tennis-club","successRate":0.35,"effects":{"stamina":-1.5625,"literature":-0.0625,"science":-0.0625,"art":0,"sports":0.8125,"popularity":0.125,"appearance":-0.0625,"grit":0.5625,"stress":0.5,"clubExperience":0}},{"id":"cmd-club-swimming","name":"游泳社","kind":"club","clubId":"swimming-club","successRate":0.35,"effects":{"stamina":-1.9375,"literature":-0.0625,"science":-0.0625,"art":0,"sports":0.9375,"popularity":0,"appearance":-0.125,"grit":0.6875,"stress":0.1875,"clubExperience":0}},{"id":"cmd-club-basketball","name":"篮球社","kind":"club","clubId":"basketball-club","successRate":0.35,"effects":{"stamina":-1.8125,"literature":-0.0625,"science":-0.0625,"art":-0.0625,"sports":0.875,"popularity":0.0625,"appearance":-0.1875,"grit":0.625,"stress":0.4375,"clubExperience":0}}],"checkpoints":[{"id":"gc-stamina","date":null,"attribute":"stamina","op":">=","value":20,"source":"global"},{"id":"gc-popularity","date":null,"attribute":"popularity","op":">=","value":100,"source":"global"},{"id":"gc-appearance","date":null,"attribute":"appearance","op":">=","value":35,"source":"global"},{"id":"gc-stress","date":null,"attribute":"stress","op":"<","value":70,"source":"global"},{"id":"eg-stamina","date":"1998-03-01","attribute":"stamina","op":">=","value":50,"source":"ending"},{"id":"eg-literature","date":"1998-03-01","attribute":"literature","op":">=","value":130,"source":"ending"},{"id":"eg-science","date":"1998-03-01","attribute":"science","op":">=","value":130,"source":"ending"},{"id":"eg-art","date":"1998-03-01","attribute":"art","op":">=","value":130,"source":"ending"},{"id":"eg-sports","date":"1998-03-01","attribute":"sports","op":">=","value":130,"source":"ending"},{"id":"eg-popularity","date":"1998-03-01","attribute":"popularity","op":">=","value":120,"source":"ending"},{"id":"eg-appearance","date":"1998-03-01","attribute":"appearance","op":">=","value":100,"source":"ending"},{"id":"eg-grit","date":"1998-03-01","attribute":"grit","op":">=","value":100,"source":"ending"},{"id":"eg-stress","date":"1998-03-01","attribute":"stress","op":"<","value":50,"source":"ending"}],"quickMiniGoals":[{"name":"95年圣诞节·容姿","goals":[{"date":"1995-12-24","attribute":"appearance","op":">=","value":70}]},{"name":"95年圣诞节·运动","goals":[{"date":"1995-12-24","attribute":"appearance","op":"<","value":70},{"date":"1995-12-24","attribute":"sports","op":">=","value":150}]},{"name":"96年圣诞节·容姿","goals":[{"date":"1996-12-24","attribute":"appearance","op":">=","value":100}]},{"name":"96年圣诞节·运动","goals":[{"date":"1996-12-24","attribute":"appearance","op":"<","value":100},{"date":"1996-12-24","attribute":"sports","op":">=","value":175}]},{"name":"97年圣诞节·容姿","goals":[{"date":"1997-12-24","attribute":"appearance","op":">=","value":120}]},{"name":"97年圣诞节·运动","goals":[{"date":"1997-12-24","attribute":"appearance","op":"<","value":120},{"date":"1997-12-24","attribute":"sports","op":">=","value":200}]},{"name":"(体育社团)练习比赛获胜","goals":[{"date":"1995-06-18","attribute":"clubExperience","op":">=","value":30},{"date":"1995-09-17","attribute":"clubExperience","op":">=","value":60},{"date":"1995-12-17","attribute":"clubExperience","op":">=","value":90},{"date":"1996-03-17","attribute":"clubExperience","op":">=","value":120},{"date":"1996-06-16","attribute":"clubExperience","op":">=","value":150},{"date":"1996-09-15","attribute":"clubExperience","op":">=","value":180},{"date":"1996-12-15","attribute":"clubExperience","op":">=","value":210},{"date":"1997-03-16","attribute":"clubExperience","op":">=","value":240},{"date":"1997-06-15","attribute":"clubExperience","op":">=","value":270},{"date":"1997-09-21","attribute":"clubExperience","op":">=","value":300},{"date":"1997-12-21","attribute":"clubExperience","op":">=","value":330}]},{"name":"(棒球社)甲子园大赛获胜","goals":[{"date":"1997-08-11","attribute":"clubExperience","op":">=","value":320}]},{"name":"(体育社团)全国大赛获胜","goals":[{"date":"1998-01-03","attribute":"clubExperience","op":">=","value":350}]},{"name":"(文化社团)社团名人","goals":[{"date":"1998-01-03","attribute":"clubExperience","op":">=","value":380}]},{"name":"文化社团出路","goals":[{"date":"1998-02-23","attribute":"clubExperience","op":">=","value":410}]},{"name":"一流大学","goals":[{"date":"1998-02-23","attributes":["literature","science","art"],"op":">=","value":561}]}],"defaultClub":"brass-band-club","calendar":{"note":"游戏固定日历：休息日（节假日/庆典）与社团集训周。由所有者逐日核对过，解析器只读。","restDays":["1995-04-29","1995-05-03","1995-05-04","1995-05-05","1995-09-15","1995-09-23","1995-10-10","1995-11-03","1995-11-23","1995-12-23","1996-01-15","1996-02-12","1996-03-20","1996-04-29","1996-05-03","1996-05-04","1996-05-06","1996-09-16","1996-09-23","1996-10-10","1996-11-04","1996-11-23","1996-12-23","1997-01-15","1997-02-11","1997-03-21","1997-04-29","1997-05-03","1997-05-05","1997-07-21","1997-09-15","1997-09-23","1997-10-10","1997-11-03","1997-11-24","1997-12-23","1998-01-15","1998-02-11"],"clubWeeks":[{"date":"1995-08-13","command":"club"},{"date":"1995-10-08","command":"club"},{"date":"1996-08-11","command":"club"},{"date":"1996-10-06","command":"club"},{"date":"1997-08-10","command":"club"},{"date":"1997-10-05","command":"club"}],"activities":[{"start":"1995-06-03","end":"1995-06-03","name":"体育祭","command":"skip"},{"start":"1995-07-10","end":"1995-07-15","name":"期末考试","command":"skip"},{"start":"1995-08-14","end":"1995-08-19","name":"暑期集训","command":"clubCamp"},{"start":"1995-10-09","end":"1995-10-09","name":"文化祭集训","command":"club","when":{"clubCategory":"cultural"}},{"start":"1995-10-11","end":"1995-10-13","name":"文化祭集训","command":"club","when":{"clubCategory":"cultural"}},{"start":"1995-10-14","end":"1995-10-14","name":"文化祭","command":"skip"},{"start":"1995-12-11","end":"1995-12-16","name":"期末考试","command":"skip"},{"start":"1995-12-24","end":"1995-12-24","name":"圣诞节","command":"skip"},{"start":"1996-01-01","end":"1996-01-01","name":"元旦","command":"skip"},{"start":"1996-02-14","end":"1996-02-14","name":"情人节","command":"skip"},{"start":"1996-03-04","end":"1996-03-09","name":"期末考试","command":"skip"},{"start":"1996-03-14","end":"1996-03-14","name":"白色情人节","command":"skip"},{"start":"1996-06-01","end":"1996-06-01","name":"体育祭","command":"skip"},{"start":"1996-07-15","end":"1996-07-20","name":"期末考试","command":"skip"},{"start":"1996-08-12","end":"1996-08-17","name":"暑期集训","command":"clubCamp"},{"start":"1996-09-09","end":"1996-09-14","name":"校外教学","command":"skip"},{"start":"1996-10-07","end":"1996-10-09","name":"文化祭集训","command":"club","when":{"clubCategory":"cultural"}},{"start":"1996-10-11","end":"1996-10-11","name":"文化祭集训","command":"club","when":{"clubCategory":"cultural"}},{"start":"1996-10-12","end":"1996-10-12","name":"文化祭","command":"skip"},{"start":"1996-12-09","end":"1996-12-14","name":"期末考试","command":"skip"},{"start":"1996-12-24","end":"1996-12-24","name":"圣诞节","command":"skip"},{"start":"1997-01-01","end":"1997-01-01","name":"元旦","command":"skip"},{"start":"1997-02-14","end":"1997-02-14","name":"情人节","command":"skip"},{"start":"1997-03-03","end":"1997-03-08","name":"期末考试","command":"skip"},{"start":"1997-03-14","end":"1997-03-14","name":"白色情人节","command":"skip"},{"start":"1997-06-07","end":"1997-06-07","name":"体育祭","command":"skip"},{"start":"1997-07-14","end":"1997-07-19","name":"期末考试","command":"skip"},{"start":"1997-08-11","end":"1997-08-16","variants":[{"when":{"clubId":"baseball-club"},"name":"甲子园大赛","command":"skip"},{"name":"暑期集训","command":"clubCamp"}]},{"start":"1997-10-06","end":"1997-10-09","name":"文化祭集训","command":"club","when":{"clubCategory":"cultural"}},{"start":"1997-10-11","end":"1997-10-11","name":"文化祭","command":"skip"},{"start":"1997-12-08","end":"1997-12-13","name":"期末考试","command":"skip"},{"start":"1997-12-24","end":"1997-12-24","name":"圣诞节","command":"skip"},{"start":"1998-01-01","end":"1998-01-01","name":"元旦","command":"skip"},{"start":"1998-01-03","end":"1998-01-03","name":"全国大赛","command":"skip","when":{"clubCategory":"sports","excludeClubId":"baseball-club"}},{"start":"1998-02-14","end":"1998-02-14","name":"情人节","command":"skip"},{"start":"1998-02-23","end":"1998-02-23","name":"大学入学考/就业考试","command":"skip"}]}};
 
 self.__planCore = __planCoreNs;
 
@@ -4281,7 +4381,7 @@ const { addDays, weekStartOf, weekdayOf } = __planCore["src/dates.js"];
 const { availableCommandIds, clubCommandId } = __planCore["src/clubs.js"];
 const { defaultInput } = __planCore["src/input.js"];
 const { createClubLookup, resolveActivity, resolveCommand } = __planCore["src/calendar.js"];
-const { buildCheckpointSchedule, meets } = __planCore["src/checkpoints.js"];
+const { buildCheckpointSchedule, findConflictingMiniGoals, isExpiredGoal, meets } = __planCore["src/checkpoints.js"];
 // 领域查询与共享状态（不含 DOM 原语——那些在 web/dom.js，见票 10）。
 //
 // 依赖方向是单向的：ui.js ← edits.js ← panels.js ← app.js，且 ui.js ← calendar.js ← panels.js。
@@ -4318,6 +4418,14 @@ const VALUE_FIELDS = ATTRIBUTES;
 
 const CLUBS = rules.clubs.map((club) => ({ id: club.id, name: club.name }));
 const COMMANDS = rules.commands.map((command) => ({ id: command.id, name: command.name }));
+
+/**
+ * 左栏「快速添加小目标」的预设。
+ *
+ * 预设本身是**领域数值**（日期 + 阈值），所以只存在 `data/rules.json` 里一份；
+ * 界面只负责渲染与落地，不写死第二份阈值。
+ */
+const QUICK_MINI_GOALS = rules.quickMiniGoals ?? [];
 
 /** 只在休息日可用的指令（电话/约会）：进「指定指令」，但不进求解器候选。 */
 const REST_ONLY_COMMAND_IDS = new Set(
@@ -4609,6 +4717,24 @@ function activityOn(date) {
 
 // ---------------------------------------------------------------- 检查点
 
+/**
+ * **求解前**就能判定的状态：`expired`（结算日早于「已玩到」）与 `conflict`（同日同属性上下界无交集）。
+ *
+ * 这两条只依赖输入，不依赖求解结果，所以不需要先点「计算」——新加的目标如果注定不可满足，
+ * 表格里当场就标出来（所有者 2026-11-06 要求）。
+ * 其余状态（met / unmet / violated）仍然只能由 `plan()` 给出。
+ */
+function staticStatesOf() {
+  const conflicts = findConflictingMiniGoals(state.input.checkpoints);
+  const map = new Map();
+  for (const checkpoint of state.input.checkpoints) {
+    if (checkpoint.source === 'global') continue;
+    if (isExpiredGoal(checkpoint, state.input.playedUpTo)) map.set(checkpoint.id, 'expired');
+    else if (conflicts.has(checkpoint.id)) map.set(checkpoint.id, 'conflict');
+  }
+  return map;
+}
+
 /** 某条规则的达标读数（`evaluateCheckpoints` 按规则聚合后的一行）；没算过是 null。 */
 function evaluationOf(checkpointId) {
   return state.result?.goals?.items?.find((item) => item.id === checkpointId) ?? null;
@@ -4759,7 +4885,7 @@ function markDirty(count = 1) {
   // 输入变了就落盘：刷新不丢，是本地保存承诺的全部。
   hooks.persist();
 }
-return { UNSET, CHOICE_EMPTY, CHOICE_NO_CLUB, TIMELINE, RULES, ATTRIBUTES, VALUE_FIELDS, CLUBS, COMMANDS, SOURCE_LABELS, SKIP_LABELS, BLOCK_LABELS, CHECKPOINT_SOURCE_LABELS, state, hooks, commandName, activityCommandName, attributeName, opText, fmt1, isStale, checkpointAttributeIds, checkpointAttributesText, checkpointLandingText, checkpointSummary, defaultCheckpoint, clampDate, clubAt, selectedDates, isRangeSelection, inTimeline, monthOf, monthLabel, shiftMonth, monthCells, commandsAvailableAt, commandsSelectableAt, isRestOn, resolveDayCommand, forcedCommandSource, activityOn, evaluationOf, goalItems, goalsVerdict, checkpointRows, rebuildCheckpointIndex, landingMet, setResult, clearResult, focusDate, dayOf, valueOf, markDirty };
+return { UNSET, CHOICE_EMPTY, CHOICE_NO_CLUB, TIMELINE, RULES, ATTRIBUTES, VALUE_FIELDS, CLUBS, COMMANDS, QUICK_MINI_GOALS, SOURCE_LABELS, SKIP_LABELS, BLOCK_LABELS, CHECKPOINT_SOURCE_LABELS, state, hooks, commandName, activityCommandName, attributeName, opText, fmt1, isStale, checkpointAttributeIds, checkpointAttributesText, checkpointLandingText, checkpointSummary, defaultCheckpoint, clampDate, clubAt, selectedDates, isRangeSelection, inTimeline, monthOf, monthLabel, shiftMonth, monthCells, commandsAvailableAt, commandsSelectableAt, isRestOn, resolveDayCommand, forcedCommandSource, activityOn, staticStatesOf, evaluationOf, goalItems, goalsVerdict, checkpointRows, rebuildCheckpointIndex, landingMet, setResult, clearResult, focusDate, dayOf, valueOf, markDirty };
 })();
 __ns["web/dom.js"] = (() => {
 // DOM 原语：只碰 document，不碰领域状态、不 import 任何应用模块。
@@ -5554,6 +5680,38 @@ function removeCheckpoint(index) {
   return true;
 }
 
+/**
+ * 「同时间、同属性、同方向、同阈值」——四条都相同才算同一条小目标。
+ * 用来实现快速添加的去重：同一个选项点两次，不会产生两行一样的结论。
+ */
+function sameMiniGoal(a, b) {
+  if (a.date !== b.date || a.op !== b.op) return false;
+  if (Number(a.value) !== Number(b.value)) return false;
+  const keyOf = (cp) => (cp.attribute ? [cp.attribute] : cp.attributes ?? []).slice().sort().join('+');
+  return keyOf(a) === keyOf(b);
+}
+
+/**
+ * 快速添加：把一组预设目标落进检查点表，跳过已存在的同一条。
+ *
+ * 一次点可能落多条（例如「练习比赛获胜」是 11 条），所以这里攒成一次 `markDirty`，
+ * 避免每加一条就整表重绘一次。返回实际新增的条数。
+ */
+function addQuickMiniGoals(goals) {
+  let added = 0;
+  for (const goal of goals) {
+    const draft = normalizeCheckpoint({ ...goal, source: 'mini' });
+    const exists = state.input.checkpoints.some(
+      (cp) => cp.source === 'mini' && sameMiniGoal(cp, draft),
+    );
+    if (exists) continue;
+    state.input.checkpoints.push(draft);
+    added += 1;
+  }
+  if (added > 0) markDirty(added);
+  return added;
+}
+
 /** 新建检查点的形状（供弹窗预填）。 */
 function draftCheckpoint(source, date) {
   return defaultCheckpoint(source, date);
@@ -5568,11 +5726,11 @@ function setClubChange(_date, choice) {
   else state.input.pendingClub = choice === CHOICE_NO_CLUB ? null : choice;
   markDirty();
 }
-return { choiceToCommandId, commandIdToChoice, setCommands, setPlayedUpTo, setAttributeValue, setInitialClub, addCheckpoint, updateCheckpoint, removeCheckpoint, draftCheckpoint, setClubChange };
+return { choiceToCommandId, commandIdToChoice, setCommands, setPlayedUpTo, setAttributeValue, setInitialClub, addCheckpoint, updateCheckpoint, removeCheckpoint, addQuickMiniGoals, draftCheckpoint, setClubChange };
 })();
 __ns["web/panels.js"] = (() => {
 const { weekdayOf, weekStartOf } = __planCore["src/dates.js"];
-const { ATTRIBUTES, CHOICE_NO_CLUB, CHECKPOINT_SOURCE_LABELS, CLUBS, RULES, TIMELINE, UNSET, forcedCommandSource, activityOn, attributeName, checkpointAttributeIds, checkpointAttributesText, checkpointLandingText, clubAt, commandsSelectableAt, defaultCheckpoint, evaluationOf, fmt1, goalItems, isRestOn, isStale, isRangeSelection, opText, selectedDates, state } = __ns["web/ui.js"];
+const { ATTRIBUTES, CHOICE_NO_CLUB, CHECKPOINT_SOURCE_LABELS, CLUBS, RULES, TIMELINE, UNSET, forcedCommandSource, activityOn, attributeName, checkpointAttributeIds, checkpointAttributesText, checkpointLandingText, clubAt, commandsSelectableAt, defaultCheckpoint, evaluationOf, fmt1, goalItems, isRestOn, isStale, isRangeSelection, staticStatesOf, opText, selectedDates, state } = __ns["web/ui.js"];
 const { $, attributePicker, closeModal, field, modalIsOpen, numberInput, openModal, pickedAttributes, selectOf } = __ns["web/dom.js"];
 const { addCheckpoint, commandIdToChoice, removeCheckpoint, setClubChange, setCommands, setPlayedUpTo, updateCheckpoint } = __ns["web/edits.js"];
 const { jumpToDate, selectDate } = __ns["web/calendar.js"];
@@ -5622,6 +5780,12 @@ function globalTooltip(evaluation) {
 
 /** 状态格的悬停说明：只报数据，不解释怎么读。 */
 function stateTitle(evaluation) {
+  if (evaluation.state === 'expired') {
+    return `结算日 ${evaluation.date} 已早于「已玩到」，不再参与求解与达标判定`;
+  }
+  if (evaluation.state === 'conflict') {
+    return '与同日同属性的另一条小目标矛盾（上下界没有交集），不参与求解与达标判定';
+  }
   if (evaluation.state === 'violated') {
     return `达成后跌破 ${evaluation.hardViolations} 次（首次达成 ${evaluation.firstAchievedDate}）`;
   }
@@ -5629,10 +5793,14 @@ function stateTitle(evaluation) {
   return evaluation.firstAchievedDate ? `达成于 ${evaluation.firstAchievedDate}` : '达标';
 }
 
-function checkpointRow(checkpoint, index) {
+function checkpointRow(checkpoint, index, staticStates) {
   const evaluation = evaluationOf(checkpoint.id);
-  // 三态：met 达标 / unmet 还欠着（还没到过）/ violated 已破线（到过之后又跌破，一次即永久）。
-  const goalState = evaluation ? evaluation.state : null;
+  const staticState = staticStates?.get(checkpoint.id) ?? null;
+  // 五态：met 达标 / unmet 还欠着 / violated 已破线（到过之后又跌破，一次即永久）
+  //       / expired 已过期（结算日早于「已玩到」）/ conflict 已冲突（同日同属性上下界无交集）。
+  //       后两种都在求解前判死，不参与求解与判定。
+  // 有计算结果时以结果为准；没有结果时，至少把「已过期 / 已冲突」这两条前置判定显示出来。
+  const goalState = evaluation ? evaluation.state : staticState;
 
   const row = document.createElement('div');
   row.className = `goal-row ${goalState ?? ''}`.trim();
@@ -5674,9 +5842,14 @@ function checkpointRow(checkpoint, index) {
     dot.className = `dot ${goalState}`;
     stateCell.append(dot);
     const text = document.createElement('span');
-    text.textContent = goalState === 'met' ? '达标' : goalState === 'violated' ? '已破线' : '未达标';
+    text.textContent =
+      goalState === 'met' ? '达标'
+        : goalState === 'violated' ? '已破线'
+          : goalState === 'expired' ? '已过期'
+            : goalState === 'conflict' ? '已冲突'
+              : '未达标';
     stateCell.append(text);
-    stateCell.title = stateTitle(evaluation);
+    stateCell.title = stateTitle(evaluation ?? { state: goalState, date: checkpoint.date });
   } else {
     stateCell.textContent = '未计算';
   }
@@ -5798,6 +5971,8 @@ function renderGoals() {
   head.append(title, count);
   host.append(head);
 
+  // 求解前可判定的状态（已过期 / 已冲突）：只依赖输入，不需要先算。
+  const staticStates = staticStatesOf();
   const indexed = state.input.checkpoints.map((checkpoint, index) => ({ checkpoint, index }));
   for (const { source, title: groupTitle, order } of GOAL_GROUPS) {
     const rows = indexed
@@ -5819,7 +5994,7 @@ function renderGoals() {
       ),
     );
     group.append(columnsRow(source));
-    for (const { checkpoint, index } of rows) group.append(checkpointRow(checkpoint, index));
+    for (const { checkpoint, index } of rows) group.append(checkpointRow(checkpoint, index, staticStates));
     host.append(group);
   }
 }
@@ -6345,12 +6520,12 @@ const rules = __planCore["data/rules.json"];
 const { createPlanner } = __planCore["src/plan.js"];
 const { MAIN_THREAD_BUDGET_MS, createSolver } = __planCore["src/solve.js"];
 const { exportFileName, fromJson, toJson } = __planCore["src/input.js"];
-const { CLUBS, TIMELINE, UNSET, VALUE_FIELDS, clearResult, focusDate, hooks, isStale, rebuildCheckpointIndex, setResult, state } = __ns["web/ui.js"];
+const { CLUBS, QUICK_MINI_GOALS, TIMELINE, UNSET, VALUE_FIELDS, clearResult, focusDate, hooks, isStale, rebuildCheckpointIndex, setResult, state } = __ns["web/ui.js"];
 const { $ } = __ns["web/dom.js"];
 const { renderCalendar, renderDetail, wireCalendar } = __ns["web/calendar.js"];
 const { renderGoals, wirePanels } = __ns["web/panels.js"];
 const { loadInput, saveInput } = __ns["web/session.js"];
-const { setAttributeValue, setInitialClub, setPlayedUpTo } = __ns["web/edits.js"];
+const { addQuickMiniGoals, setAttributeValue, setInitialClub, setPlayedUpTo } = __ns["web/edits.js"];
 // 主线程入口：接线、计算流程、左栏输入与 JSON 导入导出。
 //
 // 页面从 file:// 双击打开，而有些浏览器在 file:// 下拒绝构造 blob Worker，
@@ -6547,6 +6722,20 @@ function buildRail() {
     clubSelect.append(option);
   }
 
+  // 「快速添加小目标」：选项名来自数据里的 quickMiniGoals，这里只渲染。
+  const quickSelect = $('quick-mini-goal');
+  quickSelect.textContent = '';
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = '请选择…';
+  quickSelect.append(placeholder);
+  QUICK_MINI_GOALS.forEach((preset, index) => {
+    const option = document.createElement('option');
+    option.value = String(index);
+    option.textContent = preset.name;
+    quickSelect.append(option);
+  });
+
   const host = $('attributes');
   host.textContent = '';
   // 10 格：10 项属性，含「当前社团经验」——它现在是普通属性，不再是特例。
@@ -6727,6 +6916,14 @@ function wireTopbar() {
 }
 
 function wireRail() {
+  $('btn-quick-mini-add').addEventListener('click', () => {
+    const select = $('quick-mini-goal');
+    const preset = QUICK_MINI_GOALS[Number(select.value)];
+    if (!preset) return; // 没选（占位项）就什么都不做
+    addQuickMiniGoals(preset.goals);
+    select.value = '';
+  });
+
   $('rail-played-up-to').addEventListener('change', (event) => setPlayedUpTo(event.target.value));
   $('rail-initial-club').addEventListener('change', (event) => setInitialClub(event.target.value));
 }

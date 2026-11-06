@@ -35,6 +35,7 @@ import { SKIP_DAY, commandIdOf, isClubSlot } from './commands.js';
 import { availableCommandIds, availableDayCommandIds, clubCommandId, commandBlockReason } from './clubs.js';
 import { CLUB_EXPERIENCE_ID, clubExperienceGainOn, expectedEffects, REST_DAY, WEEKDAY } from './settlement.js';
 import { allocateQuota } from './quota.js';
+import { findConflictingMiniGoals, isExpiredGoal } from './checkpoints.js';
 
 /**
  * 默认工作量（**确定性**预算，与挂钟无关）：
@@ -244,8 +245,13 @@ function buildProblem(rules, input) {
 
   // ---- 目标 ----
   const checkpoints = input.checkpoints;
-  const ending = checkpoints.filter((c) => c.source === 'ending');
-  const mini = checkpoints.filter((c) => c.source === 'mini');
+  // 过期目标（结算日早于「已玩到」）不参与求解：它们已不可能被后续日程影响，
+  // 留着只会让归一化索引把它们压到第 0 天，浪费搜索方向（见 checkpoints.js 的 isExpiredGoal）。
+  const conflicts = findConflictingMiniGoals(checkpoints);
+  const ending = checkpoints.filter((c) => c.source === 'ending' && !isExpiredGoal(c, input.playedUpTo));
+  const mini = checkpoints.filter(
+    (c) => c.source === 'mini' && !isExpiredGoal(c, input.playedUpTo) && !conflicts.has(c.id),
+  );
   const global = checkpoints.filter((c) => c.source === 'global');
   const lastIdx = settled.length - 1;
   const miniIdx = new Map();

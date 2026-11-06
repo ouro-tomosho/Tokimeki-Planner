@@ -176,6 +176,59 @@ const daysBetween = (from, to) =>
  *   - `violated` 达成过又跌破（硬约束阶段被违反，一次即永久，该日程不合格）；
  *   - `unset`    这条属性没有设目标（如实标注，不冒充达标）。
  */
+/**
+ * 落点已过：结算日早于「已玩到」的小目标 / 结局目标。
+ *
+ * 这类目标不可能再被后续日程影响，所以**不参与求解、也不计入 `ok`**，界面显示「已过期」。
+ * 求解层与判定层必须共用这一条：只判定不排除时，搜索会去优化一个发生在时间轴之前的目标
+ * （`miniIdx` 会被压到第 0 天），白白占掉改进方向（2026-11-06 修）。
+ */
+export function isExpiredGoal(checkpoint, playedUpTo) {
+  return checkpoint.source !== 'global' && checkpoint.date < playedUpTo;
+}
+
+/**
+ * 同一天、同一属性上**上下界互相矛盾**的小目标。
+ *
+ * 例如同一天既有 `容姿 < 70` 又有 `容姿 ≥ 90`：不存在任何容姿值能同时满足两者。
+ * 这类目标在求解前就判死——**不参与求解、不计入 `ok`**，界面显示「已冲突」，
+ * 与「已过期」同一时机、同一通道（否则求解器会去追一个数学上不可能的目标）。
+ *
+ * 判定口径：对每个（日期, 单属性）收集下界（`>=` 取最大）与上界（`<` 取最小）；
+ * 若 `最大下界 >= 最小上界` 则无解，把**卡住这个边界的那几条**标为冲突。
+ * 多属性求和的目标（如 文+理+艺 ≥ 561）没有可比的上下界，不参与。
+ *
+ * @returns {Set<string>} 冲突目标的 id
+ */
+export function findConflictingMiniGoals(checkpoints) {
+  const groups = new Map();
+  for (const cp of checkpoints ?? []) {
+    if (cp.source !== 'mini') continue;
+    const ids = cp.attribute !== undefined ? [cp.attribute] : cp.attributes ?? [];
+    if (ids.length !== 1) continue;
+    const key = `${cp.date}\u0000${ids[0]}`;
+    let group = groups.get(key);
+    if (!group) {
+      group = { lower: null, upper: null, members: [] };
+      groups.set(key, group);
+    }
+    group.members.push(cp);
+    if (cp.op === '>=' && (group.lower === null || cp.value > group.lower)) group.lower = cp.value;
+    if (cp.op === '<' && (group.upper === null || cp.value < group.upper)) group.upper = cp.value;
+  }
+
+  const conflict = new Set();
+  for (const group of groups.values()) {
+    if (group.lower === null || group.upper === null) continue;
+    if (group.lower < group.upper) continue; // 存在 x 落在 [lower, upper) 内 → 可满足
+    for (const cp of group.members) {
+      const tight = cp.op === '>=' ? group.lower : group.upper;
+      if (cp.value === tight) conflict.add(cp.id);
+    }
+  }
+  return conflict;
+}
+
 export function evaluateCheckpoints(rules, input, days) {
   // 全局落点直接取"传进来的这些结算日"：判定必须对着**这份**逐日结果，
   // 而不是另算一份日历（用合成 days 的单测依赖这一点；`plan` 传的就是它自己那份）。
@@ -188,18 +241,20 @@ export function evaluateCheckpoints(rules, input, days) {
 
   // **按规则聚合**：全局约束展开后是每个结算日一个落点（1000+ 个），但它在界面上只是
   // **一条**规则。逐落点汇报会产出几千行，没法用；所以每条规则只出一行，并给出最紧读数。
+  const conflicts = findConflictingMiniGoals(input.checkpoints);
+
   const grouped = new Map();
   for (const checkpoint of schedule) {
-    // 过期：当前日期已经越过落点，这类目标不再参与判定（界面上显示「已跳过」）。
-    const expired = checkpoint.source !== 'global' && checkpoint.date < input.playedUpTo;
+    const expired = isExpiredGoal(checkpoint, input.playedUpTo);
+    const conflicted = conflicts.has(checkpoint.id);
 
     let entry = grouped.get(checkpoint.id);
     if (!entry) {
       entry = {
         id: checkpoint.id,
         label: labelOf(checkpoint),
-        // 是否参与"全达标"（`ok`）判定。全局约束与过期目标不参与 `ok`。
-        gate: checkpoint.source !== 'global' && !expired,
+        // 是否参与"全达标"（`ok`）判定。全局约束、过期目标、冲突目标不参与 `ok`。
+        gate: checkpoint.source !== 'global' && !expired && !conflicted,
         attribute: checkpoint.attribute ?? null,
         attributes: checkpoint.attributes ?? null,
         op: checkpoint.op,
@@ -218,10 +273,11 @@ export function evaluateCheckpoints(rules, input, days) {
         worstActual: 0,
         worstShortfall: 0,
         expired,
+        conflict: conflicted,
       };
       grouped.set(checkpoint.id, entry);
     }
-    if (expired) continue;
+    if (expired || conflicted) continue;
 
     // 指令计数小目标：base + 截止日前一天为止执行过的指令天数（含强制执行）。
     if (checkpoint.kind === 'count') {
@@ -283,7 +339,9 @@ export function evaluateCheckpoints(rules, input, days) {
   for (const entry of grouped.values()) {
     const state = entry.expired
       ? 'expired'
-      : entry.hardViolations > 0 ? 'violated' : entry.achieved ? 'met' : 'unmet';
+      : entry.conflict
+        ? 'conflict'
+        : entry.hardViolations > 0 ? 'violated' : entry.achieved ? 'met' : 'unmet';
     items.push({
       id: entry.id,
       label: entry.label,
@@ -305,6 +363,7 @@ export function evaluateCheckpoints(rules, input, days) {
       actual: state === 'met' ? entry.lastActual : entry.worstActual,
       shortfall: state === 'met' ? entry.lastShortfall : entry.worstShortfall,
       state,
+      conflict: entry.conflict,
     });
   }
 

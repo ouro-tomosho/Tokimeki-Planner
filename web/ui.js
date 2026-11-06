@@ -9,7 +9,7 @@ import { addDays, weekStartOf, weekdayOf } from '../src/dates.js';
 import { availableCommandIds, clubCommandId } from '../src/clubs.js';
 import { defaultInput } from '../src/input.js';
 import { createClubLookup, resolveActivity, resolveCommand } from '../src/calendar.js';
-import { buildCheckpointSchedule, meets } from '../src/checkpoints.js';
+import { buildCheckpointSchedule, findConflictingMiniGoals, isExpiredGoal, meets } from '../src/checkpoints.js';
 
 export const UNSET = '';
 export const CHOICE_EMPTY = '__empty__';
@@ -34,6 +34,14 @@ export const VALUE_FIELDS = ATTRIBUTES;
 
 export const CLUBS = rules.clubs.map((club) => ({ id: club.id, name: club.name }));
 export const COMMANDS = rules.commands.map((command) => ({ id: command.id, name: command.name }));
+
+/**
+ * 左栏「快速添加小目标」的预设。
+ *
+ * 预设本身是**领域数值**（日期 + 阈值），所以只存在 `data/rules.json` 里一份；
+ * 界面只负责渲染与落地，不写死第二份阈值。
+ */
+export const QUICK_MINI_GOALS = rules.quickMiniGoals ?? [];
 
 /** 只在休息日可用的指令（电话/约会）：进「指定指令」，但不进求解器候选。 */
 const REST_ONLY_COMMAND_IDS = new Set(
@@ -324,6 +332,24 @@ export function activityOn(date) {
 }
 
 // ---------------------------------------------------------------- 检查点
+
+/**
+ * **求解前**就能判定的状态：`expired`（结算日早于「已玩到」）与 `conflict`（同日同属性上下界无交集）。
+ *
+ * 这两条只依赖输入，不依赖求解结果，所以不需要先点「计算」——新加的目标如果注定不可满足，
+ * 表格里当场就标出来（所有者 2026-11-06 要求）。
+ * 其余状态（met / unmet / violated）仍然只能由 `plan()` 给出。
+ */
+export function staticStatesOf() {
+  const conflicts = findConflictingMiniGoals(state.input.checkpoints);
+  const map = new Map();
+  for (const checkpoint of state.input.checkpoints) {
+    if (checkpoint.source === 'global') continue;
+    if (isExpiredGoal(checkpoint, state.input.playedUpTo)) map.set(checkpoint.id, 'expired');
+    else if (conflicts.has(checkpoint.id)) map.set(checkpoint.id, 'conflict');
+  }
+  return map;
+}
 
 /** 某条规则的达标读数（`evaluateCheckpoints` 按规则聚合后的一行）；没算过是 null。 */
 export function evaluationOf(checkpointId) {

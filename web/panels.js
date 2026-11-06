@@ -35,6 +35,7 @@ import {
   isRestOn,
   isStale,
   isRangeSelection,
+  staticStatesOf,
   opText,
   selectedDates,
   state,
@@ -88,6 +89,12 @@ function globalTooltip(evaluation) {
 
 /** 状态格的悬停说明：只报数据，不解释怎么读。 */
 function stateTitle(evaluation) {
+  if (evaluation.state === 'expired') {
+    return `结算日 ${evaluation.date} 已早于「已玩到」，不再参与求解与达标判定`;
+  }
+  if (evaluation.state === 'conflict') {
+    return '与同日同属性的另一条小目标矛盾（上下界没有交集），不参与求解与达标判定';
+  }
   if (evaluation.state === 'violated') {
     return `达成后跌破 ${evaluation.hardViolations} 次（首次达成 ${evaluation.firstAchievedDate}）`;
   }
@@ -95,10 +102,14 @@ function stateTitle(evaluation) {
   return evaluation.firstAchievedDate ? `达成于 ${evaluation.firstAchievedDate}` : '达标';
 }
 
-function checkpointRow(checkpoint, index) {
+function checkpointRow(checkpoint, index, staticStates) {
   const evaluation = evaluationOf(checkpoint.id);
-  // 三态：met 达标 / unmet 还欠着（还没到过）/ violated 已破线（到过之后又跌破，一次即永久）。
-  const goalState = evaluation ? evaluation.state : null;
+  const staticState = staticStates?.get(checkpoint.id) ?? null;
+  // 五态：met 达标 / unmet 还欠着 / violated 已破线（到过之后又跌破，一次即永久）
+  //       / expired 已过期（结算日早于「已玩到」）/ conflict 已冲突（同日同属性上下界无交集）。
+  //       后两种都在求解前判死，不参与求解与判定。
+  // 有计算结果时以结果为准；没有结果时，至少把「已过期 / 已冲突」这两条前置判定显示出来。
+  const goalState = evaluation ? evaluation.state : staticState;
 
   const row = document.createElement('div');
   row.className = `goal-row ${goalState ?? ''}`.trim();
@@ -140,9 +151,14 @@ function checkpointRow(checkpoint, index) {
     dot.className = `dot ${goalState}`;
     stateCell.append(dot);
     const text = document.createElement('span');
-    text.textContent = goalState === 'met' ? '达标' : goalState === 'violated' ? '已破线' : '未达标';
+    text.textContent =
+      goalState === 'met' ? '达标'
+        : goalState === 'violated' ? '已破线'
+          : goalState === 'expired' ? '已过期'
+            : goalState === 'conflict' ? '已冲突'
+              : '未达标';
     stateCell.append(text);
-    stateCell.title = stateTitle(evaluation);
+    stateCell.title = stateTitle(evaluation ?? { state: goalState, date: checkpoint.date });
   } else {
     stateCell.textContent = '未计算';
   }
@@ -264,6 +280,8 @@ export function renderGoals() {
   head.append(title, count);
   host.append(head);
 
+  // 求解前可判定的状态（已过期 / 已冲突）：只依赖输入，不需要先算。
+  const staticStates = staticStatesOf();
   const indexed = state.input.checkpoints.map((checkpoint, index) => ({ checkpoint, index }));
   for (const { source, title: groupTitle, order } of GOAL_GROUPS) {
     const rows = indexed
@@ -285,7 +303,7 @@ export function renderGoals() {
       ),
     );
     group.append(columnsRow(source));
-    for (const { checkpoint, index } of rows) group.append(checkpointRow(checkpoint, index));
+    for (const { checkpoint, index } of rows) group.append(checkpointRow(checkpoint, index, staticStates));
     host.append(group);
   }
 }
